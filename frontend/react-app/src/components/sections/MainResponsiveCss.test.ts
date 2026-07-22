@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const globalCss = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8')
 const navCss = readFileSync(new URL('../animations/reactbits/CardNav.css', import.meta.url), 'utf8')
+const homeCss = readFileSync(new URL('./HomeSection.css', import.meta.url), 'utf8')
 
 describe('main page responsive CSS contract', () => {
   it('uses dynamic viewport units and mobile-safe snap behavior', () => {
@@ -23,5 +24,12 @@ describe('main page responsive CSS contract', () => {
     expect(navCss).toMatch(/\.card-nav--main \.card-nav__actions\s*\{[^}]*gap:\s*2px/s)
     expect(navCss).toMatch(/\.card-nav--main \.card-nav__primary\s*\{[^}]*font-size:\s*\.76rem/s)
     expect(navCss).not.toMatch(/\.card-nav--wiki \.card-nav__bar\s*\{[^}]*min-height:\s*40px/s)
+  })
+
+  it('defines phone home sizing and safe scroll cue placement', () => {
+    expect(homeCss).toContain('@media (max-width: 720px)')
+    expect(homeCss).toMatch(/\.home-section__video\s*\{[^}]*object-fit:\s*cover/s)
+    expect(homeCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.home-section__cta\s*\{[^}]*min-height:\s*44px/s)
+    expect(homeCss).toContain('env(safe-area-inset-bottom')
   })
 })
