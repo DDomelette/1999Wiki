@@ -21,6 +21,7 @@ describe('main page responsive CSS contract', () => {
     expect(navCss).toMatch(/\.card-nav--main \.card-nav__toggle[\s\S]*width:\s*36px[\s\S]*height:\s*36px/)
     expect(navCss).toMatch(/\.card-nav--main \.card-nav__brand\s*\{[^}]*font-size:\s*\.68rem[^}]*white-space:\s*nowrap/s)
     expect(navCss).toMatch(/\.card-nav--main \.card-nav__actions\s*\{[^}]*gap:\s*2px/s)
+    expect(navCss).toMatch(/\.card-nav--main \.card-nav__primary\s*\{[^}]*font-size:\s*\.76rem/s)
     expect(navCss).not.toMatch(/\.card-nav--wiki \.card-nav__bar\s*\{[^}]*min-height:\s*40px/s)
   })
 })
