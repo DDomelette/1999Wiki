@@ -29,6 +29,7 @@ from src.huiji_rag.provenance import (
 from src.rag.vectorstore import HUIJI_BUSINESS_FIELDS, huiji_child_to_business_row
 from scripts.audit_huiji_provenance import main as audit_cli_main
 from scripts.verify_huiji_runtime import main as runtime_cli_main
+import scripts.verify_huiji_runtime as runtime_cli
 
 
 def test_canonical_json_and_hash_pinned_evidence_are_stable_and_create_new(tmp_path: Path):
@@ -812,3 +813,43 @@ def test_runtime_cli_writes_hash_pinned_pass_and_blocked_evidence(tmp_path: Path
     payload = json.loads((blocked_dir / "runtime.v1.json").read_text(encoding="utf-8"))
     assert payload["status"] == "blocked"
     assert "artifact_hash_mismatch" in {issue["code"] for issue in payload["issues"]}
+
+
+def test_runtime_cli_uses_a_bounded_milvus_connection_timeout(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr("pymilvus.MilvusClient", fake_client)
+    cfg = SimpleNamespace(
+        vectorstore=SimpleNamespace(
+            uri="http://127.0.0.1:19600",
+            db_name="reverse1999_rag",
+        )
+    )
+
+    runtime_cli._default_client(cfg)
+
+    assert captured["timeout"] == runtime_cli.MILVUS_CONNECT_TIMEOUT_SECONDS
+    assert 0 < captured["timeout"] <= 10
+
+
+def test_runtime_cli_handles_keyboard_interrupt_without_traceback(tmp_path: Path, capsys):
+    cfg, client, _, _ = _audit_fixture(tmp_path)
+    _install_fixture_baseline(tmp_path, cfg, client)
+
+    def interrupted_client(_cfg):
+        raise KeyboardInterrupt
+
+    result = runtime_cli_main(
+        ["--run-dir", str(tmp_path / "eval" / "runtime-cancelled")],
+        cfg_loader=lambda: cfg,
+        client_factory=interrupted_client,
+    )
+
+    output = capsys.readouterr()
+    assert result == 130
+    assert "status=cancelled" in output.err
+    assert "Traceback" not in output.err

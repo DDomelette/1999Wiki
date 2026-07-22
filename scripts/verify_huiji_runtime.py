@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config.config import get_config
 from src.huiji_rag.provenance import (
+    MILVUS_CONNECT_TIMEOUT_SECONDS,
     RUNTIME_SCHEMA,
     safe_relative_path,
     verify_runtime,
@@ -33,6 +34,7 @@ def _default_client(cfg: object) -> object:
     return MilvusClient(
         uri=str(getattr(vectorstore, "uri")),
         db_name=str(getattr(vectorstore, "db_name")),
+        timeout=MILVUS_CONNECT_TIMEOUT_SECONDS,
     )
 
 
@@ -71,6 +73,9 @@ def main(
         if result.status == "blocked":
             return 2
         return 3
+    except KeyboardInterrupt:
+        print("status=cancelled", file=sys.stderr)
+        return 130
     except Exception as error:
         print(f"status=error error_type={type(error).__name__}", file=sys.stderr)
         return 3
