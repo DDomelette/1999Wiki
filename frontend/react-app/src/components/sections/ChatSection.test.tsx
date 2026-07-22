@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatSection } from './ChatSection'
 import { useChatStore } from '../../store/chatStore'
@@ -11,6 +11,7 @@ describe('ChatSection', () => {
       category: null,
       sending: false,
       abortController: null,
+      routeOptions: { expanded: false, freeSupplement: false },
     })
   })
 
@@ -45,6 +46,17 @@ describe('ChatSection', () => {
     expect(screen.getByPlaceholderText('输入问题...')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '发送' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '扩大检索' })).toHaveAttribute('aria-pressed', 'false')
+    expect(within(screen.getByRole('group', { name: '推荐问题' })).getAllByRole('button')).toHaveLength(4)
+  })
+
+  it('keeps suggested questions available after the conversation has messages', () => {
+    useChatStore.setState({
+      messages: [{ id: 'user-1', role: 'user', content: '测试问题' }],
+    })
+
+    render(<ChatSection />)
+
+    expect(screen.getByRole('group', { name: '推荐问题' })).toBeInTheDocument()
   })
 
   it('renders an accessible stable clear icon button', () => {

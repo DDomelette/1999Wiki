@@ -1,14 +1,21 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useChatStore } from '../../store/chatStore'
+import { SuggestedQuestions } from './SuggestedQuestions'
 
 export function ChatInput() {
   const [value, setValue] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
   const send = useChatStore((s) => s.send)
   const sending = useChatStore((s) => s.sending)
   const routeOptions = useChatStore((s) => s.routeOptions)
   const setRouteOption = useChatStore((s) => s.setRouteOption)
   const [lastError, setLastError] = useState<string | null>(null)
   const [lastQuestion, setLastQuestion] = useState('')
+
+  const selectSuggestedQuestion = (question: string) => {
+    setValue(question)
+    inputRef.current?.focus()
+  }
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -90,8 +97,13 @@ export function ChatInput() {
           borderTop: '1px solid var(--border-subtle)',
         }}
       >
+        <SuggestedQuestions
+          disabled={sending}
+          onSelect={selectSuggestedQuestion}
+        />
         <div style={{ display: 'flex', gap: 8 }}>
           <input
+            ref={inputRef}
             type="text"
             value={value}
             onChange={(e) => setValue(e.target.value)}
