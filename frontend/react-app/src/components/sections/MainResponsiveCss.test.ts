@@ -40,6 +40,7 @@ describe('main page responsive CSS contract', () => {
     expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.category-panel__copy\s*\{[^}]*position:\s*absolute[^}]*bottom:/s)
     expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.data-section__nav\s*\{[^}]*overflow-x:\s*auto/s)
     expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.data-section__nav-button\s*\{[^}]*min-height:\s*44px/s)
+    expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.category-panel__wiki-link\s*\{[^}]*z-index:\s*4/s)
     const mobileCopy = dataCss.match(/@media \(max-width: 980px\)[\s\S]*?\.category-panel__copy\s*\{([^}]*)\}/)?.[1] ?? ''
     expect(mobileCopy).not.toMatch(/background(?:-color)?:/)
     expect(mobileCopy).toContain('text-shadow:')

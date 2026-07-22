@@ -227,6 +227,7 @@
   .category-panel__wiki-link {
     right: 16px;
     bottom: calc(16px + var(--main-page-bottom-safe));
+    z-index: 4;
     font-size: 0.8rem;
     letter-spacing: 0.04em;
   }
