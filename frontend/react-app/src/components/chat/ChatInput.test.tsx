@@ -56,4 +56,14 @@ describe('ChatInput suggested questions', () => {
     expect(buttons).toHaveLength(4)
     for (const button of buttons) expect(button).toBeDisabled()
   })
+
+  it('exposes a shrinkable input row and stable action hooks', () => {
+    const { container } = render(<ChatInput />)
+
+    expect(container.querySelector('.chat-input')).toBeInTheDocument()
+    expect(container.querySelector('.chat-input__row')).toBeInTheDocument()
+    expect(screen.getByRole('textbox')).toHaveClass('chat-input__field')
+    expect(container.querySelector('button[type="submit"]')).toHaveClass('chat-input__send')
+    expect(container.querySelector('.chat-input__modes')).toBeInTheDocument()
+  })
 })

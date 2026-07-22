@@ -6,6 +6,7 @@ const globalCss = readFileSync(new URL('../../styles/global.css', import.meta.ur
 const navCss = readFileSync(new URL('../animations/reactbits/CardNav.css', import.meta.url), 'utf8')
 const homeCss = readFileSync(new URL('./HomeSection.css', import.meta.url), 'utf8')
 const dataCss = readFileSync(new URL('./DataSection.css', import.meta.url), 'utf8')
+const chatCss = readFileSync(new URL('./ChatSection.css', import.meta.url), 'utf8')
 
 describe('main page responsive CSS contract', () => {
   it('uses dynamic viewport units and mobile-safe snap behavior', () => {
@@ -44,5 +45,18 @@ describe('main page responsive CSS contract', () => {
     const mobileCopy = dataCss.match(/@media \(max-width: 980px\)[\s\S]*?\.category-panel__copy\s*\{([^}]*)\}/)?.[1] ?? ''
     expect(mobileCopy).not.toMatch(/background(?:-color)?:/)
     expect(mobileCopy).toContain('text-shadow:')
+  })
+
+  it('keeps the mobile chat toolbar below navigation and the input shrinkable', () => {
+    expect(chatCss).toContain('@media (max-width: 720px)')
+    expect(chatCss).toMatch(/\.chat-section\s*\{[^}]*background:\s*linear-gradient[^}]*backdrop-filter:\s*blur\(2px\)/s)
+    expect(chatCss).toMatch(/\.chat-section__clear\s*\{[^}]*width:\s*36px[^}]*height:\s*36px/s)
+    expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.chat-section__toolbar\s*\{[^}]*padding:\s*calc\([^}]*--main-nav-mobile-offset/s)
+    expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.chat-section__toolbar select\s*\{[^}]*min-width:\s*0[^}]*width:\s*100%/s)
+    expect(chatCss).toMatch(/\.chat-input__row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/s)
+    expect(chatCss).toMatch(/\.chat-input__field\s*\{[^}]*min-width:\s*0/s)
+    expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.message-bubble\s*\{[^}]*max-width:\s*88%/s)
+    expect(chatCss).toMatch(/\.markdown-message pre\s*\{[^}]*overflow-x:\s*auto/s)
+    expect(chatCss).toMatch(/\.markdown-message table\s*\{[^}]*overflow-x:\s*auto/s)
   })
 })

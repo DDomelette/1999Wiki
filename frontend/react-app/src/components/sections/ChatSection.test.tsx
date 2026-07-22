@@ -33,8 +33,8 @@ describe('ChatSection', () => {
     const { container } = render(<ChatSection />)
     const section = container.querySelector('[data-snap-section="chat"]') as HTMLElement
 
-    expect(section.style.background).toContain('color-mix')
-    expect(section.style.backdropFilter).toBe('blur(2px)')
+    expect(section).toHaveClass('chat-section')
+    expect(section).not.toHaveAttribute('style')
   })
 
   it('keeps the empty state, category selector, message scroll area, and input workflow available', () => {
@@ -64,6 +64,18 @@ describe('ChatSection', () => {
 
     const clear = screen.getByRole('button', { name: '清空对话' })
     expect(clear).toHaveAttribute('title', '清空对话')
-    expect(clear).toHaveStyle({ width: '36px', height: '36px' })
+    expect(clear).toHaveClass('chat-section__clear')
+  })
+
+  it('exposes a responsive toolbar and scroll layout', () => {
+    const { container } = render(<ChatSection />)
+    const toolbar = container.querySelector('.chat-section__toolbar')
+
+    expect(container.querySelector('.chat-section')).toBeInTheDocument()
+    expect(toolbar).toBeInTheDocument()
+    expect(screen.getByRole('combobox').closest('.chat-section__toolbar')).toBe(toolbar)
+    expect(container.querySelector('.chat-section__clear')).toBeInTheDocument()
+    expect(container.querySelector('.chat-section__home')).toBeInTheDocument()
+    expect(container.querySelector('.chat-section__messages')).toHaveAttribute('data-page-wheel-lock', 'true')
   })
 })

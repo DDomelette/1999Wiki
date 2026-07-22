@@ -115,6 +115,23 @@ describe('MessageBubble', () => {
     vi.unstubAllGlobals()
   })
 
+  it('exposes role-specific responsive bubble hooks', () => {
+    const { container, rerender } = render(
+      <MessageBubble message={{ id: 'user-hook', role: 'user', content: 'Question' }} />,
+    )
+
+    expect(container.querySelector('[data-animation-slot="message-shell"]')).toHaveClass(
+      'message-bubble',
+      'message-bubble--user',
+    )
+
+    rerender(<MessageBubble message={{ id: 'assistant-hook', role: 'assistant', content: 'Answer' }} />)
+    expect(container.querySelector('[data-animation-slot="message-shell"]')).toHaveClass(
+      'message-bubble',
+      'message-bubble--assistant',
+    )
+  })
+
   it('renders assistant markdown as formatted chat content', () => {
     const message: Message = {
       id: 'assistant-1',

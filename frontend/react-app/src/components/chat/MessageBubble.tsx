@@ -38,20 +38,7 @@ export function MessageBubble({ message }: { message: Message }) {
       initial={isUser ? { scale: 1.3, opacity: 0 } : { opacity: 0 }}
       animate={isUser ? { scale: 1, opacity: 1 } : { opacity: 1 }}
       transition={isUser ? { type: 'spring', stiffness: 300, damping: 20 } : { duration: 0.3 }}
-      style={{
-        alignSelf: isUser ? 'flex-end' : 'flex-start',
-        maxWidth: '70%',
-        padding: '12px 16px',
-        background: isUser ? 'var(--accent-purple)' : 'var(--bg-elevated)',
-        color: isUser ? '#fff' : 'var(--text-primary)',
-        borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-        border: isUser ? 'none' : '1px solid var(--border-card)',
-        fontFamily: 'var(--font-body)',
-        fontSize: '1rem',
-        lineHeight: 1.6,
-        marginBottom: 12,
-        boxShadow: 'var(--shadow-card)',
-      }}
+      className={`message-bubble message-bubble--${isUser ? 'user' : 'assistant'}`}
     >
       {isUser ? (
         message.content
