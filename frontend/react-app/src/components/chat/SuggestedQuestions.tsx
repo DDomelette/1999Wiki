@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 export const SUGGESTED_QUESTION_POOL = [
   '十四行诗是怎样的人？',
   '维尔汀经历过哪些重要事件？',
@@ -27,4 +29,39 @@ export function sampleSuggestedQuestions(
   }
 
   return selected
+}
+
+interface SuggestedQuestionsProps {
+  disabled: boolean
+  onSelect: (question: string) => void
+  questions?: readonly string[]
+}
+
+export function SuggestedQuestions({
+  disabled,
+  onSelect,
+  questions,
+}: SuggestedQuestionsProps) {
+  const [suggestions] = useState(() =>
+    questions ? [...questions] : sampleSuggestedQuestions(SUGGESTED_QUESTION_POOL),
+  )
+
+  return (
+    <div className="suggested-questions" role="group" aria-label="推荐问题">
+      <span className="suggested-questions__label">试着问问</span>
+      <div className="suggested-questions__list">
+        {suggestions.map((question) => (
+          <button
+            className="suggested-questions__item"
+            key={question}
+            type="button"
+            disabled={disabled}
+            onClick={() => onSelect(question)}
+          >
+            {question}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
