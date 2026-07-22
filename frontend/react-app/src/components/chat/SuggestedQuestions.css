@@ -58,8 +58,10 @@
 }
 
 .suggested-questions__item:disabled {
+  border-color: var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  color: var(--text-secondary);
   cursor: not-allowed;
-  opacity: 0.48;
 }
 
 @media (max-width: 640px) {

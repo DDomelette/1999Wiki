@@ -21,7 +21,7 @@ export function sampleSuggestedQuestions(
   count = 4,
   random: () => number = Math.random,
 ): string[] {
-  const candidates = [...pool]
+  const candidates = [...new Set(pool)]
   const selected: string[] = []
 
   while (selected.length < count && candidates.length > 0) {

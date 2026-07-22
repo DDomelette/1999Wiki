@@ -47,12 +47,27 @@ test('suggested questions stay usable across desktop, mobile, and themes', async
 
   const second = group.getByRole('button').nth(1)
   const secondQuestion = await second.textContent()
-  await second.press('Enter')
+  await first.focus()
+  await page.keyboard.press('Tab')
+  await expect(second).toBeFocused()
+  const focusStyle = await second.evaluate((element) => {
+    const style = getComputedStyle(element)
+    return { outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth }
+  })
+  expect(focusStyle.outlineStyle).not.toBe('none')
+  expect(Number.parseFloat(focusStyle.outlineWidth)).toBeGreaterThanOrEqual(2)
+  await page.keyboard.press('Enter')
   await expect(input).toHaveValue(secondQuestion ?? '')
 
+  const fourth = group.getByRole('button').nth(3)
+  const fourthQuestion = await fourth.textContent()
+  await page.keyboard.press('Shift+Tab')
+  await expect(fourth).toBeFocused()
+  await page.keyboard.press('Space')
+  await expect(input).toHaveValue(fourthQuestion ?? '')
+  await expect(page.locator('[data-animation-slot="message-shell"]')).toHaveCount(0)
+
   await page.screenshot({ path: testInfo.outputPath('suggested-questions-wide-gold.png') })
-  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'storm-dark'))
-  await page.screenshot({ path: testInfo.outputPath('suggested-questions-wide-dark.png') })
 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.evaluate(() => {
@@ -71,10 +86,24 @@ test('suggested questions stay usable across desktop, mobile, and themes', async
   expect(overflow).toBeLessThanOrEqual(1)
   await expect(page.getByRole('button', { name: '发送' })).toBeVisible()
   await expect(page.getByRole('button', { name: '扩大检索' })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('suggested-questions-mobile-gold.png') })
+
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'storm-dark'))
+  await page.waitForTimeout(450)
   await page.screenshot({ path: testInfo.outputPath('suggested-questions-mobile-dark.png') })
 
+  await page.setViewportSize({ width: 2048, height: 1157 })
+  await page.evaluate(() => {
+    document.querySelector('[data-snap-section="chat"]')?.scrollIntoView()
+  })
+  await page.screenshot({ path: testInfo.outputPath('suggested-questions-wide-dark.png') })
+
+  let releaseStream: () => void = () => {}
+  const streamGate = new Promise<void>((resolve) => {
+    releaseStream = resolve
+  })
   await page.route('**/api/ask/stream', async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 600))
+    await streamGate
     await route.fulfill({
       contentType: 'text/event-stream',
       body: 'event: done\ndata: {"answer":"测试回答","sources":[],"assets":[],"media":[]}\n\n',
@@ -83,6 +112,14 @@ test('suggested questions stay usable across desktop, mobile, and themes', async
   await input.fill('测试推荐问题')
   await input.press('Enter')
   await expect(group.getByRole('button').first()).toBeDisabled()
+  await expect(group.getByRole('button').first()).toHaveCSS('opacity', '1')
+  await page.screenshot({ path: testInfo.outputPath('suggested-questions-wide-dark-disabled.png') })
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'manuscript-gold'))
+  await expect(group.getByRole('button').first()).toHaveCSS('opacity', '1')
+  await page.waitForTimeout(450)
+  await page.screenshot({ path: testInfo.outputPath('suggested-questions-wide-gold-disabled.png') })
+  releaseStream()
+  await expect(page.getByText('测试回答')).toBeVisible()
   await expect(group.getByRole('button').first()).toBeEnabled()
   expect(await group.getByRole('button').allTextContents()).toEqual(initialQuestions)
 })

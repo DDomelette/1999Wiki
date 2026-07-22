@@ -32,6 +32,14 @@ describe('sampleSuggestedQuestions', () => {
     expect(sampleSuggestedQuestions(['A', 'B'], 4, () => 0)).toEqual(['A', 'B'])
   })
 
+  it('does not return duplicate question text from a duplicated pool', () => {
+    expect(sampleSuggestedQuestions(['A', 'A', 'B', 'C'], 4, () => 0)).toEqual([
+      'A',
+      'B',
+      'C',
+    ])
+  })
+
   it('returns an empty list for an empty pool', () => {
     expect(sampleSuggestedQuestions([])).toEqual([])
   })

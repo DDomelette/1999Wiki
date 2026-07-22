@@ -22,4 +22,13 @@ describe('SuggestedQuestions.css', () => {
     expect(css).toContain('color-mix(')
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(/i)
   })
+
+  it('keeps disabled question text readable instead of fading the whole control', () => {
+    const disabledRule = css.match(/\.suggested-questions__item:disabled\s*\{[^}]*}/s)?.[0]
+
+    expect(disabledRule).toBeDefined()
+    expect(disabledRule).not.toMatch(/opacity\s*:/)
+    expect(disabledRule).toMatch(/color:\s*var\(--text-secondary\)/)
+    expect(disabledRule).toMatch(/border-color:\s*var\(--border-subtle\)/)
+  })
 })
