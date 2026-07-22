@@ -7,9 +7,11 @@ const navCss = readFileSync(new URL('../animations/reactbits/CardNav.css', impor
 const homeCss = readFileSync(new URL('./HomeSection.css', import.meta.url), 'utf8')
 const dataCss = readFileSync(new URL('./DataSection.css', import.meta.url), 'utf8')
 const chatCss = readFileSync(new URL('./ChatSection.css', import.meta.url), 'utf8')
+const indexHtml = readFileSync(new URL('../../../index.html', import.meta.url), 'utf8')
 
 describe('main page responsive CSS contract', () => {
   it('uses dynamic viewport units and mobile-safe snap behavior', () => {
+    expect(indexHtml).toMatch(/name="viewport"[^>]*content="[^"]*viewport-fit=cover[^"]*"/)
     expect(globalCss).toContain('--main-nav-mobile-offset: 56px')
     expect(globalCss).toContain('--main-page-bottom-safe: env(safe-area-inset-bottom, 0px)')
     expect(globalCss).toMatch(/\.snap-container\s*\{[^}]*height:\s*100vh[^}]*height:\s*100dvh/s)
@@ -40,6 +42,7 @@ describe('main page responsive CSS contract', () => {
     expect(dataCss).toMatch(/\.category-panel__layout\s*\{[^}]*grid-template-columns:\s*minmax\(320px, \.72fr\) minmax\(560px, 1\.45fr\)/s)
     expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.category-panel__copy\s*\{[^}]*position:\s*absolute[^}]*bottom:/s)
     expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.data-section__nav\s*\{[^}]*overflow-x:\s*auto/s)
+    expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.data-section__nav\s*\{[^}]*scrollbar-width:\s*none/s)
     expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.data-section__nav-button\s*\{[^}]*min-height:\s*44px/s)
     expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.category-panel__wiki-link\s*\{[^}]*z-index:\s*4/s)
     const mobileCopy = dataCss.match(/@media \(max-width: 980px\)[\s\S]*?\.category-panel__copy\s*\{([^}]*)\}/)?.[1] ?? ''
@@ -55,6 +58,7 @@ describe('main page responsive CSS contract', () => {
     expect(baseToolbar).toContain('padding-top: 88px')
     expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.chat-section__toolbar\s*\{[^}]*padding:\s*calc\([^}]*--main-nav-mobile-offset/s)
     expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.chat-section__toolbar select\s*\{[^}]*min-width:\s*0[^}]*width:\s*100%/s)
+    expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.chat-input__form\s*\{[^}]*padding-right:\s*calc\(18px \+ env\(safe-area-inset-right, 0px\)\)/s)
     expect(chatCss).toMatch(/\.chat-input__row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/s)
     expect(chatCss).toMatch(/\.chat-input__field\s*\{[^}]*min-width:\s*0/s)
     expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.message-bubble\s*\{[^}]*max-width:\s*88%/s)

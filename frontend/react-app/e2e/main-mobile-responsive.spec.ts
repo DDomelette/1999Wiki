@@ -80,7 +80,7 @@ async function expectVisibleArtwork(panel: Locator, viewport: { width: number; h
 }
 
 test('main pages remain usable across approved mobile and tablet viewports', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'explicit responsive matrix runs once')
+  test.skip(!['desktop', 'mobile'].includes(testInfo.project.name), 'explicit responsive matrix runs in desktop and touch projects')
   await installRoutes(page)
 
   for (const viewport of [
@@ -157,6 +157,53 @@ test('main pages remain usable across approved mobile and tablet viewports', asy
     await expectNoDocumentOverflow(page)
     await page.screenshot({ path: testInfo.outputPath(`chat-${viewport.width}x${viewport.height}.png`) })
   }
+})
+
+test('mobile chat survives touch input, long messages, and keyboard-height contraction', async ({ page }, testInfo) => {
+  test.skip(!['mobile', 'mobile-webkit'].includes(testInfo.project.name), 'mobile browser regression only')
+  await installRoutes(page)
+  await page.route('**/api/ask/stream', (route) => route.fulfill({
+    contentType: 'text/event-stream',
+    body: `event: done\ndata: ${JSON.stringify({
+      answer: '这是一段用于验证移动端消息滚动的较长回答。'.repeat(8),
+      sources: [], assets: [], media: [],
+    })}\n\n`,
+  }))
+  await page.goto('/')
+  await jump(page, 'chat')
+
+  const input = page.locator('.chat-input__field')
+  const send = page.locator('.chat-input__send')
+  await page.locator('.suggested-questions__item').first().tap()
+  await expect(input).toBeFocused()
+
+  for (let index = 0; index < 5; index += 1) {
+    await input.fill(`移动端测试问题 ${index + 1}`)
+    await send.tap()
+    await expect(page.locator('.message-bubble--assistant')).toHaveCount(index + 1)
+  }
+
+  const messageScroll = page.locator('.chat-section__messages')
+  const scrollMetrics = await messageScroll.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }))
+  expect(scrollMetrics.scrollHeight).toBeGreaterThan(scrollMetrics.clientHeight)
+  const mainScrollTop = await page.locator('.snap-container').evaluate((element) => element.scrollTop)
+  await messageScroll.evaluate((element) => { element.scrollTop = 0 })
+  expect(await messageScroll.evaluate((element) => element.scrollTop)).toBe(0)
+  expect(await page.locator('.snap-container').evaluate((element) => element.scrollTop)).toBe(mainScrollTop)
+
+  await input.focus()
+  await page.setViewportSize({ width: 390, height: 568 })
+  const visualHeight = await page.evaluate(() => window.visualViewport?.height ?? window.innerHeight)
+  const rowBox = await page.locator('.chat-input__row').boundingBox()
+  expect(rowBox).not.toBeNull()
+  expect(rowBox!.y).toBeGreaterThanOrEqual(0)
+  expect(rowBox!.y + rowBox!.height).toBeLessThanOrEqual(visualHeight)
+  await expectHitTarget(send)
+  await expectNoDocumentOverflow(page)
+  await page.screenshot({ path: testInfo.outputPath('chat-keyboard-height-390x568.png') })
 })
 
 test('desktop geometry remains intact', async ({ page }, testInfo) => {

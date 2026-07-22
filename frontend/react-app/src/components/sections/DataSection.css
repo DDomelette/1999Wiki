@@ -161,7 +161,12 @@
     flex-direction: row;
     gap: 6px;
     overflow-x: auto;
+    scrollbar-width: none;
     padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .data-section__nav::-webkit-scrollbar {
+    display: none;
   }
 
   .data-section__nav-button {
