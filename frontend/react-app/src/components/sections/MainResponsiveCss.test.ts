@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 const globalCss = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8')
 const navCss = readFileSync(new URL('../animations/reactbits/CardNav.css', import.meta.url), 'utf8')
 const homeCss = readFileSync(new URL('./HomeSection.css', import.meta.url), 'utf8')
+const dataCss = readFileSync(new URL('./DataSection.css', import.meta.url), 'utf8')
 
 describe('main page responsive CSS contract', () => {
   it('uses dynamic viewport units and mobile-safe snap behavior', () => {
@@ -31,5 +32,16 @@ describe('main page responsive CSS contract', () => {
     expect(homeCss).toMatch(/\.home-section__video\s*\{[^}]*object-fit:\s*cover/s)
     expect(homeCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.home-section__cta\s*\{[^}]*min-height:\s*44px/s)
     expect(homeCss).toContain('env(safe-area-inset-bottom')
+  })
+
+  it('switches data panels to the approved transparent poster at 980px', () => {
+    expect(dataCss).toContain('@media (max-width: 980px)')
+    expect(dataCss).toMatch(/\.category-panel__layout\s*\{[^}]*grid-template-columns:\s*minmax\(320px, \.72fr\) minmax\(560px, 1\.45fr\)/s)
+    expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.category-panel__copy\s*\{[^}]*position:\s*absolute[^}]*bottom:/s)
+    expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.data-section__nav\s*\{[^}]*overflow-x:\s*auto/s)
+    expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.data-section__nav-button\s*\{[^}]*min-height:\s*44px/s)
+    const mobileCopy = dataCss.match(/@media \(max-width: 980px\)[\s\S]*?\.category-panel__copy\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(mobileCopy).not.toMatch(/background(?:-color)?:/)
+    expect(mobileCopy).toContain('text-shadow:')
   })
 })

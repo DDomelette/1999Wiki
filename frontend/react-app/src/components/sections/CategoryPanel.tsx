@@ -5,6 +5,7 @@ import { useCategoryData } from '../../hooks/useCategoryData'
 import { ScrollableDescription } from '../ScrollableDescription'
 import { getCategoryCoverSrc } from '../../media/assets'
 import { TiltedImageCard } from '../ui/TiltedImageCard'
+import './DataSection.css'
 
 const panelVariants = {
   hidden: {},
@@ -47,68 +48,42 @@ export function CategoryPanel({ meta }: { meta: CategoryMeta }) {
     <section
       ref={ref}
       data-snap-section={`data:${meta.key}`}
-      className="snap-section"
-      style={{ display: 'flex', alignItems: 'center', padding: '0 8%', position: 'relative' }}
+      className="snap-section category-panel"
+      data-category={meta.key}
     >
       {/* 板块标识竖条 */}
-      <div className="category-bar" style={{ position: 'absolute', left: 0, top: '20%', height: '60%' }} />
+      <div className="category-panel__bar" />
 
       <motion.div
         data-testid="category-panel-layout"
+        className="category-panel__layout"
         variants={panelVariants}
         initial="hidden"
         animate={inView ? 'visible' : 'hidden'}
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(320px, 0.72fr) minmax(560px, 1.45fr)',
-          gap: 'clamp(40px, 5vw, 104px)',
-          width: '100%',
-          maxWidth: 1680,
-          margin: '0 auto',
-        }}
       >
         {/* 左:文字 */}
-        <div>
-          <motion.h2
-            variants={titleVariants}
-            style={{
-              fontFamily: 'var(--font-body)',
-              fontWeight: 700,
-              fontSize: 'clamp(2rem, 5vw, 3.5rem)',
-              color: 'var(--accent-gold)',
-              marginBottom: 8,
-            }}
-          >
+        <div className="category-panel__copy">
+          <motion.h2 className="category-panel__title" variants={titleVariants}>
             {meta.title}
           </motion.h2>
-          <motion.p
-            variants={titleVariants}
-            style={{
-              fontFamily: 'var(--font-display)',
-              color: 'var(--text-muted)',
-              letterSpacing: '0.1em',
-              marginBottom: 24,
-            }}
-          >
+          <motion.p className="category-panel__meta" variants={titleVariants}>
             {meta.subtitle} · {meta.doc_count} 篇
           </motion.p>
           <ScrollableDescription text={description} start={inView} />
-          {loading && <p style={{ color: 'var(--text-muted)', marginTop: 16 }}>加载中...</p>}
+          {loading && <p className="category-panel__loading">加载中...</p>}
         </div>
 
         {/* 右:封面图 */}
-        <motion.div
-          variants={imageVariants}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}
-        >
+        <motion.div className="category-panel__media" variants={imageVariants}>
           <TiltedImageCard
+            className="category-panel__card"
             src={coverUrl}
             alt={meta.title}
             hoverScale={1.15}
             containerStyle={{
-              width: 'min(42vw, 680px)',
-              height: 'min(64vh, 620px)',
-              minWidth: 320,
+              width: 'var(--category-cover-width)',
+              height: 'var(--category-cover-height)',
+              minWidth: 'var(--category-cover-min-width)',
             }}
             onImageError={(e) => {
               (e.currentTarget as HTMLImageElement).style.display = 'none'
@@ -120,19 +95,10 @@ export function CategoryPanel({ meta }: { meta: CategoryMeta }) {
         <a
           href="/wiki"
           aria-label="进入WIKI"
-          style={{
-            position: 'absolute',
-            right: 48,
-            bottom: 40,
-            color: 'var(--accent-gold)',
-            textDecoration: 'none',
-            fontFamily: 'var(--font-display)',
-            letterSpacing: '0.08em',
-            textAlign: 'center',
-          }}
+          className="category-panel__wiki-link"
         >
-          <span style={{ display: 'block', marginBottom: 6 }}>进入WIKI</span>
-          <span aria-hidden="true" style={{ fontSize: 32 }}>→</span>
+          <span className="category-panel__wiki-link-label">进入WIKI</span>
+          <span aria-hidden="true" className="category-panel__wiki-link-arrow">→</span>
         </a>
       )}
     </section>
