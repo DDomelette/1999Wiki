@@ -56,7 +56,10 @@ describe('main page responsive CSS contract', () => {
     expect(chatCss).toMatch(/\.chat-input__row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/s)
     expect(chatCss).toMatch(/\.chat-input__field\s*\{[^}]*min-width:\s*0/s)
     expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.message-bubble\s*\{[^}]*max-width:\s*88%/s)
-    expect(chatCss).toMatch(/\.markdown-message pre\s*\{[^}]*overflow-x:\s*auto/s)
-    expect(chatCss).toMatch(/\.markdown-message table\s*\{[^}]*overflow-x:\s*auto/s)
+    const baseBubble = chatCss.match(/\.message-bubble\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(baseBubble).not.toContain('overflow-wrap:')
+    expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.message-bubble\s*\{[^}]*overflow-wrap:\s*anywhere/s)
+    expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.markdown-message pre\s*\{[^}]*overflow-x:\s*auto/s)
+    expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.markdown-message table\s*\{[^}]*display:\s*block[^}]*overflow-x:\s*auto/s)
   })
 })
