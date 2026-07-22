@@ -113,7 +113,7 @@
 - 自动验证：
 
 ```powershell
-cd D:\1999Wiki\frontend\react-app
+Set-Location frontend/react-app
 npm test
 npm run build
 ```
