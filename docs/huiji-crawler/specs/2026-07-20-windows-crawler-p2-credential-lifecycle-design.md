@@ -1,7 +1,7 @@
 # Windows Huiji Crawler P2 Credential Lifecycle Design
 
 日期：2026-07-20  
-状态：书面规格已完成并通过自审，待用户审阅  
+状态：书面规格已获用户批准，P1 前置已满足，待编写 implementation plan
 父级优先级：P2-A  
 前置条件：Windows crawler P1 标准工具包验收通过
 

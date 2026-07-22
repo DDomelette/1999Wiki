@@ -12,4 +12,4 @@
 
 ## 当前计划
 
-- [P1 Windows 可迁移工具实施计划](2026-07-20-windows-crawler-p1-portable-tool.md)：Task 0-8 已完成，Task 9 专项验收已通过；最终完整测试复验被并发 wiki v3 中间态阻断。
+- [P1 Windows 可迁移工具实施计划](2026-07-20-windows-crawler-p1-portable-tool.md)：Task 0-9 已完成并通过最终验收；下一阶段可开始 P2 credential lifecycle 的 implementation plan。
