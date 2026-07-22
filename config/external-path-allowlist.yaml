@@ -1,0 +1,12 @@
+schema_version: external_path_allowlist.v1
+entries:
+  - id: system-edge-x86
+    file: src/huiji_crawler_tool/discovery.py
+    value: 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+    category: system_executable
+    reason: Microsoft Edge default installation candidate; not project-owned data.
+  - id: system-edge-x64
+    file: src/huiji_crawler_tool/discovery.py
+    value: 'C:\Program Files\Microsoft\Edge\Application\msedge.exe'
+    category: system_executable
+    reason: Microsoft Edge default installation candidate; not project-owned data.

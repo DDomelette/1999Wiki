@@ -1,0 +1,107 @@
+{
+  "schema_version": "evb.artifact-fixture/v1",
+  "public_base_url": "https://media.example.test/assets",
+  "bucket_name": "fixture-bucket",
+  "parent_rows": [
+    {
+      "parent_id": "char:fixture",
+      "entity_id": "fixture",
+      "entity_name": "Fixture Entity",
+      "entity_aliases": ["Fixture"],
+      "category": "character",
+      "section_kind": "entity",
+      "title": "Fixture Entity",
+      "summary_text": "Fixture summary",
+      "source_refs": [],
+      "child_ids": ["char:fixture/voice:1"],
+      "content_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "entity_type": "character",
+      "depth_level": 1,
+      "ancestor_ids": [],
+      "quality_flags": [],
+      "omitted_action_label": "entity"
+    }
+  ],
+  "child_rows": [
+    {
+      "child_id": "char:fixture/voice:1",
+      "parent_id": "char:fixture/voice",
+      "entity_id": "fixture",
+      "entity_name": "Fixture Entity",
+      "category": "character",
+      "section_kind": "voice",
+      "title": "Wake Up",
+      "text": "Wake up.",
+      "search_text": "Fixture Entity Wake up.",
+      "chunk_index": 0,
+      "media_ids": [],
+      "media_policy": "on_intent",
+      "source_refs": [],
+      "content_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "entity_type": "character",
+      "depth_level": 3,
+      "ancestor_ids": ["char:fixture", "char:fixture/voice"],
+      "quality_flags": [],
+      "route_tags": ["voice"],
+      "omitted_action_label": ""
+    }
+  ],
+  "nonvoice_rows": [
+    {
+      "media_id": "media:sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sha1": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "entity_id": "fixture",
+      "entity_name": "Fixture Entity",
+      "parent_id": "char:fixture/profile",
+      "child_id": "char:fixture/profile:0",
+      "asset_type": "image",
+      "mime": "image/webp",
+      "filename": "fixture.webp",
+      "title": "Fixture image",
+      "source_url": "https://source.example.test/fixture.webp",
+      "local_relpath": "assets/files/aa/fixture.webp",
+      "object_key": "reverse1999/image/aa/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp",
+      "url": "https://media.example.test/assets/fixture-bucket/reverse1999/image/aa/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webp",
+      "is_available": true,
+      "is_common": false,
+      "attach_policy": "auto",
+      "search_text": "Fixture Entity image",
+      "content_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "panel_group": "",
+      "sort_order": 0,
+      "duration_ms": 0,
+      "quality_flags": []
+    }
+  ],
+  "voice_source_rows": [
+    {
+      "event_name": "WakeUp",
+      "language": "en",
+      "source_id": "fixture:voice:1:en",
+      "entity_id": "char:fixture",
+      "parent_id": "char:fixture/voice",
+      "child_id": "char:fixture/voice:1",
+      "audio_id": "1",
+      "title": "Wake Up",
+      "source_url": "https://source.example.test/voice/1",
+      "transcript": "Wake up.",
+      "quality_flags": []
+    }
+  ],
+  "resource_rows": [
+    {
+      "filename": "En_WakeUp.mp3",
+      "language": "en",
+      "sha1": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "resource_id": "fixture-resource:voice:1",
+      "source_id": "fixture-resource-manifest:1",
+      "source_url": "https://huiji.example.test/En_WakeUp.mp3",
+      "title": "Wake Up",
+      "mime": "audio/mpeg",
+      "local_relpath": "assets/files/bb/En_WakeUp.mp3",
+      "object_key": "reverse1999/voice/bb/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.mp3",
+      "quality_flags": []
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+embedding:
+  provider: "siliconflow"
+  base_url: "https://api.siliconflow.cn/v1"
+  model: "BAAI/bge-m3"
+  api_key: ""
+llm:
+  provider: "deepseek"
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-v4-flash"
+  thinking: "disabled"
+  api_key: ""
+rag:
+  chunk_size: 500
+  chunk_overlap: 50
+  top_k: 20
+server:
+  backend_port: 8000
+  streamlit_port: 8501
+  gradio_port: 7860
+  frontend_delay_seconds: 3
+vectorstore:
+  provider: "milvus"
+  uri: "http://127.0.0.1:19600"
+  db_name: "reverse1999_rag"
+  collection_name: "text_child_bge_m3_shadow_crawler_v3_20260721t051246z"
+assets:
+  provider: "minio"
+  endpoint: "127.0.0.1:9002"
+  public_base_url: "http://127.0.0.1:9002"
+  bucket_name: "reverse1999-assets"
+  secure: false
+  object_prefix: "reverse1999"
+mysql:
+  host: "127.0.0.1"
+  port: 3306
+  database: "reverse1999_wiki"
+  user: "root"
+  password: ""
+  charset: "utf8mb4"
+wiki:
+  enabled: true
+  default_page_limit: 30
+huiji:
+  enabled: true
+  source_mode: "huiji_crawler"
+  raw_root: "data/huiji/res1999"
+  processed_root: "data/processed/huiji"
+  credential_file: ".local/huiji/credentials/config.dat"
+  build_version: "crawler-v3-20260721t051246z"
+  text_collection_name: "text_child_bge_m3_shadow_crawler_v3_20260721t051246z"
+  asset_caption_collection_name: "asset_caption_bge_m3_v1"
+  provenance_baseline: "config/provenance/huiji-dev.v1.json"
+reranker:
+  enabled: false
+  provider: "siliconflow"
+  base_url: "https://api.siliconflow.cn/v1"
+  model: "BAAI/bge-reranker-v2-m3"
+  api_key: ""
+retrieval:
+  bm25_k: 40
+  dense_k: 40
+  rerank_k: 60
+  context_budget_chars: 9000
+  sibling_window: 1
+  candidate_oversample: 4
+  candidate_k_max: 100
+  voice_page_size: 8
+  voice_page_size_max: 20

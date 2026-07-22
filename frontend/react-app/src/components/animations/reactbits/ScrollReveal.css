@@ -1,0 +1,7 @@
+.reactbits-scroll-reveal {
+  margin: 0;
+  color: var(--text-primary);
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+.reactbits-scroll-reveal [data-reveal-word] { display: inline; will-change: opacity, filter; }

@@ -1,0 +1,368 @@
+<!DOCTYPE html><html class="dark" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>REVERSE: 1999 - Dossier</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "tertiary-fixed": "#f6ded4",
+                      "on-surface": "#f5ded3",
+                      "on-secondary-fixed-variant": "#7a3000",
+                      "on-secondary": "#562000",
+                      "error": "#ffb4ab",
+                      "outline": "#a78b7e",
+                      "surface-container-low": "#251913",
+                      "surface-variant": "#40322b",
+                      "tertiary-fixed-dim": "#d9c2b8",
+                      "surface-dim": "#1c110b",
+                      "on-secondary-fixed": "#351000",
+                      "background": "#1c110b",
+                      "on-error": "#690005",
+                      "on-tertiary": "#3b2d27",
+                      "secondary-fixed": "#ffdbcc",
+                      "on-tertiary-fixed": "#251913",
+                      "on-tertiary-container": "#342720",
+                      "on-primary-fixed": "#351000",
+                      "outline-variant": "#584237",
+                      "secondary-fixed-dim": "#ffb693",
+                      "surface-tint": "#ffb693",
+                      "inverse-on-surface": "#3b2d26",
+                      "on-primary": "#561f00",
+                      "inverse-primary": "#a04100",
+                      "secondary-container": "#ed6916",
+                      "on-primary-container": "#4b1b00",
+                      "surface-container-high": "#342720",
+                      "tertiary": "#d9c2b8",
+                      "on-surface-variant": "#e0c0b2",
+                      "tertiary-container": "#a18d84",
+                      "secondary": "#ffb693",
+                      "inverse-surface": "#f5ded3",
+                      "on-background": "#f5ded3",
+                      "surface-bright": "#44362f",
+                      "primary-container": "#ed6916",
+                      "on-tertiary-fixed-variant": "#53433c",
+                      "surface-container": "#291d16",
+                      "primary-fixed-dim": "#ffb693",
+                      "surface-container-highest": "#40322b",
+                      "on-error-container": "#ffdad6",
+                      "on-secondary-container": "#4b1b00",
+                      "primary": "#ffb693",
+                      "primary-fixed": "#ffdbcc",
+                      "surface": "#1c110b",
+                      "surface-container-lowest": "#160c06",
+                      "error-container": "#93000a",
+                      "on-primary-fixed-variant": "#7a3000"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "panel-padding": "20px",
+                      "unit": "4px",
+                      "gutter": "24px",
+                      "margin-desktop": "48px",
+                      "margin-mobile": "16px"
+              },
+              "fontFamily": {
+                      "body-md": [
+                              "Libre Caslon Text"
+                      ],
+                      "label-caps": [
+                              "JetBrains Mono"
+                      ],
+                      "body-lg": [
+                              "Libre Caslon Text"
+                      ],
+                      "headline-sm": [
+                              "Libre Caslon Text"
+                      ],
+                      "display-lg": [
+                              "Libre Caslon Text"
+                      ],
+                      "data-code": [
+                              "JetBrains Mono"
+                      ],
+                      "headline-md": [
+                              "Libre Caslon Text"
+                      ],
+                      "data-label": [
+                              "JetBrains Mono"
+                      ]
+              },
+              "fontSize": {
+                      "body-md": [
+                              "16px",
+                              {
+                                      "lineHeight": "1.6",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "label-caps": [
+                              "11px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "body-lg": [
+                              "18px",
+                              {
+                                      "lineHeight": "1.6",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-sm": [
+                              "24px",
+                              {
+                                      "lineHeight": "1.3",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "display-lg": [
+                              "48px",
+                              {
+                                      "lineHeight": "1.1",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "data-code": [
+                              "12px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-md": [
+                              "32px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "data-label": [
+                              "14px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "letterSpacing": "0.05em",
+                                      "fontWeight": "500"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+      </script>
+<style>
+        body {
+            background-color: #1c110b; /* base background */
+            background-image: 
+                radial-gradient(circle at 50% 50%, rgba(255, 182, 147, 0.05) 0%, transparent 60%),
+                linear-gradient(rgba(28, 17, 11, 0.9), rgba(28, 17, 11, 0.9));
+        }
+        
+        .scanline {
+            background: linear-gradient(
+                to bottom,
+                transparent 50%,
+                rgba(255, 182, 147, 0.02) 51%
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+        }
+
+        .copper-border {
+            border: 1px solid #a78b7e;
+        }
+        
+        .copper-glow {
+            box-shadow: 0 0 10px rgba(237, 105, 22, 0.1);
+        }
+        
+        .glass-panel {
+            background: rgba(37, 25, 19, 0.6);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+        }
+        
+        .tab-active {
+            border-bottom: 2px solid #ffb693;
+            color: #ffb693;
+        }
+        
+        /* Custom scrollbar for data panels */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.2); 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #a78b7e; 
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #ffb693; 
+        }
+    </style>
+</head>
+<body class="text-on-surface font-body-md h-screen w-screen overflow-hidden flex bg-background selection:bg-primary-container selection:text-on-primary-container relative">
+<div class="absolute inset-0 scanline z-50 mix-blend-overlay"></div>
+<!-- Top Navigation Anchor (Simulated from TopNavBar) -->
+<header class="fixed top-0 w-full h-16 flex justify-between items-center px-margin-desktop max-w-[1440px] mx-auto z-40 bg-background/80 backdrop-blur-xl border-b border-outline-variant shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] left-1/2 -translate-x-1/2">
+<div class="flex items-center gap-4">
+<span class="material-symbols-outlined text-primary cursor-pointer hover:text-secondary transition-colors" data-icon="menu">menu</span>
+<span class="font-display-lg text-[24px] uppercase tracking-tighter text-primary">REVERSE: 1999</span>
+</div>
+<div class="flex items-center gap-6">
+<span class="material-symbols-outlined text-on-surface-variant cursor-pointer hover:text-secondary transition-colors" data-icon="settings">settings</span>
+<span class="material-symbols-outlined text-on-surface-variant cursor-pointer hover:text-secondary transition-colors" data-icon="terminal">terminal</span>
+<span class="material-symbols-outlined text-on-surface-variant cursor-pointer hover:text-secondary transition-colors" data-icon="timer">timer</span>
+</div>
+</header>
+<!-- Sidebar Component (SideNavBar) -->
+<aside class="fixed left-0 top-16 h-[calc(100vh-64px)] w-64 flex flex-col py-panel-padding gap-gutter bg-surface-container-low/60 backdrop-blur-2xl border-r border-outline-variant z-30 transition-all duration-300 ease-in-out">
+<div class="px-6 mb-4 flex flex-col gap-1">
+<div class="text-primary font-headline-sm text-headline-sm uppercase tracking-wider">STRATEGIST_01</div>
+<div class="text-on-surface-variant font-data-code text-data-code">SESSION_ID: 1999-077</div>
+</div>
+<nav class="flex-1 flex flex-col gap-2 px-2">
+<!-- Active Tab -->
+<a class="flex items-center gap-4 px-4 py-3 text-primary font-bold bg-primary-container/20 border-r-2 border-primary rounded-l" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">folder_open</span>
+<span class="font-label-caps text-label-caps tracking-widest uppercase">Dossier</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-surface-variant/30 rounded-l transition-colors" href="#">
+<span class="material-symbols-outlined">query_stats</span>
+<span class="font-label-caps text-label-caps tracking-widest uppercase">Psychube</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-surface-variant/30 rounded-l transition-colors" href="#">
+<span class="material-symbols-outlined">auto_awesome</span>
+<span class="font-label-caps text-label-caps tracking-widest uppercase">Insight</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-surface-variant/30 rounded-l transition-colors" href="#">
+<span class="material-symbols-outlined">architecture</span>
+<span class="font-label-caps text-label-caps tracking-widest uppercase">Resonate</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 text-on-surface-variant hover:text-on-surface hover:bg-surface-variant/30 rounded-l transition-colors" href="#">
+<span class="material-symbols-outlined">checkroom</span>
+<span class="font-label-caps text-label-caps tracking-widest uppercase">Wardrobe</span>
+</a>
+</nav>
+<div class="px-4 mt-auto flex flex-col gap-4">
+<div class="flex flex-col gap-2 border-t border-outline-variant pt-4">
+<a class="flex items-center gap-4 px-2 py-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-variant/30 rounded transition-colors" href="#">
+<span class="material-symbols-outlined text-[18px]">history_edu</span>
+<span class="font-label-caps text-label-caps uppercase">Archive</span>
+</a>
+<a class="flex items-center gap-4 px-2 py-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-variant/30 rounded transition-colors" href="#">
+<span class="material-symbols-outlined text-[18px]">database</span>
+<span class="font-label-caps text-label-caps uppercase">Database</span>
+</a>
+</div>
+<button class="w-full py-3 border border-outline text-primary font-label-caps text-label-caps tracking-widest hover:bg-primary-container hover:text-on-primary-container transition-all copper-border">
+                DEPLOY UNIT
+            </button>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 mt-16 flex-1 h-[calc(100vh-64px)] relative flex bg-[url('placeholder')] bg-cover bg-center" data-alt="A dark, minimalist archival room with subtle ambient amber lighting reflecting off polished dark wood surfaces, mid-century aesthetic." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuASpKMUBGXZiOBt7b7HiP_6_wlDs_hGW2dxYabONkUrERrEzuNy5_dLHVVIgzEvsA6S3z6D5IOit-izmufGkc9nhH7-8Qxn2lHNLpltpJk-Z4l36RGtI8_y8bDhDeTMpWqtfa4lqA4xQH3xdsMzHOQSUt4t7_hBKcuwXbMsSLH4u-LeEEcxmOXvV-14oA9lhAoGYvJosP9z1F7YQuAa2sdGmLn9L5kmhbRxS9D_CxmXyIXQXN1As5sY15a_2tblI6ZzCAPwTfJ6vieu')">
+<!-- Left: Roster List (Miniature) -->
+<div class="w-32 border-r border-outline-variant glass-panel h-full overflow-y-auto flex flex-col gap-4 p-4 z-10 shrink-0">
+<div class="text-on-surface-variant font-data-code text-data-code mb-2">Wiki • 30</div>
+<!-- Active Roster Item -->
+<div class="relative cursor-pointer border border-primary bg-surface-variant/50 p-2 text-center group">
+<div class="absolute -top-2 -left-2 w-4 h-4 border-t border-l border-primary"></div>
+<img class="w-full h-auto object-cover mb-2 opacity-100 mix-blend-luminosity hover:mix-blend-normal transition-all" data-alt="A stylized miniature portrait of a sophisticated woman with blonde hair, dressed in an elegant dark blue noir suit, standing formally." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDRnRMHQ0xo48pucRIkZqfrw2fSIIos6fJ4DiPojEKBoVWYAEZYJ-cZYXlIPn6PmngKqhRRBU8GCiMtDWAgGpC8Umekfi2e4HrEgAILlP-_tQoPrzy-FFb2Fq8xWTmwk0trK7XZV4OY3NdIYxGtrXCCOAuyyfLD2NIVOqW4yldom3vSAMF7Ti2rp5KWDIFVs9iZJbexTln65-oCw9Yxabe284UsMlCykmDKBkq5XamXsRTUWDUFKt7zAGKTVS6cb99D2Egf7dljMS-o">
+<span class="font-label-caps text-label-caps text-primary">槲寄生</span>
+</div>
+<!-- Inactive Roster Items -->
+<div class="relative cursor-pointer border border-transparent p-2 text-center group opacity-60 hover:opacity-100 transition-opacity">
+<img class="w-full h-auto object-cover mb-2 mix-blend-luminosity group-hover:mix-blend-normal transition-all" data-alt="A stylized miniature portrait of a tough-looking woman with a cap and mechanical gear, standing in a rugged pose." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCOvd-bbN3qt8gxMbufPnptzpX0j25FGoYcWz6CYWvK6uzHtW41LhldR3Vs_6tbIscwYquMqnAf-IsadnSjOjaEg6Xf1tl1X4wkNWcmI0mz2hqFHVvYsWLhaC8UGh8P04TxzPgtIHPw54CKFQrmjiuYiEBYyMuB72Hg-fU6d6Wa0KBhifg5k7mOIrUATUog4X-KfJfan5eGkSVaQNljlbnN2FXXFe4zoeBKCcK5ZeFzyA6g6c3t6zVNCmzCMXLWqH1-c8TjlUEj18ya">
+<span class="font-label-caps text-label-caps text-on-surface-variant group-hover:text-primary">红弩箭</span>
+</div>
+<div class="relative cursor-pointer border border-transparent p-2 text-center group opacity-60 hover:opacity-100 transition-opacity">
+<img class="w-full h-auto object-cover mb-2 mix-blend-luminosity group-hover:mix-blend-normal transition-all" data-alt="A stylized miniature portrait of a young boy with distinctive features, dressed in a whimsical, slightly chaotic outfit." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAHDo8ZWwqAKSeSqTExABjAIzYvxWNlVmVEWkExqEuboqOv5ZafH1ouQmTDZHRBfoawlHK7yE9FQ5PWJV-bbnAEOljA-tjTkdJrqgni6M1Ks1qb_pgGERgMHPouroTSETq8VfE3BZiZJLy0K4DtfzNcb9zcNa3FfqWJ3UPT7FCganQbYfmFZ5_Wn5MMwE03eyP_rUQzQPZXT9dNadSvRtimWjvE4ZtgddifV-dP9Wc-AFWCIIQUehZsoG4e8I50Q90oYfjg6wcZA-Fp">
+<span class="font-label-caps text-label-caps text-on-surface-variant group-hover:text-primary">尼克·波顿</span>
+</div>
+</div>
+<!-- Center: Main Portrait Display -->
+<div class="flex-1 relative overflow-hidden flex items-center justify-center z-0">
+<!-- Background Stamp/Redaction -->
+<div class="absolute top-1/4 right-1/4 w-64 h-32 bg-outline/5 -rotate-12 blur-[2px] font-display-lg text-outline-variant/10 pointer-events-none select-none flex items-center justify-center" style="letter-spacing: 0.5em;">CONFIDENTIAL</div>
+<!-- Main Image -->
+<img alt="Druvis III Portrait" class="h-[90%] w-auto object-contain relative z-10 transition-transform duration-700 ease-out hover:scale-105" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDqNpQs3gGdyatpJSC4kIAyXbfg0zvHt8JX0j0VPlAMcYsrK4O9fmTz-nKREbohbYub7u6Nlzvhy0VcUoSulK7fuhOSEMubvcXnQo30MW1LZsYYziqDxzSTaK8fMIxWbfhLWZtloWpB-ZUpjhmXzQdtZSMAnJFwfhScQy8JOzrak-XwTc0d1pdoNzHAQzEsrYvv1Kc3ksXI_6UOSrlcJ4dIlMRF7BdhH1W4H_KJPp2RPkZA0cvH6PpA1dkOZ46-PzfnbHrmEFcmYWZz">
+<!-- Floating Data Labels -->
+<div class="absolute top-[20%] left-[20%] font-data-code text-data-code text-primary/70 tracking-widest z-20">SYS.LOC: FOREST</div>
+<div class="absolute bottom-[20%] right-[30%] font-data-code text-data-code text-primary/70 tracking-widest z-20 flex items-center gap-2">
+<div class="w-2 h-2 rounded-full bg-primary animate-pulse"></div> ACTIVE
+            </div>
+<!-- Navigation Arrows Overlay -->
+<div class="absolute top-8 left-8 flex items-center gap-4 z-20">
+<span class="font-label-caps text-label-caps text-on-surface-variant">立绘</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">Live2D</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">语音</span>
+<div class="ml-12 flex items-center gap-4 bg-surface-container-highest/50 px-4 py-1 border border-outline-variant">
+<span class="material-symbols-outlined text-primary cursor-pointer hover:text-secondary">chevron_left</span>
+<span class="font-data-code text-data-code text-on-surface">1/15</span>
+<span class="material-symbols-outlined text-primary cursor-pointer hover:text-secondary">chevron_right</span>
+</div>
+</div>
+</div>
+<!-- Right: Archival Data Panel -->
+<div class="w-[400px] h-full glass-panel border-l border-outline-variant shrink-0 p-8 flex flex-col gap-8 overflow-y-auto z-10 shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
+<!-- Header section -->
+<div class="border-b border-outline-variant pb-4 relative">
+<div class="absolute -top-4 -right-4 bg-outline-variant px-2 py-1 text-on-surface font-data-code text-[10px] transform rotate-45 shadow-md">ARCHIVE</div>
+<div class="text-on-surface-variant font-label-caps text-label-caps mb-2 tracking-widest">角色资料</div>
+<h1 class="font-headline-md text-[42px] text-primary mb-1">槲寄生</h1>
+<div class="font-data-code text-data-code text-secondary mb-4">Data:Char/3003.json</div>
+<h2 class="font-headline-sm text-headline-sm text-on-surface">Druvis III Character Dossier</h2>
+</div>
+<!-- Core Stats Bento -->
+<div class="grid grid-cols-2 gap-4">
+<div class="border border-outline-variant p-3 bg-surface-dim/40 flex justify-between items-center group hover:border-primary transition-colors">
+<span class="font-data-label text-data-label text-on-surface-variant">稀有度</span>
+<span class="font-data-code text-data-code text-primary group-hover:text-secondary text-lg">5</span>
+</div>
+<div class="border border-outline-variant p-3 bg-surface-dim/40 flex justify-between items-center group hover:border-primary transition-colors">
+<span class="font-data-label text-data-label text-on-surface-variant">职业</span>
+<span class="font-data-code text-data-code text-primary group-hover:text-secondary text-lg">3</span>
+</div>
+<div class="border border-outline-variant p-3 bg-surface-dim/40 flex justify-between items-center group hover:border-primary transition-colors">
+<span class="font-data-label text-data-label text-on-surface-variant">伤害类型</span>
+<span class="font-data-code text-data-code text-primary group-hover:text-secondary text-lg">2 (Mental)</span>
+</div>
+<div class="border border-outline-variant p-3 bg-surface-dim/40 flex justify-between items-center group hover:border-primary transition-colors">
+<span class="font-data-label text-data-label text-on-surface-variant">Medium</span>
+<span class="font-data-code text-data-code text-primary group-hover:text-secondary text-lg">Trees</span>
+</div>
+</div>
+<!-- Descriptive Text -->
+<div class="text-body-md text-on-surface-variant leading-relaxed">
+                神秘学家艺术品，展出于20世纪初叶，参展时长20年。诞生自10月23日秋。原参展地点为美利坚合众国华盛顿州，后保藏于欧洲。尺寸: 66 59/64×28 3/4×7 3/22in。介质: 树木 香调: 木质调 雪松 晚香玉 琥珀 灵感: 林间的渴慕[木] 术杖制作
+            </div>
+<div class="text-data-code font-data-code text-outline-variant leading-relaxed border-l-2 border-outline-variant pl-4 opacity-80">
+                1900榛木铃<br>
+                由Lugus为爱尔兰隐修院附<br>
+                属孤儿院定制的1900百年纪念款，隶属Samildánach真理珠宝系列，同时也是她身上唯一的真理珠宝作品。珠宝鉴定证书颁发于1911年10月，在<br>
+                一场母爱与女儿举办的生日宴上。
+            </div>
+<!-- Skills Section (Simulated Arcane Skills) -->
+<div class="mt-4 flex flex-col gap-3"><h3 class="font-label-caps text-label-caps text-on-surface tracking-widest uppercase mb-2 border-b border-outline pb-1">个人详情</h3><div class="p-6 border border-primary bg-primary-container/10 flex flex-col items-center gap-4 group cursor-pointer hover:bg-primary-container/20 transition-all copper-border"><span class="material-symbols-outlined text-primary text-[32px]">person_search</span><div class="text-center"><div class="font-headline-sm text-primary uppercase tracking-widest">查看完整档案</div><div class="font-data-code text-data-code text-on-surface-variant mt-1">ACCESS FULL DOSSIER</div></div><button class="mt-2 px-8 py-2 bg-primary text-on-primary font-label-caps text-label-caps tracking-widest hover:bg-secondary transition-colors">INITIALIZE</button></div></div>
+<!-- Metadata Links -->
+
+</div>
+</main>
+
+
+</body></html>

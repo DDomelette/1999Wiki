@@ -1,0 +1,1312 @@
+.wiki-shell--kimi-preview {
+  --kimi-ink: #120906;
+  --kimi-panel: rgba(28, 13, 8, 0.91);
+  --kimi-panel-soft: rgba(45, 22, 13, 0.78);
+  --kimi-copper: #c75c20;
+  --kimi-orange: #ef6a13;
+  --kimi-peach: #f2b08b;
+  --kimi-paper: #ead4c4;
+  --kimi-muted: #a88673;
+  --kimi-line: rgba(183, 86, 34, 0.52);
+  --kimi-shadow: rgba(0, 0, 0, 0.58);
+}
+
+.wiki-shell--kimi-preview .card-nav {
+  top: 0;
+  left: 0;
+  width: 100%;
+  transform: none;
+}
+
+.wiki-shell--kimi-preview .card-nav__bar {
+  min-height: 64px;
+  padding-inline: clamp(18px, 3vw, 40px);
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.46), 0 3px 0 rgba(239, 106, 19, 0.24);
+}
+
+.wiki-shell--kimi-preview .card-nav__menu {
+  width: 100%;
+  margin-top: 0;
+  border-right: 0;
+  border-left: 0;
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.48);
+}
+
+.kimi-wiki-selection,
+.kimi-wiki-selection * {
+  box-sizing: border-box;
+}
+
+.kimi-wiki-selection {
+  display: grid;
+  grid-template-columns: 256px 128px minmax(0, 1fr) 400px;
+  width: min(1800px, 100%);
+  height: calc(100dvh - 92px);
+  min-height: calc(100dvh - 92px);
+  margin: 84px auto 0;
+  overflow: hidden;
+  color: var(--kimi-paper);
+  background-color: var(--kimi-ink);
+  border: 1px solid var(--kimi-line);
+  box-shadow: 10px 12px 0 var(--kimi-shadow);
+  font-family: var(--font-body);
+}
+
+.kimi-wiki-diagnostic {
+  position: fixed;
+  top: 72px;
+  right: 18px;
+  z-index: 160;
+  display: grid;
+  gap: 4px;
+  max-width: min(420px, calc(100vw - 36px));
+  padding: 10px 14px;
+  color: var(--kimi-peach);
+  background: rgba(50, 20, 10, 0.86);
+  border: 1px solid var(--kimi-orange);
+  backdrop-filter: blur(16px);
+  font: 600 0.62rem/1.4 var(--font-mono);
+}
+
+.kimi-wiki-diagnostic span {
+  color: var(--kimi-muted);
+  font-weight: 400;
+}
+
+.kimi-wiki-diagnostic button,
+.kimi-wiki-category-failure button {
+  justify-self: start;
+  padding: 5px 8px;
+  color: var(--kimi-paper);
+  background: rgba(117, 47, 19, 0.34);
+  border: 1px solid var(--kimi-line);
+  font: 600 0.58rem/1 var(--font-mono);
+}
+
+.kimi-wiki-category-failure {
+  position: fixed;
+  top: 72px;
+  left: 18px;
+  z-index: 159;
+  display: grid;
+  gap: 7px;
+  max-width: min(360px, calc(100vw - 36px));
+  padding: 10px 14px;
+  color: var(--kimi-peach);
+  background: rgba(50, 20, 10, 0.86);
+  border: 1px dashed var(--kimi-orange);
+  backdrop-filter: blur(16px);
+  font: 600 0.62rem/1.4 var(--font-mono);
+}
+
+.kimi-wiki-detail-failure {
+  display: grid;
+  min-height: 100dvh;
+  place-content: center;
+  gap: 16px;
+  padding: 92px 24px 24px;
+  color: var(--kimi-paper);
+  text-align: center;
+  background: rgba(18, 9, 6, 0.94);
+}
+
+.kimi-wiki-detail-failure button {
+  justify-self: center;
+  min-width: 180px;
+  padding: 11px 18px;
+  color: #2b1209;
+  background: var(--kimi-peach);
+  border: 1px solid var(--kimi-orange);
+}
+
+.kimi-wiki-selection button,
+.kimi-wiki-selection input {
+  font: inherit;
+}
+
+.kimi-wiki-selection__rail,
+.kimi-wiki-selection__index,
+.kimi-wiki-selection__summary {
+  min-width: 0;
+  background: var(--kimi-panel);
+  backdrop-filter: blur(18px) saturate(0.85);
+}
+
+.kimi-wiki-selection__rail {
+  display: flex;
+  flex-direction: column;
+  padding: 28px 12px 20px;
+  border-right: 1px solid var(--kimi-line);
+}
+
+.kimi-wiki-selection__rail > header {
+  padding: 0 2px 28px;
+}
+
+.kimi-wiki-selection__rail > header p {
+  margin: 0 0 6px;
+  color: var(--kimi-peach);
+  font-family: var(--font-display);
+  font-size: clamp(1.25rem, 2vw, 1.9rem);
+}
+
+.kimi-wiki-selection__rail > header span,
+.kimi-wiki-selection__rail footer,
+.kimi-wiki-selection__rail nav span,
+.kimi-wiki-selection__index-header span,
+.kimi-wiki-selection__index-footer,
+.kimi-wiki-selection__summary > div > p,
+.kimi-wiki-selection__summary > div > span,
+.kimi-wiki-selection__stage > header,
+.kimi-wiki-selection__stage > footer span,
+.kimi-wiki-selection__cta-block span {
+  color: var(--kimi-muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0;
+}
+
+.kimi-wiki-selection__rail nav {
+  display: grid;
+  gap: 8px;
+}
+
+.kimi-wiki-selection__rail nav > div {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 52px;
+  padding: 0 18px;
+  color: var(--kimi-muted);
+  border-right: 2px solid transparent;
+}
+
+.kimi-wiki-selection__rail nav > div.is-active {
+  color: var(--kimi-peach);
+  background: rgba(117, 47, 19, 0.52);
+  border-right-color: var(--kimi-orange);
+}
+
+.kimi-wiki-selection__rail nav svg,
+.kimi-wiki-selection__rail footer svg {
+  width: 19px;
+  height: 19px;
+}
+
+.kimi-wiki-selection__rail footer {
+  display: grid;
+  gap: 16px;
+  margin-top: auto;
+  padding-top: 22px;
+  border-top: 1px solid var(--kimi-line);
+}
+
+.kimi-wiki-selection__rail footer span {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.kimi-wiki-selection__rail footer strong {
+  padding: 12px 8px;
+  color: var(--kimi-peach);
+  text-align: center;
+  border: 1px solid var(--kimi-muted);
+}
+
+.kimi-wiki-selection__index {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--kimi-line);
+}
+
+.kimi-wiki-selection__index-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 18px 12px 14px;
+  border-bottom: 1px solid var(--kimi-line);
+}
+
+.kimi-wiki-selection__index-header h1 {
+  margin: 4px 0 0;
+  color: var(--kimi-paper);
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 400;
+}
+
+.kimi-wiki-selection__index-header strong {
+  color: var(--kimi-orange);
+  font-family: var(--font-mono);
+  font-size: 1.55rem;
+}
+
+.kimi-wiki-selection__search {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  margin: 12px 8px 8px;
+  padding: 8px;
+  border: 1px solid var(--kimi-line);
+}
+
+.kimi-wiki-selection__search svg {
+  width: 15px;
+  color: var(--kimi-muted);
+}
+
+.kimi-wiki-selection__search input {
+  width: 100%;
+  min-width: 0;
+  color: var(--kimi-paper);
+  background: transparent;
+  border: 0;
+  outline: 0;
+}
+
+.kimi-wiki-selection__search input::placeholder {
+  color: var(--kimi-muted);
+}
+
+.kimi-wiki-selection__status {
+  margin: 8px;
+  padding: 10px;
+  color: var(--kimi-muted);
+  font-size: 0.75rem;
+  border: 1px dashed var(--kimi-line);
+}
+
+.kimi-wiki-selection__status.is-error button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  color: var(--kimi-peach);
+  background: transparent;
+  border: 0;
+}
+
+.kimi-wiki-selection__status.is-error svg {
+  width: 14px;
+}
+
+.kimi-wiki-selection__roster {
+  display: grid;
+  flex: 1 1 0;
+  align-content: start;
+  gap: 16px;
+  min-height: 0;
+  padding: 10px 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.kimi-wiki-selection__roster-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 7px;
+  color: var(--kimi-muted);
+  text-align: center;
+  background: rgba(12, 7, 5, 0.38);
+  border: 1px solid transparent;
+  opacity: 0.72;
+}
+
+.kimi-wiki-selection__roster-item:hover,
+.kimi-wiki-selection__roster-item[aria-pressed='true'] {
+  color: var(--kimi-peach);
+  border-color: var(--kimi-orange);
+  opacity: 1;
+}
+
+.kimi-wiki-selection__roster-item small {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kimi-wiki-selection__thumb {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.kimi-wiki-selection__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.kimi-wiki-selection__thumb > span {
+  display: grid;
+  place-content: center;
+  gap: 4px;
+  color: var(--kimi-muted);
+}
+
+.kimi-wiki-selection__thumb svg {
+  width: 22px;
+}
+
+.kimi-wiki-selection__index-footer {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--kimi-line);
+}
+
+.kimi-wiki-selection__index-footer button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px;
+  color: var(--kimi-peach);
+  background: rgba(117, 47, 19, 0.28);
+  border: 1px solid var(--kimi-line);
+}
+
+.kimi-wiki-selection__index-footer svg {
+  width: 15px;
+}
+
+.kimi-wiki-selection__stage {
+  position: relative;
+  display: grid;
+  place-items: end center;
+  min-width: 0;
+  min-height: 720px;
+  overflow: hidden;
+  isolation: isolate;
+  background-color: #0b0908;
+  background-position: center;
+  background-size: cover;
+}
+
+.kimi-wiki-selection__stage-shade {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: rgba(8, 5, 4, 0.3);
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.68);
+}
+
+.kimi-wiki-selection__stage > header {
+  position: absolute;
+  top: 26px;
+  right: 28px;
+  left: 28px;
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  color: var(--kimi-copper);
+}
+
+.kimi-wiki-selection__preview-status {
+  position: absolute;
+  top: 68px;
+  left: 50%;
+  z-index: 8;
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100% - 40px));
+  padding: 12px 14px;
+  color: var(--kimi-peach);
+  background: rgba(38, 15, 8, 0.88);
+  border: 1px dashed var(--kimi-orange);
+  translate: -50% 0;
+  backdrop-filter: blur(14px);
+  font-size: 0.72rem;
+}
+
+.kimi-wiki-selection__preview-status button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  color: var(--kimi-paper);
+  background: transparent;
+  border: 0;
+}
+
+.kimi-wiki-selection__preview-status svg {
+  width: 14px;
+}
+
+.kimi-wiki-selection__watermark {
+  position: absolute;
+  top: 30%;
+  left: 8%;
+  color: rgba(218, 157, 119, 0.12);
+  font-family: var(--font-mono);
+  font-size: clamp(1rem, 2vw, 2rem);
+}
+
+.kimi-wiki-selection__portrait {
+  z-index: 2;
+  display: block;
+  width: auto;
+  max-width: 94%;
+  height: min(88dvh, 900px);
+  max-height: 94%;
+  object-fit: contain;
+  object-position: bottom center;
+  filter: drop-shadow(0 24px 24px rgba(0, 0, 0, 0.52));
+}
+
+.kimi-wiki-selection__media-fallback {
+  align-self: center;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  width: min(70%, 360px);
+  aspect-ratio: 3 / 4;
+  color: var(--kimi-muted);
+  border: 1px dashed var(--kimi-line);
+}
+
+.kimi-wiki-selection__media-fallback svg {
+  width: 34px;
+  height: 34px;
+}
+
+.kimi-wiki-selection__stage > footer {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  z-index: 4;
+  display: grid;
+  gap: 4px;
+  width: min(280px, calc(100% - 48px));
+  padding: 14px 18px;
+  text-align: right;
+  background: rgba(19, 10, 7, 0.72);
+  border-right: 2px solid var(--kimi-orange);
+  backdrop-filter: blur(12px);
+}
+
+.kimi-wiki-selection__stage > footer strong {
+  color: var(--kimi-peach);
+}
+
+.kimi-wiki-selection__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 38px 40px 34px;
+  overflow-y: auto;
+  border-left: 1px solid var(--kimi-line);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.32);
+}
+
+.kimi-wiki-selection__summary > div:first-child {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--kimi-line);
+}
+
+.kimi-wiki-selection__summary h2 {
+  margin: 0;
+  color: var(--kimi-peach);
+  font-family: var(--font-display);
+  font-size: clamp(2.3rem, 4vw, 4.2rem);
+  font-weight: 400;
+}
+
+.kimi-wiki-selection__summary em {
+  color: var(--kimi-paper);
+  font-family: var(--font-display);
+  font-size: clamp(1.2rem, 2vw, 1.8rem);
+}
+
+.kimi-wiki-selection__summary-copy {
+  margin: 0;
+  color: var(--kimi-paper);
+  font-family: var(--font-display);
+  font-size: 1.08rem;
+  line-height: 1.85;
+}
+
+.kimi-wiki-selection__summary-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.kimi-wiki-selection__summary-facts > div {
+  min-width: 0;
+  padding: 12px 14px;
+  background: rgba(48, 21, 12, 0.48);
+  border: 1px solid var(--kimi-line);
+}
+
+.kimi-wiki-selection__summary-facts dt {
+  color: var(--kimi-muted);
+  font: 600 0.62rem/1.3 var(--font-mono);
+}
+
+.kimi-wiki-selection__summary-facts dd {
+  margin: 6px 0 0;
+  color: var(--kimi-peach);
+  overflow-wrap: anywhere;
+  font: 600 1rem/1.35 var(--font-display);
+}
+
+.kimi-wiki-selection__summary-copy p {
+  margin: 0 0 12px;
+}
+
+.kimi-wiki-selection__summary-copy p:last-child {
+  margin-bottom: 0;
+}
+
+.kimi-wiki-selection__cta-block {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding: 26px;
+  color: var(--kimi-peach);
+  text-align: center;
+  background: rgba(126, 53, 20, 0.3);
+  border: 1px solid var(--kimi-peach);
+  backdrop-filter: blur(18px);
+}
+
+.kimi-wiki-selection__cta-block svg {
+  width: 30px;
+  height: 30px;
+}
+
+.kimi-wiki-selection__cta-block button {
+  min-width: 190px;
+  margin-top: 10px;
+  padding: 12px 20px;
+  color: #34140a;
+  font-family: var(--font-mono);
+  background: var(--kimi-peach);
+  border: 1px solid #ffd3bc;
+}
+
+.kimi-wiki-selection__cta-block button:disabled {
+  opacity: 0.4;
+}
+
+@media (max-width: 1180px) {
+  .kimi-wiki-selection {
+    grid-template-columns: 190px 112px minmax(0, 1fr) minmax(280px, 340px);
+  }
+
+  .kimi-wiki-selection__summary {
+    padding-inline: 24px;
+  }
+}
+
+@media (max-width: 760px) {
+  .kimi-wiki-selection {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: auto;
+    min-height: 100dvh;
+    margin-top: 76px;
+    overflow: visible;
+    border-right: 0;
+    border-left: 0;
+    box-shadow: none;
+  }
+
+  .kimi-wiki-selection__rail {
+    display: none;
+  }
+
+  .kimi-wiki-selection__index {
+    flex: none;
+    width: 100%;
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--kimi-line);
+  }
+
+  .kimi-wiki-selection__index-header {
+    padding: 22px 20px 16px;
+  }
+
+  .kimi-wiki-selection__index-header h1 {
+    font-size: 2rem;
+  }
+
+  .kimi-wiki-selection__search {
+    margin-inline: 20px;
+  }
+
+  .kimi-wiki-selection__roster {
+    grid-template-columns: 1fr;
+    height: 36dvh;
+    min-height: 250px;
+    max-height: 390px;
+    padding: 14px 20px;
+  }
+
+  .kimi-wiki-selection__roster-item {
+    grid-template-columns: 112px minmax(0, 1fr);
+    grid-template-rows: 1fr 1fr;
+    align-items: end;
+    min-height: 132px;
+    padding: 12px;
+    text-align: left;
+  }
+
+  .kimi-wiki-selection__thumb {
+    grid-row: 1 / 3;
+    aspect-ratio: 4 / 5;
+  }
+
+  .kimi-wiki-selection__roster-item small {
+    align-self: start;
+  }
+
+  .kimi-wiki-selection__index-footer {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    padding-inline: 20px;
+  }
+
+  .kimi-wiki-selection__stage {
+    flex: none;
+    min-height: 0;
+    aspect-ratio: 3 / 4;
+    background-position: center;
+  }
+
+  .kimi-wiki-selection__portrait {
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: 100%;
+  }
+
+  .kimi-wiki-selection__summary {
+    flex: none;
+    width: 100%;
+    padding: 28px 20px 36px;
+    overflow: visible;
+    border-left: 0;
+    border-top: 1px solid var(--kimi-line);
+  }
+
+  .kimi-wiki-selection__cta-block {
+    margin-top: 6px;
+  }
+}
+
+.kimi-wiki-detail,
+.kimi-wiki-detail * {
+  box-sizing: border-box;
+}
+
+.kimi-wiki-detail {
+  --kimi-ink: #120906;
+  --kimi-panel: rgba(28, 13, 8, 0.91);
+  --kimi-panel-soft: rgba(45, 22, 13, 0.78);
+  --kimi-copper: #c75c20;
+  --kimi-orange: #ef6a13;
+  --kimi-peach: #f2b08b;
+  --kimi-paper: #ead4c4;
+  --kimi-muted: #a88673;
+  --kimi-line: rgba(183, 86, 34, 0.52);
+  --kimi-shadow: rgba(0, 0, 0, 0.58);
+  --dossier-copper: var(--kimi-orange);
+  --dossier-line: var(--kimi-line);
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  min-height: 100dvh;
+  padding-top: 64px;
+  overflow: hidden;
+  color: var(--kimi-paper);
+  background:
+    linear-gradient(rgba(18, 9, 6, 0.92), rgba(18, 9, 6, 0.96)),
+    repeating-linear-gradient(112deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 5px);
+  font-family: var(--font-body);
+}
+
+.kimi-wiki-detail :where(h1, h2, h3, h4, p, span, strong, small, dt, dd, button, a) {
+  letter-spacing: 0;
+}
+
+.kimi-desktop-character-dossier {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(270px, 330px) minmax(420px, 1fr) minmax(330px, 410px);
+  width: min(1920px, 100%);
+  height: calc(100dvh - 64px);
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--kimi-line);
+  background: var(--kimi-ink);
+  box-shadow: 12px 14px 0 var(--kimi-shadow);
+  font-size: 1.08rem;
+}
+
+.kimi-desktop-character-dossier__left,
+.kimi-desktop-character-dossier__right {
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--kimi-panel);
+  backdrop-filter: blur(18px) saturate(0.82);
+}
+
+.kimi-desktop-character-dossier__left {
+  padding: 28px 22px 0;
+  border-right: 1px solid var(--kimi-line);
+}
+
+.kimi-desktop-character-dossier__right {
+  padding: 34px 32px 46px;
+  border-left: 1px solid var(--kimi-line);
+  box-shadow: -12px 0 28px rgba(0, 0, 0, 0.34);
+}
+
+.kimi-desktop-character-dossier__left > * + *,
+.kimi-desktop-character-dossier__right > * + * {
+  margin-top: 24px;
+}
+
+.kimi-desktop-character-dossier__left .character-identity-card {
+  rotate: 0deg;
+}
+
+.kimi-desktop-character-dossier__left .character-profile-data {
+  width: calc(100% - 12px);
+  margin-inline: 6px;
+}
+
+.kimi-desktop-character-dossier__left .character-profile-data [data-profile-key] {
+  display: grid;
+}
+
+.kimi-desktop-character-dossier__right .character-summary__cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.kimi-desktop-character-dossier__right .character-summary-card,
+.kimi-desktop-character-dossier__right .character-location-trace {
+  background: rgba(48, 21, 12, 0.54);
+  border-color: var(--kimi-line);
+}
+
+.kimi-desktop-character-dossier__right .character-summary__copy {
+  margin-top: 22px;
+}
+
+.kimi-desktop-character-dossier__right .character-summary__udimo {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.kimi-desktop-character-dossier__right .character-summary__udimo img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.kimi-desktop-character-dossier .character-skill-card__body > p:not(.character-detail__eyebrow) {
+  font-size: 0.7rem;
+}
+
+.kimi-desktop-character-dossier .character-culture-entry p {
+  font-size: 0.72rem;
+}
+
+.kimi-desktop-character-dossier .character-collection-item strong,
+.kimi-desktop-character-dossier .character-collection-item > div > p:last-child {
+  font-size: 0.64rem;
+}
+
+.kimi-desktop-character-dossier .character-progression__description {
+  font-size: 0.77rem;
+}
+
+.kimi-desktop-character-dossier .character-progression li,
+.kimi-desktop-character-dossier .character-voice-record__text {
+  font-size: 0.72rem;
+}
+
+.kimi-desktop-character-dossier__right .character-progression,
+.kimi-desktop-character-dossier__right .character-voice-records {
+  rotate: 0deg;
+}
+
+.kimi-desktop-character-dossier__right .character-voice-records__scroll {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.kimi-desktop-character-dossier__utility {
+  position: sticky;
+  bottom: 0;
+  z-index: 12;
+  display: grid;
+  width: 100%;
+  gap: 8px;
+  padding: 16px 0 12px;
+  background: rgba(28, 13, 8, 0.94);
+  border-top: 1px solid var(--kimi-line);
+  backdrop-filter: blur(18px);
+  color: var(--kimi-muted);
+  font: 600 0.62rem/1 var(--font-mono);
+}
+
+.kimi-desktop-character-dossier__utility :where(button, span, a) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.kimi-desktop-character-dossier__utility button {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.kimi-desktop-character-dossier__utility svg {
+  width: 17px;
+  height: 17px;
+  color: var(--kimi-peach);
+}
+
+.kimi-character-stage {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  isolation: isolate;
+  background-color: #080605;
+  background-position: center;
+  background-size: cover;
+}
+
+.kimi-character-stage__shade {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(90deg, rgba(10, 6, 4, 0.44), rgba(8, 5, 3, 0.09) 42%, rgba(8, 5, 3, 0.38));
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.56);
+}
+
+.kimi-character-stage__portraits {
+  position: absolute;
+  inset: 40px 2% 0;
+  pointer-events: none;
+}
+
+.kimi-character-stage__portraits img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center bottom;
+  filter: drop-shadow(0 26px 30px rgba(0, 0, 0, 0.72));
+  transition: opacity 260ms ease;
+}
+
+.kimi-character-stage__portraits img.is-active {
+  z-index: 2;
+  opacity: 1;
+}
+
+.kimi-character-stage__portraits img.is-inactive {
+  z-index: 1;
+  opacity: 0;
+}
+
+.kimi-character-stage__portraits img.is-failed {
+  opacity: 0;
+}
+
+.kimi-character-stage__fallback {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-content: center;
+  gap: 10px;
+  color: var(--kimi-muted);
+  text-align: center;
+  font: 600 0.7rem/1.4 var(--font-mono);
+}
+
+.kimi-character-stage__fallback svg {
+  width: 44px;
+  height: 44px;
+  margin: auto;
+}
+
+.kimi-character-stage__ribbon {
+  position: absolute;
+  top: 26px;
+  left: -44px;
+  z-index: 6;
+  width: 190px;
+  padding: 9px;
+  color: #2b1209;
+  text-align: center;
+  background: var(--kimi-orange);
+  font: 700 0.62rem/1 var(--font-mono);
+  rotate: -45deg;
+}
+
+.kimi-character-stage__status {
+  position: absolute;
+  top: 28px;
+  right: 28px;
+  z-index: 5;
+  color: var(--kimi-copper);
+  font: 600 0.58rem/1 var(--font-mono);
+}
+
+.kimi-character-stage__identity {
+  position: absolute;
+  right: 24px;
+  bottom: 30px;
+  z-index: 5;
+  width: min(260px, 44%);
+  padding: 14px 18px;
+  text-align: right;
+  background: rgba(22, 11, 7, 0.74);
+  border-right: 2px solid var(--kimi-orange);
+  backdrop-filter: blur(14px);
+}
+
+.kimi-character-stage__identity p,
+.kimi-character-stage__wardrobe p {
+  margin: 0 0 5px;
+  color: var(--kimi-copper);
+  font: 600 0.56rem/1 var(--font-mono);
+}
+
+.kimi-character-stage__identity strong {
+  display: block;
+  color: var(--kimi-peach);
+  font-family: var(--font-display);
+}
+
+.kimi-character-stage__identity span {
+  color: var(--kimi-muted);
+  font-size: 0.72rem;
+}
+
+.kimi-character-stage__wardrobe {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  z-index: 7;
+  display: grid;
+  min-width: 230px;
+  padding: 10px;
+  background: rgba(18, 9, 6, 0.86);
+  border: 1px solid var(--kimi-line);
+  translate: -50% 0;
+  backdrop-filter: blur(14px);
+}
+
+.kimi-character-stage__wardrobe > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.kimi-character-stage__wardrobe button {
+  min-height: 32px;
+  padding: 6px 10px;
+  color: var(--kimi-muted);
+  background: transparent;
+  border: 1px solid var(--kimi-line);
+  font: 600 0.55rem/1 var(--font-mono);
+}
+
+.kimi-character-stage__wardrobe button[aria-pressed='true'] {
+  color: #2c130a;
+  background: var(--kimi-orange);
+}
+
+.kimi-character-stage__wardrobe > span {
+  padding-top: 7px;
+  color: var(--kimi-muted);
+  text-align: right;
+  font: 500 0.5rem/1 var(--font-mono);
+}
+
+.kimi-character-stage__wardrobe > button:disabled {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+  opacity: 0.52;
+}
+
+.kimi-character-stage__wardrobe > button:disabled svg {
+  width: 13px;
+  height: 13px;
+}
+
+.kimi-character-stage__caption {
+  position: absolute;
+  bottom: 88px;
+  left: 24px;
+  z-index: 5;
+  max-width: 220px;
+  color: var(--kimi-muted);
+  font-size: 0.68rem;
+}
+
+.kimi-mobile-character-dossier {
+  display: none;
+}
+
+@media (max-width: 1180px) and (min-width: 761px) {
+  .kimi-desktop-character-dossier {
+    grid-template-columns: minmax(230px, 280px) minmax(360px, 1fr) minmax(290px, 340px);
+  }
+
+  .kimi-desktop-character-dossier__left,
+  .kimi-desktop-character-dossier__right {
+    padding-inline: 18px;
+  }
+}
+
+@media (max-width: 760px) {
+  .kimi-wiki-detail {
+    padding-top: 76px;
+    overflow: visible;
+  }
+
+  .kimi-desktop-character-dossier {
+    display: none;
+  }
+
+  .kimi-mobile-character-dossier {
+    display: block;
+    width: 100%;
+    padding-bottom: calc(78px + env(safe-area-inset-bottom));
+    overflow: visible;
+    background: var(--kimi-ink);
+  }
+
+  .kimi-mobile-character-dossier > section {
+    padding: 30px 20px;
+    border-bottom: 1px solid var(--kimi-line);
+    background: rgba(28, 13, 8, 0.86);
+  }
+
+  .kimi-mobile-character-dossier > section:first-child {
+    padding: 0;
+  }
+
+  .kimi-character-stage--mobile {
+    min-height: 0;
+    aspect-ratio: 3 / 4;
+    background-position: center;
+  }
+
+  .kimi-character-stage--mobile .kimi-character-stage__portraits {
+    inset: 18px 0 0;
+  }
+
+  .kimi-character-stage--mobile .kimi-character-stage__identity {
+    right: auto;
+    bottom: 26px;
+    left: 18px;
+    width: min(64%, 290px);
+    text-align: left;
+    border-right: 0;
+    border-left: 2px solid var(--kimi-orange);
+  }
+
+  .kimi-character-stage--mobile .kimi-character-stage__wardrobe {
+    right: 14px;
+    bottom: 18px;
+    left: auto;
+    min-width: 150px;
+    translate: 0;
+  }
+
+  .kimi-character-stage--mobile .kimi-character-stage__wardrobe > button:disabled {
+    font-size: 0;
+  }
+
+  .kimi-character-stage--mobile .kimi-character-stage__wardrobe > button:disabled svg {
+    margin: auto;
+  }
+
+  .kimi-character-stage--mobile .kimi-character-stage__status {
+    top: 18px;
+    right: 14px;
+    max-width: 52%;
+    text-align: right;
+  }
+
+  .kimi-character-stage--mobile .kimi-character-stage__caption {
+    display: none;
+  }
+
+  .kimi-mobile-character-dossier .character-summary__cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .kimi-mobile-character-dossier .character-profile-data {
+    width: calc(100% - 12px);
+    margin-inline: 6px;
+  }
+
+  .kimi-mobile-character-dossier .character-profile-data [data-profile-key] {
+    display: grid;
+  }
+
+  .kimi-mobile-character-dossier .character-progression,
+  .kimi-mobile-character-dossier .character-voice-records {
+    rotate: 0deg;
+  }
+
+  .kimi-mobile-character-dossier .character-voice-records__scroll {
+    max-height: 250px;
+    overflow-y: auto;
+  }
+
+  .kimi-mobile-character-dossier .character-skill-card {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+
+  .kimi-mobile-character-dossier .character-skill-card > img {
+    width: 92px;
+    height: 128px;
+  }
+
+  .kimi-mobile-character-dossier .character-collection-item {
+    grid-template-columns: 92px minmax(0, 1fr);
+  }
+
+  .kimi-mobile-character-dossier .character-collection-item > img {
+    width: 92px;
+    height: 128px;
+    object-fit: contain;
+  }
+
+  .kimi-mobile-dossier-tabs {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 120;
+    display: grid;
+    height: calc(64px + env(safe-area-inset-bottom));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding-bottom: env(safe-area-inset-bottom);
+    background: rgba(24, 11, 7, 0.94);
+    border-top: 1px solid var(--kimi-line);
+    backdrop-filter: blur(18px);
+  }
+
+  .kimi-mobile-dossier-tabs button {
+    display: grid;
+    place-content: center;
+    gap: 4px;
+    color: var(--kimi-muted);
+    background: transparent;
+    border: 0;
+    border-right: 1px solid var(--kimi-line);
+    font: 600 0.52rem/1 var(--font-mono);
+  }
+
+  .kimi-mobile-dossier-tabs button[aria-current='page'] {
+    color: var(--kimi-peach);
+    background: rgba(117, 47, 19, 0.36);
+  }
+
+  .kimi-mobile-dossier-tabs button svg {
+    width: 17px;
+    height: 17px;
+    margin: auto;
+  }
+
+  .kimi-mobile-dossier-tabs__status {
+    position: absolute;
+    right: 8px;
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    display: grid;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    color: var(--kimi-peach);
+    background: var(--kimi-panel);
+    border: 1px solid var(--kimi-line);
+  }
+
+  .kimi-mobile-dossier-tabs__status svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+@media (max-width: 420px) {
+  .kimi-character-stage--mobile {
+    aspect-ratio: 4 / 5;
+  }
+
+  .kimi-character-stage--mobile .kimi-character-stage__identity {
+    width: 58%;
+    padding: 10px 12px;
+  }
+
+  .kimi-character-stage--mobile .kimi-character-stage__wardrobe {
+    min-width: 132px;
+  }
+
+  .kimi-mobile-character-dossier .character-skill-card,
+  .kimi-mobile-character-dossier .character-collection-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kimi-mobile-character-dossier .character-skill-card > img,
+  .kimi-mobile-character-dossier .character-collection-item > img {
+    width: 100%;
+    height: auto;
+    max-height: 320px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kimi-wiki-detail *,
+  .kimi-wiki-detail *::before,
+  .kimi-wiki-detail *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

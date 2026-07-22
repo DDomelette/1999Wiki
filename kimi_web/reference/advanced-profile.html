@@ -1,0 +1,528 @@
+<!DOCTYPE html><html class="dark" lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>槲寄生 | DRUVIS III - FOUNDATION_ARCHIVE</title>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;family=JetBrains+Mono:wght@100;300;400;500;700&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=block" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-primary": "#561f00",
+                        "tertiary": "#d1c5b6",
+                        "on-primary-container": "#4b1b00",
+                        "secondary-fixed-dim": "#bcc9c9",
+                        "surface": "#1c110b",
+                        "primary": "#e2610b",
+                        "tertiary-fixed": "#eee0d1",
+                        "on-primary-fixed": "#351000",
+                        "on-tertiary-fixed": "#211b11",
+                        "error": "#ffb4ab",
+                        "primary-container": "#ed6916",
+                        "error-container": "#93000a",
+                        "surface-container": "#2a1d17",
+                        "tertiary-container": "#9a8f82",
+                        "surface-bright": "#45362f",
+                        "on-error-container": "#ffdad6",
+                        "on-surface": "#f6ded4",
+                        "on-secondary-fixed-variant": "#3d4949",
+                        "surface-tint": "#ffb693",
+                        "inverse-surface": "#f6ded4",
+                        "surface-variant": "#40322b",
+                        "on-tertiary": "#362f25",
+                        "on-primary-fixed-variant": "#7a3000",
+                        "inverse-primary": "#a04100",
+                        "surface-dim": "#1c110b",
+                        "primary-fixed-dim": "#ffb693",
+                        "secondary-container": "#3f4b4b",
+                        "surface-container-high": "#352721",
+                        "secondary-fixed": "#d8e5e5",
+                        "inverse-on-surface": "#3c2d27",
+                        "surface-container-low": "#251913",
+                        "on-tertiary-fixed-variant": "#4e463b",
+                        "on-surface-variant": "#e0c0b2",
+                        "outline": "#a78b7e",
+                        "surface-container-lowest": "#160c07",
+                        "on-background": "#f6ded4",
+                        "on-error": "#690005",
+                        "tertiary-fixed-dim": "#d1c5b6",
+                        "on-tertiary-container": "#30291f",
+                        "surface-container-highest": "#40322b",
+                        "secondary": "#bcc9c9",
+                        "outline-variant": "#584237",
+                        "on-secondary-container": "#aebbbb",
+                        "on-secondary": "#273333",
+                        "on-secondary-fixed": "#121e1e",
+                        "background": "#1c110b",
+                        "primary-fixed": "#ffdbcc"
+                    },
+                    "fontFamily": {
+                        "data-mono": ["JetBrains Mono"],
+                        "body-lg": ["JetBrains Mono"],
+                        "body-md": ["JetBrains Mono"],
+                        "headline-md": ["Libre Caslon Text"],
+                        "headline-lg": ["Libre Caslon Text"],
+                        "display-lg": ["Libre Caslon Text"],
+                        "label-caps": ["JetBrains Mono"]
+                    },
+                    "boxShadow": {
+                        "hard": "8px 8px 0px 0px rgba(0,0,0,0.8)",
+                        "glow": "0 0 15px rgba(226, 97, 11, 0.4)"
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            cursor: crosshair;
+        }
+        .bg-texture-paper {
+            background-image: url("https://www.transparenttextures.com/patterns/natural-paper.png"), linear-gradient(135deg, #110a07 0%, #1c110b 50%, #26170e 100%);
+            background-blend-mode: overlay;
+        }
+        .scanlines {
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.1) 50%,
+                rgba(0,0,0,0.1)
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+        }
+        .watermark-chrono {
+            position: fixed;
+            font-size: 30vw;
+            color: rgba(226, 97, 11, 0.03);
+            font-family: 'Libre Caslon Text', serif;
+            font-weight: 700;
+            z-index: 0;
+            white-space: nowrap;
+            transform: rotate(-15deg);
+            top: 20%;
+            left: -10%;
+            pointer-events: none;
+            user-select: none;
+        }
+        
+        /* Glassmorphism Panels */
+        .glass-panel {
+            background: rgba(28, 17, 11, 0.6);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(226, 97, 11, 0.2);
+            box-shadow: 10px 10px 30px rgba(0,0,0,0.7), inset 0 0 20px rgba(0,0,0,0.5);
+            /* Sharp 90 deg corners as requested */
+            border-radius: 0;
+        }
+        .glass-panel-light {
+            background: rgba(42, 29, 23, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(167, 139, 126, 0.3);
+            box-shadow: 4px 4px 15px rgba(0,0,0,0.5);
+        }
+
+        /* Fragmented/Sticky Note Styles */
+        .sticky-note {
+            background: #dcd0c0; /* paper color */
+            color: #2c251f;
+            border: none;
+            box-shadow: 2px 4px 10px rgba(0,0,0,0.5);
+            transform-origin: top center;
+        }
+        .tape {
+            position: absolute;
+            width: 80px;
+            height: 25px;
+            background: rgba(255,255,255,0.4);
+            top: -10px;
+            left: 50%;
+            transform: translateX(-50%) rotate(-2deg);
+            backdrop-filter: blur(2px);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+
+        .stamp {
+            border: 3px solid #e2610b;
+            color: #e2610b;
+            padding: 4px 8px;
+            font-weight: bold;
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+            border-radius: 4px;
+            opacity: 0.7;
+            transform: rotate(-15deg);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(28, 17, 11, 0.5);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(226, 97, 11, 0.5);
+            border-radius: 0;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(226, 97, 11, 0.8);
+        }
+
+        /* Glitch text effect */
+        .glitch-hover:hover {
+            animation: textGlitch 0.2s linear infinite;
+            text-shadow: 2px 0 #ff00c1, -2px 0 #00fff9;
+        }
+        @keyframes textGlitch {
+            0% { transform: translate(0) }
+            20% { transform: translate(-2px, 1px) }
+            40% { transform: translate(-2px, -1px) }
+            60% { transform: translate(2px, 1px) }
+            80% { transform: translate(2px, -1px) }
+            100% { transform: translate(0) }
+        }
+
+        .vertical-text {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+        }
+        
+        .char-img-container {
+            mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+        }
+    </style>
+</head>
+<body class="bg-texture-paper text-on-background overflow-hidden h-screen w-screen flex flex-col font-body-md selection:bg-primary selection:text-surface">
+<!-- Background Elements -->
+<div class="fixed inset-0 scanlines z-50"></div>
+<div class="watermark-chrono">CHRONOGRAPH</div>
+<div class="fixed inset-0 z-0 opacity-10 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary via-transparent to-transparent"></div>
+<!-- Header / Top Navigation (Retro HUD style) -->
+<header class="fixed top-0 left-0 w-full z-40 flex justify-between items-center px-8 py-3 border-b border-outline/20 bg-surface/40 backdrop-blur-md shadow-hard">
+<div class="flex items-center gap-8">
+<div class="flex flex-col">
+<span class="font-headline-md text-primary tracking-widest uppercase text-xl leading-none">REVERSE:1999</span>
+<span class="font-data-mono text-[9px] text-outline tracking-widest mt-1">FOUNDATION_ARCHIVE_ACCESS // TERMINAL_03</span>
+</div>
+<div class="h-8 w-[1px] bg-outline/30 mx-4"></div>
+<nav class="flex gap-6 font-data-mono text-xs">
+<a class="text-primary hover:text-primary-container transition-colors relative group" href="#">
+                    [ ARCHIVE ]
+                    <span class="absolute -bottom-1 left-0 w-full h-[1px] bg-primary scale-x-100 transition-transform"></span>
+</a>
+<a class="text-on-surface/60 hover:text-on-surface transition-colors" href="#">PERSONNEL</a>
+<a class="text-on-surface/60 hover:text-on-surface transition-colors" href="#">CHRONO_MAP</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<div class="font-data-mono text-[10px] text-right text-outline">
+<div>SESSION_ID: <span class="text-on-surface">7F22A1_DRUVIS</span></div>
+<div>SYS_TIME: <span class="text-primary animate-pulse">19:29:43</span></div>
+</div>
+<div class="w-2 h-2 rounded-full bg-error shadow-glow"></div>
+</div>
+</header>
+<main class="relative flex-1 w-full h-full overflow-hidden pt-16 z-10">
+<!-- Center Character Anchor -->
+<div class="absolute inset-0 flex justify-center items-end pb-0 z-10 pointer-events-none">
+<div class="relative w-full max-w-[1400px] h-full char-img-container flex justify-center items-end">
+<img alt="Druvis III Initial" class="h-[95vh] object-contain object-bottom drop-shadow-[0_0_50px_rgba(0,0,0,0.8)] transition-opacity duration-700 opacity-100" id="img-initial" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBjd98PE6fVcpfJ6zt5mrLddLb-PKM2WhSoyjGcRH-b4vbJFLrFGLjp3nJgCPRtjDrFI3RdjacG1VfQULyUtPYtkYTMVB2J48e6RIvv0Gy6XmFyhrK5z07yjZmtPES4cANltJKTsLOruav-2S_Ar-L6NH3tzU5EPp8RCL0UEVG3sXscvGJMlvDyKGSUuq_ys3dMxeH7AZEBM6xfsLQgeX7owmaIq1R31QHCdkwTvI6mEpXgNad49NVSVL8IY8tDSfG9KkX9qj8A">
+<img alt="Druvis III Insight" class="absolute bottom-0 h-[95vh] object-contain object-bottom drop-shadow-[0_0_50px_rgba(0,0,0,0.8)] transition-opacity duration-700 opacity-0" id="img-insight" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCPlp9gLVdBgH4iz7Ho-iRDu0aAQognmNkF9ofrVg21Bp9CbKIRgy7KdDKigQWaZFI_UIXvvk1qPEq9PSB5MfJwv0C33wfDWeIFFhb4H5Zd28LSbpvD8ChM6Jj36m_TGq7UZf_1COx3wVWp3_qXhGSy_fwfF40N4U5AQkyB6EXM17dhK2ZUHoosFN4d0pF-BdfpRA3DRe___Mmo3I1UVTxLPTw-NZXj9eQ0vSd41kcCvSTI_TwZChIRNM-SCSP2kc98W3aTbgN4">
+</div>
+<!-- Giant Vertical Name Overlay -->
+<div class="absolute left-[20%] top-1/4 -translate-y-1/2 vertical-text font-display-lg text-[120px] text-primary/10 select-none tracking-tighter leading-none z-0">
+                DRUVIS III
+            </div>
+</div>
+<!-- Left Column: Navigation & Basic Info (Fragmented) -->
+<div class="absolute left-10 top-24 w-80 z-20 h-[calc(100vh-140px)] overflow-y-auto pr-4 pb-10" style="scrollbar-width: thin; scrollbar-color: rgba(226, 97, 11, 0.5) rgba(28, 17, 11, 0.5);">
+<!-- Operative Selector -->
+<div class="glass-panel p-4 -rotate-1 relative group cursor-pointer border-l-4 border-l-primary mb-6">
+<div class="absolute top-2 right-2 text-[10px] font-data-mono text-outline">INDEX_03</div>
+<div class="flex gap-4 items-center">
+<div class="w-14 h-14 bg-black border border-outline/30 overflow-hidden relative">
+<img alt="Avatar" class="w-full h-full object-cover scale-150 object-top opacity-80 group-hover:opacity-100 transition-opacity" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBjd98PE6fVcpfJ6zt5mrLddLb-PKM2WhSoyjGcRH-b4vbJFLrFGLjp3nJgCPRtjDrFI3RdjacG1VfQULyUtPYtkYTMVB2J48e6RIvv0Gy6XmFyhrK5z07yjZmtPES4cANltJKTsLOruav-2S_Ar-L6NH3tzU5EPp8RCL0UEVG3sXscvGJMlvDyKGSUuq_ys3dMxeH7AZEBM6xfsLQgeX7owmaIq1R31QHCdkwTvI6mEpXgNad49NVSVL8IY8tDSfG9KkX9qj8A">
+<div class="absolute inset-0 border border-primary/50 m-1"></div>
+</div>
+<div>
+<h2 class="font-headline-md text-2xl text-primary m-0 leading-none">槲寄生</h2>
+<div class="font-data-mono text-xs text-on-surface uppercase mt-1">Druvis III</div>
+<div class="font-data-mono text-[9px] text-outline mt-1 flex gap-2">
+<span>✦✦✦✦✦✦</span>
+<span>PLANT (木)</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Core Data Sticky Note -->
+<div class="sticky-note p-5 w-72 rotate-3 ml-4 relative mb-10">
+<div class="tape"></div>
+<div class="absolute -right-4 -top-4 stamp">VERIFIED</div>
+<h3 class="font-headline-md text-lg border-b border-black/20 pb-2 mb-3">PROFILE_DATA</h3>
+<ul class="font-data-mono text-xs space-y-2">
+<li class="flex justify-between border-b border-black/10 pb-1">
+<span class="opacity-60">Medium:</span> <span>树木 (Trees)</span>
+</li>
+<li class="flex justify-between border-b border-black/10 pb-1">
+<span class="opacity-60">Damage Type:</span> <span>精神创伤 (Mental)</span>
+</li>
+<li class="flex justify-between border-b border-black/10 pb-1">
+<span class="opacity-60">Birthday:</span> <span>10-23 (Autumn)</span>
+</li>
+<li class="flex justify-between pb-1">
+<span class="opacity-60">Tags:</span> <span>输出 / 控制 / 辅助</span>
+</li>
+</ul>
+<div class="mt-4 p-2 bg-black/5 text-[10px] italic font-body-md border-l-2 border-primary leading-tight">
+                    "漫游于林间的术杖制造师，橡树与月亮的友人，你最沉静的朋友之一。"
+                </div>
+</div>
+<!-- Incantations (Cards) -->
+<div class="glass-panel p-4 w-80 -rotate-2 mb-8">
+<h3 class="font-data-mono text-xs text-primary mb-3 flex justify-between items-center">
+<span>&gt; TACTICAL_SKILLS</span>
+<span class="material-symbols-outlined text-sm">psychology</span>
+</h3>
+<div class="space-y-3"><!-- Skill 1: Wind into Woods -->
+<div class="border border-outline/20 p-2 bg-surface/50 hover:border-primary/50 transition-colors cursor-help group flex gap-3">
+<div class="w-16 h-24 shrink-0 overflow-hidden border border-outline/30">
+<img alt="Wind into Woods" class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCBUpnMqfl8KPZ8ffA-44pdW998BEz6omULrTNFKmHnwBJeiIAvPwGrUMef6HfGN6M4Lqrck-gDFRkpGAreF6cbNAjz0A7EhgPTElGPnxf9bcmEDawrum6IimhIHT8eCiL4s75NxwuY8Eam3BExi3iRW3ZxJWw9HilHuUs0PeSQOgxzSDEwYRZe0zt0cRrPVUn07KDGk2GcvFmMfTzs_EJFrye8np8KmrhrmEfVdJ839DXS5zPA56eMAk7FkraSe89rZ9iLecJ6">
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-center mb-1">
+<span class="font-headline-md text-sm text-on-surface group-hover:text-primary transition-colors">风入林 (Wind into Woods)</span>
+<span class="text-[10px] font-data-mono text-[#933334] px-1 border border-[#933334]">ATTACK</span>
+</div>
+<p class="text-[9px] font-data-mono text-outline leading-tight">单体攻击，造成200%精神创伤，使其陷入[石化]状态。</p>
+</div>
+</div>
+<!-- Skill 2: Early Dew -->
+<div class="border border-outline/20 p-2 bg-surface/50 hover:border-primary/50 transition-colors cursor-help group flex gap-3">
+<div class="w-16 h-24 shrink-0 overflow-hidden border border-outline/30">
+<img alt="Early Dew" class="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBNjmkvw3-HcmaxtkWJ8XQtcQLmwGezu7e_HwmplyODBDcZmDLarizcQIUjyLg-DiiHrZGc42CsbeLD_tdmolCveDUtUjEqGjalhCcKkcwIQ75fDqxciv5tiVABPda-XfFspTAonLQ5lNdAtxwaiT_AuU_77JbrvY8E1w3BYK94mhcUX0sTaLzgy7C3QbTA09WVwIXtbcCfysYuaeJzl7XCKe-qY8MTww6892MgrS6WLZ-dCqqTFibVxzkD1BO97T1Lfr4so90G">
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-center mb-1">
+<span class="font-headline-md text-sm text-on-surface group-hover:text-primary transition-colors">露渐白 (Early Dew)</span>
+<span class="text-[10px] font-data-mono text-[#933334] px-1 border border-[#933334]">ATTACK</span>
+</div>
+<p class="text-[9px] font-data-mono text-outline leading-tight">群体攻击，对2名敌方造成120%精神创伤；穿透率提升30%。</p>
+</div>
+</div>
+<!-- Ultimate: Silent Woods -->
+<div class="border border-primary/40 p-2 bg-primary/5 hover:bg-primary/10 transition-colors cursor-help group relative overflow-hidden flex gap-3">
+<div class="w-16 h-24 shrink-0 overflow-hidden border border-primary/30 z-10">
+<img alt="Ultimate" class="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDFY4U4DPQkLldWCpzNPxqIpUibLSTih2VSauoOnfEltTb7d7N4LGLoFKz0e2YBRINpSq0LeYop6GfFEKduYyMBu4_XCSyHwXnqDI2_TSRpeZQ-ITPHbVrj-VdIaPcRmc6q5RTKMDXKp4QibNI8VbOdC6mwPHiowXEyjqcz_PAjBUWd2EizaTgoqNtsHTc7P1npLhQOHw_CiRYHf6LSVAZfzWiQT4cByCMhCAt7BU2lmiQLbkjHgQa2VYLMroMwf-UmYj3R3SLh">
+</div>
+<div class="flex-1 z-10">
+<div class="absolute right-0 top-0 text-4xl text-primary opacity-10 material-symbols-outlined -rotate-12 transform translate-x-2 -translate-y-2">auto_awesome</div>
+<div class="flex justify-between items-center mb-1">
+<span class="font-headline-md text-sm text-primary">林间，静默将至</span>
+<span class="text-[10px] font-data-mono text-primary px-1 border border-primary">ULTIMATE</span>
+</div>
+<p class="text-[9px] font-data-mono text-outline leading-tight">群体攻击，对敌方全体造成400%精神创伤；主目标[石化]1回合。</p>
+</div>
+</div></div>
+</div>
+<!-- Culture Panel -->
+<div class="glass-panel p-4 w-80 rotate-1 mb-8">
+<h3 class="font-data-mono text-xs text-primary mb-3 flex justify-between items-center border-b border-outline/30 pb-2">
+<span>&gt; CULTURE // 文化</span>
+<span class="material-symbols-outlined text-sm">history_edu</span>
+</h3>
+<div class="space-y-4 text-[10px] font-body-md text-on-surface/80 leading-relaxed">
+<div>
+<div class="text-primary font-bold mb-1">咆哮的1920年代 | Roaring Twenties</div>
+<p>20世纪20年代，立体派艺术蓬勃兴起。强调几何特征的风潮不仅影响了克莱斯勒大厦，也改变了女性的时尚风格。全新的剪裁设计，正揭示着一场不协调的碰撞变革——现代化。</p>
+</div>
+<div>
+<div class="text-primary font-bold mb-1">喀斯卡特的秋天 | Autumn in Cascade</div>
+<p>她记得喀斯卡特山脉里的每一棵树木。苔藓的形状、生长轮的不规则、蚁窝的规模，每一棵树都是那么的不同。为了倾听它们的诉语，她多次背离母亲的期待，逃过一切没有结尾的宴会，只身闯入森林的长夜。</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Column: Deep Lore & Details -->
+<div class="absolute right-10 top-24 w-[380px] z-20 space-y-6 flex flex-col h-[calc(100vh-140px)]">
+<!-- Inheritance Panel -->
+<div class="glass-panel p-5 rotate-1">
+<h3 class="font-headline-md text-lg text-primary border-b border-outline/30 pb-2 mb-3 flex items-center gap-2">
+<span class="material-symbols-outlined text-base">eco</span>
+                    传承: 木秀于林
+                </h3>
+<div class="space-y-4">
+<div class="flex gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center border border-primary/50 shrink-0 font-data-mono text-xs text-primary">I</div>
+<div class="text-[11px] font-body-md text-on-surface/80 leading-snug pt-1">当自身处于<span class="text-primary">[属性提升]</span> <span class="text-primary">[状态增益]</span>时，造成的伤害提升<span class="text-primary font-bold">20%</span></div>
+</div>
+<div class="flex gap-3 opacity-60">
+<div class="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center border border-outline/50 shrink-0 font-data-mono text-xs">II</div>
+<div class="text-[11px] font-body-md text-on-surface/80 leading-snug pt-1">进入战斗时，造成伤害提升<span class="text-primary font-bold">8%</span></div>
+</div>
+<div class="flex gap-3 opacity-60">
+<div class="w-8 h-8 rounded-full bg-surface-container flex items-center justify-center border border-outline/50 shrink-0 font-data-mono text-xs">III</div>
+<div class="text-[11px] font-body-md text-on-surface/80 leading-snug pt-1">进入战斗时，己方<span class="text-primary">[木]灵感</span>角色进入<span class="text-primary font-bold">[生生不息]</span>状态（最多触发1次）</div>
+</div>
+</div>
+</div>
+<!-- Shaping / Potency Panel -->
+<div class="glass-panel p-4 -rotate-1">
+<h3 class="font-headline-md text-lg text-primary border-b border-outline/30 pb-2 mb-3 flex items-center gap-2">
+<span class="material-symbols-outlined text-base">architecture</span>
+                    塑造
+                </h3>
+<div class="space-y-2 h-[100px] overflow-y-auto pr-2" style="scrollbar-width: thin; scrollbar-color: rgba(226, 97, 11, 0.5) rgba(28, 17, 11, 0.5);">
+<div class="text-[10px] font-body-md text-on-surface/80 border-l-2 border-outline/30 pl-2">
+<span class="text-primary font-bold">LV.1</span> 【风入林】在咒语2/3阶时，造成的精神创伤提升至300/400%
+                </div>
+<div class="text-[10px] font-body-md text-on-surface/80 border-l-2 border-outline/30 pl-2">
+<span class="text-primary font-bold">LV.2</span> 【林间，静默将至】造成的精神创伤提升至450%
+                </div>
+<div class="text-[10px] font-body-md text-on-surface/80 border-l-2 border-outline/30 pl-2">
+<span class="text-primary font-bold">LV.3</span> 【露渐白】在咒语1/2/3阶时，造成的精神创伤提升至135/200/325%
+                </div>
+<div class="text-[10px] font-body-md text-on-surface/80 border-l-2 border-outline/30 pl-2">
+<span class="text-primary font-bold">LV.4</span> 【林间，静默将至】造成的精神创伤提升至500%
+                </div>
+<div class="text-[10px] font-body-md text-on-surface/80 border-l-2 border-outline/30 pl-2">
+<span class="text-primary font-bold">LV.5</span> 【露渐白】穿透率提升的效果变为40%
+                </div>
+</div>
+</div>
+<!-- Voice Records (Scrollable) -->
+<div class="glass-panel p-5 flex-1 flex flex-col min-h-0 relative">
+<div class="absolute top-4 right-4 text-outline/20">
+<span class="material-symbols-outlined text-4xl">mic_external_on</span>
+</div>
+<h3 class="font-headline-md text-lg text-primary border-b border-outline/30 pb-2 mb-3 shrink-0">VOICE_RECORDS // 语音档案</h3>
+<div class="overflow-y-auto flex-1 pr-2 space-y-4 font-body-md text-xs text-on-surface/80" style="scrollbar-width: thin; scrollbar-color: rgba(226, 97, 11, 0.5) rgba(28, 17, 11, 0.5);">
+<div class="border-l-2 border-primary/50 pl-3">
+<div class="flex justify-between items-center mb-1">
+<div class="font-data-mono text-[9px] text-primary uppercase">初遇 | First Meeting</div>
+<span class="material-symbols-outlined text-[10px] text-primary">play_arrow</span>
+</div>
+<p class="mb-1">"我是槲寄生，很高兴认识你。…… 你说看不出我很高兴？呵…… 那么现在呢？"</p>
+<p class="text-[9px] text-outline/60 italic leading-tight">I am Druvis III. It's my pleasure to meet you…. You said I didn't look very pleased? Hah … How about now?</p>
+</div>
+<div class="border-l-2 border-outline/30 pl-3">
+<div class="flex justify-between items-center mb-1">
+<div class="font-data-mono text-[9px] text-primary uppercase">箱中气候 | Climate in the Case</div>
+<span class="material-symbols-outlined text-[10px] text-outline/50">play_arrow</span>
+</div>
+<p class="mb-1">"水从泥土里去往天上，又从天上坠落地面。如同我从林中来，又向林中去。"</p>
+<p class="text-[9px] text-outline/60 italic leading-tight">Water travels from the ground to the sky, and then falls back; just as I, who come from the forest, and now go back.</p>
+</div>
+<div class="border-l-2 border-outline/30 pl-3">
+<div class="flex justify-between items-center mb-1">
+<div class="font-data-mono text-[9px] text-primary uppercase">朝晨 | Morning</div>
+<span class="material-symbols-outlined text-[10px] text-outline/50">play_arrow</span>
+</div>
+<p class="mb-1">"太阳升起，野兽们噤声不吠。而后，我听见第一只离林之鸟振翅的声响。"</p>
+<p class="text-[9px] text-outline/60 italic leading-tight">When the sun rose, the beasts kept silence. Then, I heard a bird flapping its wings. It's the first to leave the forest.</p>
+</div>
+<div class="border-l-2 border-outline/30 pl-3">
+<div class="flex justify-between items-center mb-1">
+<div class="font-data-mono text-[9px] text-primary uppercase">致未来 | To the Future</div>
+<span class="material-symbols-outlined text-[10px] text-outline/50">play_arrow</span>
+</div>
+<p class="mb-1">"或许，在工业之梦结束的那日。没有人再会伐尽茂密的林海。我期待着那一天。"</p>
+<p class="text-[9px] text-outline/60 italic leading-tight">Perhaps when the dream of industrial society is realized,no one will ever cut down the dense forest. I am looking forward to that day.</p>
+</div>
+<div class="border-l-2 border-outline/30 pl-3">
+<div class="flex justify-between items-center mb-1">
+<div class="font-data-mono text-[9px] text-primary uppercase">孑立 | Standing Alone</div>
+<span class="material-symbols-outlined text-[10px] text-outline/50">play_arrow</span>
+</div>
+<p class="mb-1">"…… 您也在聆听窗外树梢间的风声吗？…"</p>
+<p class="text-[9px] text-outline/60 italic leading-tight">Are you also listening to the wind dancing on the treetops?</p>
+</div>
+<div class="border-l-2 border-outline/30 pl-3">
+<div class="flex justify-between items-center mb-1">
+<div class="font-data-mono text-[9px] text-primary uppercase">问候 | Greetings</div>
+<span class="material-symbols-outlined text-[10px] text-outline/50">play_arrow</span>
+</div>
+<p class="mb-1">"你带来了一缕原野的风。"</p>
+<p class="text-[9px] text-outline/60 italic leading-tight">You brought me a gentle breeze on the field.</p>
+</div>
+<div class="border-l-2 border-outline/30 pl-3">
+<div class="flex justify-between items-center mb-1">
+<div class="font-data-mono text-[9px] text-primary uppercase">入队 | Join Team</div>
+<span class="material-symbols-outlined text-[10px] text-outline/50">play_arrow</span>
+</div>
+<p class="mb-1">"一同去往草木生长之地。"</p>
+<p class="text-[9px] text-outline/60 italic leading-tight">Let's go where trees and grass grow.</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Bottom Controls / Toggle -->
+<div class="absolute bottom-8 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-4">
+<!-- Udimo Fragment (Overlapping) -->
+<div class="glass-panel-light p-2 flex items-center gap-3 absolute -top-16 -left-32 rotate-6 shadow-hard w-48 pointer-events-auto">
+<div class="w-10 h-10 bg-black overflow-hidden border border-outline/20">
+<img alt="Udimo" class="w-full h-full object-cover grayscale brightness-50 contrast-150" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBjd98PE6fVcpfJ6zt5mrLddLb-PKM2WhSoyjGcRH-b4vbJFLrFGLjp3nJgCPRtjDrFI3RdjacG1VfQULyUtPYtkYTMVB2J48e6RIvv0Gy6XmFyhrK5z07yjZmtPES4cANltJKTsLOruav-2S_Ar-L6NH3tzU5EPp8RCL0UEVG3sXscvGJMlvDyKGSUuq_ys3dMxeH7AZEBM6xfsLQgeX7owmaIq1R31QHCdkwTvI6mEpXgNad49NVSVL8IY8tDSfG9KkX9qj8A">
+</div>
+<div>
+<div class="font-data-mono text-[9px] text-primary">UDIMO</div>
+<div class="font-body-md text-[10px] text-on-surface">猫类 (Cat)</div>
+</div>
+</div>
+<!-- Skin Toggle -->
+<div class="glass-panel p-4 flex flex-col gap-3 pointer-events-auto shadow-hard border-primary/40">
+<div class="flex items-center gap-2 border-b border-outline/30 pb-2 mb-1">
+<span class="material-symbols-outlined text-sm text-primary">apparel</span>
+<span class="font-data-mono text-[10px] tracking-widest text-primary uppercase">WARDROBE / 衣着分卷</span>
+</div>
+<div class="flex gap-2">
+<button class="relative px-6 py-2 font-data-mono text-xs tracking-widest bg-primary text-surface transition-all border border-primary shadow-hard group" id="btn-initial" onclick="toggleDisplay('initial')">
+            INITIAL
+            <span class="absolute -bottom-1 left-0 w-full h-1 bg-primary animate-pulse" id="indicator-initial"></span>
+</button>
+<button class="relative px-6 py-2 font-data-mono text-xs tracking-widest text-outline hover:text-primary transition-all border border-outline/30 hover:border-primary/50 group" id="btn-insight" onclick="toggleDisplay('insight')">
+            INSIGHT
+            <span class="absolute -bottom-1 left-0 w-full h-1 bg-primary opacity-0" id="indicator-insight"></span>
+</button>
+</div>
+</div>
+<button class="font-data-mono text-xs tracking-[0.2em] text-primary hover:text-white border border-primary/50 hover:bg-primary px-8 py-2 transition-all bg-surface/80 backdrop-blur pointer-events-auto flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">bolt</span>
+                DEPLOY UNIT
+            </button>
+</div>
+</main>
+<script>
+        function toggleDisplay(state) {
+            const imgInitial = document.getElementById('img-initial');
+            const imgInsight = document.getElementById('img-insight');
+            const btnInitial = document.getElementById('btn-initial');
+            const btnInsight = document.getElementById('btn-insight');
+
+            if (state === 'initial') {
+                imgInitial.classList.replace('opacity-0', 'opacity-100');
+                imgInsight.classList.replace('opacity-100', 'opacity-0');
+                
+                btnInitial.classList.add('bg-primary', 'text-surface');
+                btnInitial.classList.remove('text-outline', 'hover:text-primary', 'bg-transparent');
+                
+                btnInsight.classList.remove('bg-primary', 'text-surface');
+                btnInsight.classList.add('text-outline', 'hover:text-primary');
+            } else {
+                imgInitial.classList.replace('opacity-100', 'opacity-0');
+                imgInsight.classList.replace('opacity-0', 'opacity-100');
+                
+                btnInsight.classList.add('bg-primary', 'text-surface');
+                btnInsight.classList.remove('text-outline', 'hover:text-primary', 'bg-transparent');
+                
+                btnInitial.classList.remove('bg-primary', 'text-surface');
+                btnInitial.classList.add('text-outline', 'hover:text-primary');
+            }
+        }
+    </script>
+</body></html>

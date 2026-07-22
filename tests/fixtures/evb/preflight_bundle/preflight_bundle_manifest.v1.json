@@ -1,0 +1,17 @@
+{
+  "baseline_sha256": "c3825563748186d1fe4f5c529140a5949f1bb9ac48a15f599b92c667f0116d38",
+  "schema_version": "evb.preflight-bundle/v1",
+  "sidecars": [
+    {"path": "active_pointer_before.v1.json", "sha256": "f1228fe34225636b26c01e49714db7f2ae0af066b00fd57ad0dac1ba3be7ac5d"},
+    {"path": "artifact_fixture.v1.json", "sha256": "edb6926ec7c5c855702d55db3cd7031fa6949aed79d673156a1234cc1276eb7b"},
+    {"path": "deployment_inventory.v1.json", "sha256": "b7826cab1c6b684274760dc963306eb9211f00d4eb1401c1974569327796773f"},
+    {"path": "dev_inventory.v1.json", "sha256": "b8e3f3843b517a34e54e70e45dd24599aed8ee5093fcb5a5a1e340f4a4a29983"},
+    {"path": "milvus_before.v1.json", "sha256": "0bc09d455b53ce862c96a1b632753aee921a088e932448dea42ec8eb086ba0d4"},
+    {"path": "minio_before.v1.json", "sha256": "1078e540fac9e6632afa9102a8d18d59d982b2f7f7e56d06b3a2ce839de7fe50"},
+    {"path": "runtime_preflight.v1.json", "sha256": "1e9e17f6b22ed2e810f2f9ddd43f8b8d244a2829fd40d4ef21ee87f63ef5a831"},
+    {"path": "source_inventory.v1.json", "sha256": "cf313bfb0ad58c39a0b6ea6a2cccb88112cb96becd7bd4feee633e0aa36600f2"},
+    {"path": "vector_acl.v1.json", "sha256": "2fe6dd87a54cf120673a91e7154019830195fc7a756402cd4c60c80b35efffb9"},
+    {"path": "vector_capacity.v1.json", "sha256": "c04bca9aaa4dad9943490fc81e3e68bc7b7dec383f847d718c85b47e6c98f09e"},
+    {"path": "vector_owner.v1.json", "sha256": "32a47ada03627b13918bf9896a0577c644485966cadb2953b5f9cb1c5789a15a"}
+  ]
+}

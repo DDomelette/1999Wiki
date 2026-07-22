@@ -1,0 +1,47 @@
+.wiki-hero-stage {
+  display: grid;
+  width: 100%;
+  max-width: 100%;
+  min-height: clamp(34rem, 72dvh, 58rem);
+  place-items: center;
+  margin: 0;
+  overflow: visible;
+  isolation: isolate;
+}
+
+.wiki-hero-stage__tilted-card {
+  max-width: 100%;
+  background: transparent;
+  border: none;
+}
+
+.wiki-hero-stage__tilted-card img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: transparent;
+  border: none;
+}
+
+.wiki-hero-stage__empty {
+  display: grid;
+  width: min(100%, 28rem);
+  min-height: 9rem;
+  place-items: center;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-subtle);
+  background: transparent;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .wiki-hero-stage {
+    min-height: clamp(28rem, 68dvh, 46rem);
+  }
+}
+
+@media (max-width: 560px) {
+  .wiki-hero-stage {
+    min-height: clamp(24rem, 62dvh, 38rem);
+  }
+}

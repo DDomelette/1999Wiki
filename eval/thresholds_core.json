@@ -1,0 +1,7 @@
+{
+  "pass_rate": {"min": 1.0},
+  "entity_accuracy": {"min": 1.0},
+  "intent_accuracy": {"min": 1.0},
+  "local_path_leak_rate": {"max": 0.0},
+  "voice_auto_leak_rate": {"max": 0.0}
+}

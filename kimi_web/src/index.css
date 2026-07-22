@@ -1,0 +1,360 @@
+/* Tailwind 构建期生成（替代原 cdn.tailwindcss.com 运行时脚本） */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 复刻自 Stitch 设计稿的自定义样式合集（四个界面） */
+
+/* Material Symbols 图标字体类（原由 Google Fonts 样式表提供，现自托管） */
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined Variable', 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'liga';
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+#root {
+  display: contents;
+}
+
+body {
+  cursor: crosshair;
+  background-color: #1c110b;
+}
+
+/* ============ 主题变量 ============ */
+/* palette B（archival-dossier / mobile-selection）：桃橙色系 */
+.theme-peach {
+  --c-inverse-on-surface: 59 45 38;
+  --c-inverse-surface: 245 222 211;
+  --c-on-background: 245 222 211;
+  --c-on-secondary: 86 32 0;
+  --c-on-secondary-container: 75 27 0;
+  --c-on-secondary-fixed: 53 16 0;
+  --c-on-secondary-fixed-variant: 122 48 0;
+  --c-on-surface: 245 222 211;
+  --c-on-tertiary: 59 45 39;
+  --c-on-tertiary-container: 52 39 32;
+  --c-on-tertiary-fixed: 37 25 19;
+  --c-on-tertiary-fixed-variant: 83 67 60;
+  --c-primary: 255 182 147;
+  --c-secondary: 255 182 147;
+  --c-secondary-container: 237 105 22;
+  --c-secondary-fixed: 255 219 204;
+  --c-secondary-fixed-dim: 255 182 147;
+  --c-surface-bright: 68 54 47;
+  --c-surface-container: 41 29 22;
+  --c-surface-container-high: 52 39 32;
+  --c-surface-container-lowest: 22 12 6;
+  --c-tertiary: 217 194 184;
+  --c-tertiary-container: 161 141 132;
+  --c-tertiary-fixed: 246 222 212;
+  --c-tertiary-fixed-dim: 217 194 184;
+}
+
+/* palette C（comprehensive-profile）：仅 primary 换桃色 */
+.theme-comp {
+  --c-primary: 255 182 147;
+}
+
+/* mobile-selection / archival-dossier 的正文字体是 Libre Caslon（与其余页面不同） */
+.font-caslon {
+  font-family: 'Libre Caslon Text', serif;
+}
+
+/* ============ Advanced Profile 页 ============ */
+.bg-texture-paper {
+  background-image: url("/assets/texture-natural-paper.png"), linear-gradient(135deg, #110a07 0%, #1c110b 50%, #26170e 100%);
+  background-blend-mode: overlay;
+}
+
+.scanlines {
+  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1));
+  background-size: 100% 4px;
+  pointer-events: none;
+}
+
+.watermark-chrono {
+  position: fixed;
+  font-size: 30vw;
+  color: rgba(226, 97, 11, 0.03);
+  font-family: 'Libre Caslon Text', serif;
+  font-weight: 700;
+  z-index: 0;
+  white-space: nowrap;
+  transform: rotate(-15deg);
+  top: 20%;
+  left: -10%;
+  pointer-events: none;
+  user-select: none;
+}
+
+.glass-panel {
+  background: rgba(28, 17, 11, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(226, 97, 11, 0.2);
+  box-shadow: 10px 10px 30px rgba(0,0,0,0.7), inset 0 0 20px rgba(0,0,0,0.5);
+  border-radius: 0;
+}
+
+.glass-panel-light {
+  background: rgba(42, 29, 23, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(167, 139, 126, 0.3);
+  box-shadow: 4px 4px 15px rgba(0,0,0,0.5);
+}
+
+.sticky-note {
+  background: #dcd0c0;
+  color: #2c251f;
+  border: none;
+  box-shadow: 2px 4px 10px rgba(0,0,0,0.5);
+  transform-origin: top center;
+}
+
+.tape {
+  position: absolute;
+  width: 80px;
+  height: 25px;
+  background: rgba(255,255,255,0.4);
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-2deg);
+  backdrop-filter: blur(2px);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.stamp {
+  border: 3px solid #e2610b;
+  color: #e2610b;
+  padding: 4px 8px;
+  font-weight: bold;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  border-radius: 4px;
+  opacity: 0.7;
+  transform: rotate(-15deg);
+}
+
+.glitch-hover:hover {
+  animation: textGlitch 0.2s linear infinite;
+  text-shadow: 2px 0 #ff00c1, -2px 0 #00fff9;
+}
+@keyframes textGlitch {
+  0% { transform: translate(0) }
+  20% { transform: translate(-2px, 1px) }
+  40% { transform: translate(-2px, -1px) }
+  60% { transform: translate(2px, 1px) }
+  80% { transform: translate(2px, -1px) }
+  100% { transform: translate(0) }
+}
+
+.vertical-text {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+
+.char-img-container {
+  mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+}
+
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(226, 97, 11, 0.5) rgba(28, 17, 11, 0.5);
+}
+
+/* ============ Mobile Selection 页 ============ */
+.noise-bg {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
+}
+
+.scanline {
+  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1));
+  background-size: 100% 4px;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* ============ Archival Dossier 页 ============ */
+.dossier-bg {
+  background-color: #1c110b;
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(255, 182, 147, 0.05) 0%, transparent 60%),
+    linear-gradient(rgba(28, 17, 11, 0.9), rgba(28, 17, 11, 0.9));
+}
+
+.scanline-peach {
+  background: linear-gradient(to bottom, transparent 50%, rgba(255, 182, 147, 0.02) 51%);
+  background-size: 100% 4px;
+  pointer-events: none;
+}
+
+.copper-border {
+  border: 1px solid #a78b7e;
+}
+
+.copper-glow {
+  box-shadow: 0 0 10px rgba(237, 105, 22, 0.1);
+}
+
+.glass-panel-dossier {
+  background: rgba(37, 25, 19, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.dossier-scroll::-webkit-scrollbar { width: 4px; }
+.dossier-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+.dossier-scroll::-webkit-scrollbar-thumb { background: #a78b7e; }
+.dossier-scroll::-webkit-scrollbar-thumb:hover { background: #ffb693; }
+
+/* ============ Comprehensive Profile 页 ============ */
+.archival-bg {
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(237, 105, 22, 0.08) 0%, transparent 60%),
+    repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.01) 2px, rgba(255,255,255,0.01) 4px);
+  background-attachment: fixed;
+}
+
+.stamp-overlay {
+  position: fixed;
+  pointer-events: none;
+  opacity: 0.03;
+  filter: grayscale(1) contrast(1.5);
+  z-index: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.hard-shadow {
+  box-shadow: 6px 6px 0px 0px rgba(0,0,0,0.9);
+}
+
+.floating-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+
+.tactile-btn {
+  background: #2a1d17;
+  border: 1px solid #a78b7e;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 2px 2px 0px rgba(0,0,0,0.8);
+  transition: all 0.1s ease;
+}
+.tactile-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.8), 0px 0px 0px rgba(0,0,0,0.8);
+}
+
+.skill-node {
+  background: rgba(26, 17, 11, 0.8);
+  border-left: 3px solid #ed6916;
+}
+
+.hidden-portrait {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.98);
+}
+.active-portrait {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+.portrait-transition {
+  transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+}
+
+.glass-panel-comp {
+  background: rgba(37, 25, 19, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.pin-tape {
+  position: absolute;
+  width: 40px;
+  height: 12px;
+  background: rgba(255,255,255,0.1);
+  backdrop-filter: blur(2px);
+  transform: rotate(-2deg);
+  top: -6px;
+  left: 50%;
+  margin-left: -20px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+
+.voice-scroll::-webkit-scrollbar { width: 4px; }
+.voice-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+.voice-scroll::-webkit-scrollbar-thumb { background: #a78b7e; }
+
+/* ============ 设备框（移动端页面的展示容器） ============ */
+.device-stage {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(237, 105, 22, 0.06) 0%, transparent 55%),
+    #120a06;
+  padding: 24px 0;
+}
+
+.device-frame {
+  position: relative;
+  width: 390px;
+  height: min(844px, calc(100vh - 48px));
+  border: 1px solid rgba(167, 139, 126, 0.4);
+  box-shadow: 0 0 0 8px rgba(0,0,0,0.6), 12px 12px 40px rgba(0,0,0,0.8);
+  overflow: hidden;
+  background: #1c110b;
+}
+
+.device-frame-label {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: rgba(167, 139, 126, 0.6);
+  pointer-events: none;
+}
+
+/* 全局滚动条（沿用 advanced 风格） */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: rgba(28, 17, 11, 0.5); }
+::-webkit-scrollbar-thumb { background: rgba(226, 97, 11, 0.5); border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: rgba(226, 97, 11, 0.8); }

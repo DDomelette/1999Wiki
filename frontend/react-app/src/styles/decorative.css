@@ -1,0 +1,83 @@
+/* PKMer 风格花边卡片角花 */
+.card-ornate {
+  position: relative;
+}
+.card-ornate::before,
+.card-ornate::after {
+  content: '';
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--accent-gold);
+  opacity: 0.6;
+}
+.card-ornate::before {
+  top: 8px; left: 8px;
+  border-right: none; border-bottom: none;
+}
+.card-ornate::after {
+  bottom: 8px; right: 8px;
+  border-left: none; border-top: none;
+}
+
+/* AnuPpuccin 风格板块标识竖条 */
+.category-bar {
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg, var(--accent-gold), var(--accent-purple), var(--accent-rust));
+  border-radius: 2px;
+}
+
+/* 花边分割线 */
+.divider-ornate {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--accent-gold);
+  opacity: 0.6;
+}
+.divider-ornate::before,
+.divider-ornate::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-gold), transparent);
+}
+.divider-ornate .diamond {
+  width: 8px;
+  height: 8px;
+  background: var(--accent-gold);
+  transform: rotate(45deg);
+}
+
+/* SVG 花边 strokeDashoffset 绘制动画(装饰角花) */
+.ornate-corner-svg {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  pointer-events: none;
+}
+.ornate-corner-svg path {
+  stroke: var(--accent-gold);
+  stroke-width: 1.5;
+  fill: none;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: draw-stroke 1.2s ease-out forwards;
+  animation-delay: 0.5s;
+}
+@keyframes draw-stroke {
+  to { stroke-dashoffset: 0; }
+}
+.ornate-tl { top: 0; left: 0; }
+.ornate-tr { top: 0; right: 0; transform: scaleX(-1); }
+.ornate-bl { bottom: 0; left: 0; transform: scaleY(-1); }
+.ornate-br { bottom: 0; right: 0; transform: scale(-1, -1); }
+
+/* 神秘学符号(Blue Topaz 风格) */
+.mystic-icon {
+  width: 16px;
+  height: 16px;
+  fill: var(--accent-gold);
+  opacity: 0.8;
+}

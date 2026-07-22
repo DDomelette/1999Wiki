@@ -1,0 +1,112 @@
+.wiki-character-selection {
+  width: min(100%, 1680px);
+  min-height: calc(100vh - 24px);
+  margin: 0 auto;
+  padding-top: 76px;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.58fr) minmax(420px, 1.62fr) minmax(220px, 0.66fr);
+  grid-template-areas: "index preview summary";
+  background: color-mix(in srgb, var(--archive-panel) 80%, transparent);
+  border: 1px solid var(--archive-line);
+}
+
+.wiki-character-selection__index {
+  grid-area: index;
+  min-width: 0;
+  border-right: 1px solid var(--archive-line);
+}
+
+.wiki-character-selection__preview {
+  grid-area: preview;
+  min-width: 0;
+  min-height: min(78vh, 920px);
+  display: grid;
+  place-items: center;
+  padding: clamp(20px, 3vw, 48px);
+  background: transparent;
+}
+
+.wiki-character-selection__summary {
+  grid-area: summary;
+  min-width: 0;
+  padding: clamp(24px, 3vw, 44px) clamp(18px, 2.4vw, 36px);
+  border-left: 1px solid var(--archive-line);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.wiki-character-selection__summary button {
+  min-height: 44px;
+  border: 1px solid var(--accent-rust);
+  background: var(--accent-rust);
+  color: var(--text-inverse);
+  font: 600 0.78rem/1 var(--font-mono);
+  cursor: pointer;
+}
+
+.wiki-character-selection__summary button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.wiki-selection-preview {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.wiki-selection-preview img {
+  width: min(100%, 680px);
+  height: min(68vh, 780px);
+  object-fit: contain;
+}
+
+.wiki-selection-preview h1 {
+  margin: 18px 0 4px;
+  font-size: clamp(1.8rem, 4vw, 4rem);
+  letter-spacing: 0;
+}
+
+/* Personnel Preview 简介：保留接口文本中的换行，按类目逐行排版 */
+.wiki-selection-summary__text {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+
+@media (max-width: 1080px) {
+  .wiki-character-selection {
+    grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.5fr);
+    grid-template-areas: "index preview" "summary summary";
+  }
+
+  .wiki-character-selection__summary {
+    border-left: 0;
+    border-top: 1px solid var(--archive-line);
+  }
+}
+
+@media (max-width: 720px) {
+  .wiki-character-selection {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "index" "preview" "summary";
+    padding-top: 68px;
+  }
+
+  .wiki-character-selection__index {
+    border-right: 0;
+    border-bottom: 1px solid var(--archive-line);
+  }
+
+  .wiki-character-selection__preview {
+    min-height: 56vh;
+  }
+
+  .wiki-character-selection__summary {
+    border-top: 1px solid var(--archive-line);
+  }
+}

@@ -1,0 +1,565 @@
+<!DOCTYPE html><html class="dark" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:wght@400;700&amp;family=JetBrains+Mono:wght@400;500;700&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=block" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-primary": "#561f00",
+                        "tertiary": "#d1c5b6",
+                        "on-primary-container": "#4b1b00",
+                        "secondary-fixed-dim": "#bcc9c9",
+                        "surface": "#1c110b",
+                        "primary": "#ffb693",
+                        "tertiary-fixed": "#eee0d1",
+                        "on-primary-fixed": "#351000",
+                        "on-tertiary-fixed": "#211b11",
+                        "error": "#ffb4ab",
+                        "primary-container": "#ed6916",
+                        "error-container": "#93000a",
+                        "surface-container": "#2a1d17",
+                        "tertiary-container": "#9a8f82",
+                        "surface-bright": "#45362f",
+                        "on-error-container": "#ffdad6",
+                        "on-surface": "#f6ded4",
+                        "on-secondary-fixed-variant": "#3d4949",
+                        "surface-tint": "#ffb693",
+                        "inverse-surface": "#f6ded4",
+                        "surface-variant": "#40322b",
+                        "on-tertiary": "#362f25",
+                        "on-primary-fixed-variant": "#7a3000",
+                        "inverse-primary": "#a04100",
+                        "surface-dim": "#1c110b",
+                        "primary-fixed-dim": "#ffb693",
+                        "secondary-container": "#3f4b4b",
+                        "surface-container-high": "#352721",
+                        "secondary-fixed": "#d8e5e5",
+                        "inverse-on-surface": "#3c2d27",
+                        "surface-container-low": "#251913",
+                        "on-tertiary-fixed-variant": "#4e463b",
+                        "on-surface-variant": "#e0c0b2",
+                        "outline": "#a78b7e",
+                        "surface-container-lowest": "#160c07",
+                        "on-background": "#f6ded4",
+                        "on-error": "#690005",
+                        "tertiary-fixed-dim": "#d1c5b6",
+                        "on-tertiary-container": "#30291f",
+                        "surface-container-highest": "#40322b",
+                        "secondary": "#bcc9c9",
+                        "outline-variant": "#584237",
+                        "on-secondary-container": "#aebbbb",
+                        "on-secondary": "#273333",
+                        "on-secondary-fixed": "#121e1e",
+                        "background": "#1c110b",
+                        "primary-fixed": "#ffdbcc"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "margin-mobile": "16px",
+                        "unit": "4px",
+                        "margin-desktop": "40px",
+                        "gutter": "16px",
+                        "block-gap": "24px"
+                    },
+                    "fontFamily": {
+                        "data-mono": ["JetBrains Mono"],
+                        "body-lg": ["JetBrains Mono"],
+                        "body-md": ["JetBrains Mono"],
+                        "headline-md": ["Libre Caslon Text"],
+                        "headline-lg": ["Libre Caslon Text"],
+                        "display-lg": ["Libre Caslon Text"],
+                        "label-caps": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "data-mono": ["13px", {"lineHeight": "1.4", "fontWeight": "400"}],
+                        "body-lg": ["16px", {"lineHeight": "1.6", "fontWeight": "400"}],
+                        "body-md": ["14px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                        "headline-md": ["24px", {"lineHeight": "1.3", "fontWeight": "400"}],
+                        "headline-lg": ["32px", {"lineHeight": "1.2", "fontWeight": "400"}],
+                        "display-lg": ["48px", {"lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "label-caps": ["12px", {"lineHeight": "1", "letterSpacing": "0.1em", "fontWeight": "500"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body {
+            background-color: #1c110b;
+        }
+        .archival-bg {
+            background-image: 
+                radial-gradient(circle at 50% 0%, rgba(237, 105, 22, 0.08) 0%, transparent 60%),
+                repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(255,255,255,0.01) 2px, rgba(255,255,255,0.01) 4px);
+            background-attachment: fixed;
+        }
+        .stamp-overlay {
+            position: fixed;
+            pointer-events: none;
+            opacity: 0.03;
+            filter: grayscale(1) contrast(1.5);
+            z-index: 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+        .copper-border {
+            border: 1px solid #a78b7e;
+        }
+        .hard-shadow {
+            box-shadow: 6px 6px 0px 0px rgba(0,0,0,0.9);
+        }
+        .floating-label {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+        }
+        .tactile-btn {
+            background: #2a1d17;
+            border: 1px solid #a78b7e;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 2px 2px 0px rgba(0,0,0,0.8);
+            transition: all 0.1s ease;
+        }
+        .tactile-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.8), 0px 0px 0px rgba(0,0,0,0.8);
+        }
+        .skill-node {
+            background: rgba(26, 17, 11, 0.8);
+            border-left: 3px solid #ed6916;
+        }
+        .hidden-portrait {
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.98);
+        }
+        .active-portrait {
+            opacity: 1;
+            pointer-events: auto;
+            transform: scale(1);
+        }
+        .portrait-transition {
+            transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+        }
+        .glass-panel {
+            background: rgba(37, 25, 19, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        .pin-tape {
+            position: absolute;
+            width: 40px;
+            height: 12px;
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(2px);
+            transform: rotate(-2deg);
+            top: -6px;
+            left: 50%;
+            margin-left: -20px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+        }
+        /* Custom Scrollbar for Voice Records */
+        .voice-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+        .voice-scroll::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.2); 
+        }
+        .voice-scroll::-webkit-scrollbar-thumb {
+            background: #a78b7e; 
+        }
+    </style>
+</head>
+<body class="archival-bg text-on-background font-body-md overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container min-h-screen">
+<!-- Top Navigation -->
+<nav class="fixed top-0 left-0 w-full z-50 flex justify-between items-center px-4 py-2 h-14 bg-surface-container-lowest border-b border-outline-variant shadow-xl">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-surface-variant border border-outline/40 flex items-center justify-center rounded">
+<span class="material-symbols-outlined text-outline text-xl">menu</span>
+</div>
+<div class="flex flex-col">
+<span class="font-data-mono text-[10px] tracking-[0.2em] font-bold text-on-surface opacity-80 leading-tight">R1999 //</span>
+<span class="font-data-mono text-[10px] tracking-[0.2em] font-bold text-on-surface opacity-80 leading-tight">LONDON_CHRONOGRAPH</span>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="bg-black/60 px-3 py-1 border border-outline-variant/50 rounded-full flex items-center gap-2">
+<div class="w-2 h-2 bg-primary rounded-full animate-pulse shadow-[0_0_8px_rgba(255,182,147,0.6)]"></div>
+<span class="font-data-mono text-[9px] text-primary tracking-wider">LIVE_ARCHIVE</span>
+</div>
+</div>
+</nav>
+<!-- Decor -->
+<div class="stamp-overlay top-32 -left-20 text-[120px] rotate-[-75deg]">DRUVIS_III</div>
+<div class="stamp-overlay bottom-80 right-[-40px] text-[80px] rotate-[15deg]">CONFIDENTIAL</div>
+<!-- Main Scroll Content -->
+<main class="relative z-10 pt-20 pb-32 px-4 flex flex-col gap-8 max-w-lg mx-auto">
+<!-- Hero Subject Area -->
+<section class="relative mt-4 mb-12" id="subject-hero">
+<div class="absolute -left-2 top-10 flex flex-col items-center gap-3 opacity-60 z-20">
+<span class="floating-label font-data-mono text-[9px] tracking-[0.3em] text-outline">ARCANIST_03</span>
+<div class="w-px h-32 bg-outline-variant"></div>
+</div>
+<!-- Large Background Image Container -->
+<div class="relative w-full h-[600px] copper-border bg-black hard-shadow overflow-hidden group">
+<div class="absolute top-0 right-0 p-3 z-20 mix-blend-overlay opacity-30">
+<span class="material-symbols-outlined text-6xl">psychology</span>
+</div>
+<img alt="Initial" class="portrait-transition active-portrait absolute inset-0 w-full h-full object-cover object-top opacity-80 group-hover:scale-105 transition-transform duration-1000" id="img-initial" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCwhHQIvzM8oqaVdd4ahiiXveLkV4K3pVSexqv_h9e-Cf8hdApEYv48iqwDXYCyqr85Y0xHXEayThts1D0pHdPgsb1LeTC0P6k3u1Ttk_2rPh2sl8gK--UGsaLSScMStK6FilSwdoBxtUlyzX12oHkT7ELFUHYMg0thcB4MsepKfOJPt98PBbCoEP1E_ek3Hl3htdvS-sylcJJH6R4qiZZQNKdiMQYfxHGL9904TpZzEA8rr_2hp8iyUIez7ESU3SWz4FZHcGjX">
+<img alt="Insight" class="portrait-transition hidden-portrait absolute inset-0 w-full h-full object-cover object-top opacity-80 group-hover:scale-105 transition-transform duration-1000" id="img-insight" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBOtBqdhvMnmbVXewijddIwWRcHYSMyY8S0VWeipIbTejCcZ4xow7GNjpH5mMtCO8As-TsTz2uqaXdzFqke-SUOa9KuTpYCv27jWxCc3gEmBnsLpMpIkPOrdQIc1hNDu5pgKs3wPhU2J8EF4S-Lw0rAHwkU-RNSTjirweghVntRgVoiUd9X5iDAxD4-O_SqLwDkR_Yzf4pwnOaWo2rviscwvlzAWGAxZJ0az5hhrrN3xXZm-_Nlsq3BXLG-O15GCRr_tKhFllg_">
+<!-- Mechanical Toggle -->
+<div class="absolute bottom-6 right-6 z-30 flex flex-col items-end gap-2">
+<div class="glass-panel border border-primary/30 p-2 hard-shadow flex flex-col gap-2">
+<div class="flex items-center gap-2 px-1 mb-1">
+<span class="w-1 h-1 bg-primary rounded-full animate-pulse"></span>
+<span class="font-data-mono text-[8px] text-primary tracking-[0.2em] uppercase">Skin_Select</span>
+</div>
+<div class="flex gap-2">
+<button class="tactile-btn px-3 py-1 text-[10px] font-data-mono text-primary border-primary/50 bg-primary/10" id="btn-skin-init">
+        INIT
+      </button>
+<button class="tactile-btn px-3 py-1 text-[10px] font-data-mono text-outline opacity-60" id="btn-skin-insight">
+        INSIGHT
+      </button>
+</div>
+</div>
+<div class="bg-surface-container-highest px-2 py-0.5 border border-outline/50 text-[9px] font-data-mono text-outline">
+<span id="artwork-label">INIT_V1</span>
+</div>
+</div>
+<!-- Diagonal Tape Label -->
+<div class="absolute top-8 -left-8 bg-primary-container px-12 py-1.5 rotate-[-45deg] text-[10px] font-bold tracking-[0.4em] text-on-primary-container shadow-lg z-30">
+                    SOPHISTICATED
+                </div>
+<!-- Info Overlay Card -->
+<div class="absolute bottom-6 left-[-16px] glass-panel p-5 copper-border hard-shadow w-[260px] z-30">
+<div class="flex items-center gap-2 mb-2">
+<div class="w-2 h-2 bg-primary rounded-full"></div>
+<span class="font-data-mono text-[9px] text-primary tracking-widest">SUBJECT_EXONYM</span>
+</div>
+<h1 class="font-display-lg text-5xl text-on-background mb-1">Druvis III</h1>
+<p class="font-headline-md text-xl text-outline mb-4">槲寄生</p>
+<div class="flex gap-2">
+<span class="border border-primary text-primary px-2 py-0.5 text-[9px] font-data-mono font-bold uppercase">PLANT</span>
+<span class="bg-surface-variant text-on-surface-variant px-2 py-0.5 text-[9px] font-data-mono font-bold uppercase">6_STAR</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Stats Grid (Clipped Notes Style) -->
+<section class="grid grid-cols-2 gap-x-4 gap-y-6 relative z-20">
+<!-- Damage Type -->
+<div class="glass-panel p-4 copper-border hard-shadow rotate-[-2deg] relative">
+<div class="pin-tape"></div>
+<div class="text-[9px] font-data-mono text-outline mb-1 uppercase tracking-widest">Damage_Type</div>
+<div class="text-3xl font-headline-md text-on-surface mb-1">Mental</div>
+<div class="text-[11px] text-outline font-data-mono">精神创伤</div>
+<span class="material-symbols-outlined absolute bottom-3 right-3 text-3xl opacity-20 text-outline">psychology</span>
+</div>
+<!-- Inspiration -->
+<div class="bg-primary-container/20 backdrop-blur-[12px] p-4 border border-primary/50 hard-shadow rotate-[1deg] relative">
+<div class="pin-tape"></div>
+<div class="text-[9px] font-data-mono text-primary mb-1 uppercase tracking-widest">Inspiration</div>
+<div class="text-3xl font-headline-md text-primary mb-1">Plant</div>
+<div class="text-[11px] text-primary/70 font-data-mono">林间的渴慕[木]</div>
+<span class="material-symbols-outlined absolute bottom-3 right-3 text-3xl opacity-20 text-primary">eco</span>
+</div>
+<!-- Location -->
+<div class="col-span-2 glass-panel p-4 copper-border hard-shadow flex items-center justify-between mt-2">
+<div class="flex flex-col gap-1">
+<span class="text-[9px] font-data-mono text-outline tracking-widest">LOCATION_TRACE</span>
+<span class="font-data-mono text-sm text-on-surface">Washington / Europe</span>
+</div>
+<div class="w-10 h-10 border border-outline/30 rounded-full flex items-center justify-center bg-surface-variant/50">
+<span class="material-symbols-outlined text-outline">public</span>
+</div>
+</div>
+</section>
+<!-- Lore Module -->
+<section class="relative mt-6" id="lore">
+<div class="flex items-center gap-4 mb-4 ml-4">
+<div class="h-px bg-outline-variant flex-1"></div>
+<span class="material-symbols-outlined text-outline text-sm">history_edu</span>
+<h3 class="font-data-mono text-[10px] tracking-[0.3em] text-outline uppercase">Character_Lore // 概述</h3>
+<div class="h-px bg-outline-variant w-8"></div>
+</div>
+<div class="glass-panel p-6 copper-border hard-shadow ml-2 relative">
+<div class="absolute -left-3 top-6 w-6 h-12 bg-surface-variant border border-outline flex items-center justify-center rounded-sm">
+<div class="w-1 h-8 bg-outline/30 rounded-full"></div>
+</div>
+<p class="font-headline-md text-lg text-on-surface-variant leading-relaxed mb-6 italic border-l-2 border-primary pl-4">
+                    "漫游于林间的术杖制造师，橡树与月亮的友人，你最沉静的朋友之一。"
+                </p>
+<div class="mb-6 border border-outline/20 bg-black/20 p-2"><img alt="Udimo Illustration" class="w-full h-auto" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC7uubtXtwTe0rbv0JesfYycxzOaL9yP9z12CpW6AcWUNjERTTDE02K46zBpSW1eGPfxD9Dy0H7U1-ga8pFUCIj0a-TicCgh-SOCplkQiNF--maaTJgr8HWENCLTIWKonPbwMt3IJyTBpbV1FTzBNcQ97wRoEMu37nZvM9cH9qcur2qbTSptifdQzJbQy9z2f--N8WvFoS1F_gHrt-3YrCx3u4DjLsXpHGeKLb4ZBG5s-VN3dMhqup1Akg50DVeTrh1TssWrbho"></div><div class="grid grid-cols-2 gap-y-6 gap-x-4">
+<div class="flex flex-col border-b border-outline/20 pb-2">
+<span class="font-data-mono text-[9px] text-outline uppercase mb-1">Active Era</span>
+<span class="font-body-md text-sm text-on-surface">20th Century Early</span>
+</div>
+<div class="flex flex-col border-b border-outline/20 pb-2">
+<span class="font-data-mono text-[9px] text-outline uppercase mb-1">Birthday</span>
+<span class="font-body-md text-sm text-on-surface">Oct 23 (Autumn)</span>
+</div>
+<div class="flex flex-col border-b border-outline/20 pb-2">
+<span class="font-data-mono text-[9px] text-outline uppercase mb-1">Medium</span>
+<span class="font-body-md text-sm text-on-surface">Trees / 树木</span>
+</div>
+<div class="flex flex-col border-b border-outline/20 pb-2">
+<span class="font-data-mono text-[9px] text-outline uppercase mb-1">Udimo</span>
+<span class="font-body-md text-sm text-on-surface">Black Cat / 猫类</span>
+</div>
+</div>
+<div class="mt-6">
+<h4 class="font-data-mono text-[9px] text-primary mb-3 uppercase tracking-widest">Scent_Notes // 香调</h4>
+<div class="flex flex-wrap gap-2">
+<span class="px-3 py-1 bg-surface-container border border-outline/30 text-[11px] font-data-mono text-outline rounded-sm">Woody</span>
+<span class="px-3 py-1 bg-surface-container border border-outline/30 text-[11px] font-data-mono text-outline rounded-sm">Cedar</span>
+<span class="px-3 py-1 bg-surface-container border border-outline/30 text-[11px] font-data-mono text-outline rounded-sm">Amber</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Inheritance Module (New Integration) -->
+<section class="mt-6" id="inheritance">
+<div class="flex items-center gap-4 mb-4 ml-4">
+<div class="h-px bg-outline-variant flex-1"></div>
+<h3 class="font-data-mono text-[10px] tracking-[0.3em] text-outline uppercase">Inheritance // 木秀于林</h3>
+<div class="h-px bg-outline-variant w-8"></div>
+</div>
+<div class="flex flex-col gap-3 mr-2">
+<div class="glass-panel p-4 copper-border flex gap-4 items-start relative group">
+<div class="w-10 h-10 border border-outline/50 flex flex-col items-center justify-center shrink-0 bg-surface">
+<span class="font-data-mono text-[10px] text-outline">LVL</span>
+<span class="font-headline-md text-lg leading-none">I</span>
+</div>
+<p class="font-body-md text-sm text-on-surface-variant leading-relaxed">
+                        当自身处于<span class="text-primary">[属性提升]</span> <span class="text-primary">[状态增益]</span>时，造成的伤害提升<span class="text-primary font-bold">20%</span>
+</p>
+</div>
+<div class="glass-panel p-4 copper-border flex gap-4 items-start relative group">
+<div class="w-10 h-10 border border-outline/50 flex flex-col items-center justify-center shrink-0 bg-surface">
+<span class="font-data-mono text-[10px] text-outline">LVL</span>
+<span class="font-headline-md text-lg leading-none">II</span>
+</div>
+<p class="font-body-md text-sm text-on-surface-variant leading-relaxed">
+                        进入战斗时，造成伤害提升<span class="text-primary font-bold">8%</span>
+</p>
+</div>
+<div class="glass-panel p-4 copper-border flex gap-4 items-start relative group">
+<div class="w-10 h-10 border border-primary/50 flex flex-col items-center justify-center shrink-0 bg-primary/10">
+<span class="font-data-mono text-[10px] text-primary">LVL</span>
+<span class="font-headline-md text-lg leading-none text-primary">III</span>
+</div>
+<p class="font-body-md text-sm text-on-surface-variant leading-relaxed">
+                        进入战斗时，己方<i class="text-primary">[木]灵感</i>角色进入<span class="text-primary font-bold">[生生不息]</span>状态（最多触发1次）
+                    </p>
+</div>
+</div>
+</section>
+<!-- Skills Module -->
+<section class="mt-6 flex flex-col gap-4" id="skills">
+<div class="flex items-center gap-4 mb-2 mr-4">
+<div class="h-px bg-outline-variant w-8"></div>
+<h3 class="font-data-mono text-[10px] tracking-[0.3em] text-outline uppercase">Arcane_Skills // 神秘术</h3>
+<div class="h-px bg-outline-variant flex-1"></div>
+</div>
+<!-- Skill 1 -->
+<div class="skill-node p-5 copper-border hard-shadow relative ml-4"><div class="absolute top-0 right-0 bg-surface-variant text-[9px] font-data-mono px-2 py-1 border-b border-l border-outline/30 z-10">SINGLE_ATK</div><div class="flex gap-4 items-start"><div class="w-[40%] shrink-0 border border-outline/30 overflow-hidden aspect-[2/3]"><img alt="Wind into Woods Icon" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCBUpnMqfl8KPZ8ffA-44pdW998BEz6omULrTNFKmHnwBJeiIAvPwGrUMef6HfGN6M4Lqrck-gDFRkpGAreF6cbNAjz0A7EhgPTElGPnxf9bcmEDawrum6IimhIHT8eCiL4s75NxwuY8Eam3BExi3iRW3ZxJWw9HilHuUs0PeSQOgxzSDEwYRZe0zt0cRrPVUn07KDGk2GcvFmMfTzs_EJFrye8np8KmrhrmEfVdJ839DXS5zPA56eMAk7FkraSe89rZ9iLecJ6"></div><div class="flex-1"><h5 class="font-headline-md text-2xl text-on-surface mb-1">风入林</h5><span class="text-[9px] font-data-mono text-primary tracking-widest uppercase block mb-4">Wind into Woods</span><p class="text-sm font-body-md text-on-surface-variant leading-relaxed mb-4">单体攻击，造成<span class="text-primary">200%</span>精神创伤。高阶状态下使其陷入<span class="text-primary">[石化]</span>状态。</p><div class="border-t border-outline/20 pt-3 flex justify-between items-center"><div class="text-[10px] font-data-mono text-outline italic">"风在驱逐林中异客。"</div><div class="flex gap-1"><span class="w-2 h-2 bg-primary rounded-full"></span><span class="w-2 h-2 border border-primary rounded-full"></span><span class="w-2 h-2 border border-primary rounded-full"></span></div></div></div></div></div>
+<!-- Skill 2 -->
+<div class="skill-node p-5 copper-border hard-shadow relative mr-4 mt-2"><div class="absolute top-0 right-0 bg-surface-variant text-[9px] font-data-mono px-2 py-1 border-b border-l border-outline/30 z-10">MASS_ATK</div><div class="flex gap-4 items-start"><div class="w-[40%] shrink-0 border border-outline/30 overflow-hidden aspect-[2/3]"><img alt="Early Dew Icon" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB6GXakMpBy3OMab17NhiGB7MA7UCrGrX9-mKzMrna8S0VP9qiyybMq6ggfFuAr633pafXyUrGAQIq_vY1OWZeOXBLN9Y-l_T2INZQHBQPYum3pVKcBKjhfxtHAx7PMGohV7mSvrXD4VCWNoeHkuwL4JuXANYRnXMDhmwAZssLxS_kJGSpW45bzMut6tB0Ww_7eFMUC1ZhaxuXqScfp0d58x1EODyY4n9PIK1bNRjPQoO_s5ysDzHO9M0qgJKnpUHKthN5xS7c8"></div><div class="flex-1"><h5 class="font-headline-md text-2xl text-on-surface mb-1">露渐白</h5><span class="text-[9px] font-data-mono text-primary tracking-widest uppercase block mb-4">Early Dew</span><p class="text-sm font-body-md text-on-surface-variant leading-relaxed mb-4">群体攻击，对2名敌方造成<span class="text-primary">120%</span>精神创伤；穿透率提升<span class="text-primary">30%</span>。</p><div class="border-t border-outline/20 pt-3 flex justify-between items-center"><div class="text-[10px] font-data-mono text-outline italic">"白露与湿苔根植于此。"</div><div class="flex gap-1"><span class="w-2 h-2 bg-primary rounded-full"></span><span class="w-2 h-2 border border-primary rounded-full"></span><span class="w-2 h-2 border border-primary rounded-full"></span></div></div></div></div></div>
+<!-- Ultimate -->
+<div class="bg-primary-container/10 glass-panel p-6 border border-primary/50 hard-shadow relative overflow-hidden group ml-2 mr-2 mt-8 z-20 z-30">
+<div class="absolute -right-8 -bottom-8 opacity-5">
+<span class="material-symbols-outlined text-[180px]">forest</span>
+</div>
+<div class="relative z-10">
+<div class="flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-primary text-sm">warning</span>
+<div class="text-primary font-data-mono text-[9px] tracking-[0.2em] uppercase">ULTIMATE_RITUAL // 至终的仪式</div>
+</div>
+<div class="w-full h-auto mb-4 border border-primary/30 overflow-hidden"><img alt="Ultimate Ritual" class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAWuVOoKCDwxmORCzjPAoGcJb-GYPTmdFjwswg5_AcSm0_0-2o7YmALP_38ICcK0vX54AFjp9voxLXbE7KcqRPkdF3gF4uvIpRuxiOTSiudRqDdha4HN0-2gedrvJQMtf1rDTyHAfsbKCgotEge2GCTaR1Jea7S7LxSAMPcXEoabvtGWp4r72LHy7EQarPSk-flLjDELBazKuDFc9C7tuxqC3nLSblNsbf1WQJPiV_4d5YZgKA3B9QVNyOcgHFAHK_R0vdk1vIN"></div><h5 class="font-headline-lg text-3xl text-primary mb-4">林间，静默将至</h5>
+<p class="text-sm font-body-md text-on-surface-variant mb-6 leading-relaxed">
+                        群体攻击，对敌方全体造成<span class="text-primary font-bold">400%</span>精神创伤；并使主目标陷入<span class="text-primary font-bold">[石化]</span>1回合。
+                    </p>
+<div class="bg-black/40 border border-primary/30 p-3 flex items-center justify-between">
+<span class="text-[10px] font-data-mono text-primary/80">"林地茂盛之中环伺滋长。"</span>
+<span class="text-[9px] font-data-mono text-primary tracking-widest border border-primary/50 px-2 py-1">RETICENT_WOODS_ARE_WATCHING</span>
+</div>
+</div>
+</div>
+</section>
+<!-- Voice Records Module (New Integration) -->
+<section class="mt-6 mb-8" id="voice-records">
+<div class="flex items-center gap-4 mb-4 ml-4">
+<div class="h-px bg-outline-variant flex-1"></div>
+<span class="material-symbols-outlined text-outline text-sm">graphic_eq</span>
+<h3 class="font-data-mono text-[10px] tracking-[0.3em] text-outline uppercase">Voice_Records // 语音记录</h3>
+<div class="h-px bg-outline-variant w-8"></div>
+</div>
+<div class="glass-panel copper-border hard-shadow h-[300px] overflow-y-auto voice-scroll mx-2 p-1">
+<!-- Record Item -->
+<div class="p-4 border-b border-outline/20 hover:bg-surface-variant/30 transition-colors">
+<div class="flex justify-between items-center mb-2">
+<span class="font-data-mono text-[10px] text-primary">初遇 // First Meeting</span>
+<span class="material-symbols-outlined text-outline text-sm">play_circle</span>
+</div>
+<p class="font-body-md text-sm text-on-surface-variant mb-2">我是槲寄生，很高兴认识你。…… 你说看不出我很高兴？呵…… 那么现在呢？</p>
+<p class="font-data-mono text-[10px] text-outline/60 leading-relaxed italic">I am Druvis III. It's my pleasure to meet you…. You said I didn't look very pleased? Hah … How about now?</p>
+</div>
+<div class="p-4 border-b border-outline/20 hover:bg-surface-variant/30 transition-colors">
+<div class="flex justify-between items-center mb-2">
+<span class="font-data-mono text-[10px] text-primary">箱中气候 // Climate in the Case</span>
+<span class="material-symbols-outlined text-outline text-sm">play_circle</span>
+</div>
+<p class="font-body-md text-sm text-on-surface-variant mb-2">水从泥土里去往天上，又从天上坠落地面。如同我从林中来，又向林中去。</p>
+<p class="font-data-mono text-[10px] text-outline/60 leading-relaxed italic">Water travels from the ground to the sky, and then falls back; just as I, who come from the forest, and now go back.</p>
+</div>
+<div class="p-4 border-b border-outline/20 hover:bg-surface-variant/30 transition-colors">
+<div class="flex justify-between items-center mb-2">
+<span class="font-data-mono text-[10px] text-primary">朝晨 // Morning</span>
+<span class="material-symbols-outlined text-outline text-sm">play_circle</span>
+</div>
+<p class="font-body-md text-sm text-on-surface-variant mb-2">太阳升起，野兽们噤声不吠。而后，我听见第一只离林之鸟振翅的声响。</p>
+<p class="font-data-mono text-[10px] text-outline/60 leading-relaxed italic">When the sun rose, the beasts kept silence. Then, I heard a bird flapping its wings. It's the first to leave the forest.</p>
+</div>
+<div class="p-4 hover:bg-surface-variant/30 transition-colors">
+<div class="flex justify-between items-center mb-2">
+<span class="font-data-mono text-[10px] text-primary">孑立 // Standing Alone</span>
+<span class="material-symbols-outlined text-outline text-sm">play_circle</span>
+</div>
+<p class="font-body-md text-sm text-on-surface-variant mb-2">…… 您也在聆听窗外树梢间的风声吗？…</p>
+<p class="font-data-mono text-[10px] text-outline/60 leading-relaxed italic">Are you also listening to the wind dancing on the treetops?</p>
+</div>
+</div>
+</section><section class="mt-6 mb-8" id="culture-lore">
+<div class="flex items-center gap-4 mb-4 ml-4">
+<div class="h-px bg-outline-variant flex-1"></div>
+<span class="material-symbols-outlined text-outline text-sm">auto_stories</span>
+<h3 class="font-data-mono text-[10px] tracking-[0.3em] text-outline uppercase">Culture // 文化</h3>
+<div class="h-px bg-outline-variant w-8"></div>
+</div>
+<div class="flex flex-col gap-6 mx-2">
+<!-- Tab 1: Roaring Twenties -->
+<div class="glass-panel p-6 copper-border hard-shadow relative rotate-[-1deg]">
+<div class="pin-tape"></div>
+<div class="flex justify-between items-start mb-4">
+<h4 class="font-headline-md text-xl text-primary">咆哮的1920年代</h4>
+<span class="font-data-mono text-[9px] text-outline uppercase tracking-widest">Roaring Twenties</span>
+</div>
+<p class="font-body-md text-sm text-on-surface-variant leading-relaxed mb-4">
+        20世纪20年代，立体派艺术蓬勃兴起。强调几何特征的风潮不仅影响了克莱斯勒大厦，也改变了女性的时尚风格。全新的剪裁设计，正揭示着一场不协调的碰撞变革——现代化。在美国，现代科学正在化一切为可能。
+      </p>
+<p class="font-body-md text-sm text-on-surface-variant leading-relaxed mb-4">
+        蒸汽火车、福特汽车、无线电的使用，将世界推向乐观浪潮的更远处。爵士乐响彻通宵，人们在查尔斯顿舞步中奔赴下一场永不结束的宴会。没有人能拒绝加入这场狂欢，特别是某些艰辛跻身于美国的没落贵族。
+      </p>
+<div class="border-l-2 border-primary pl-4 italic text-outline">
+        "不要再跟我谈起你的幻觉。"一位母亲将绘着橡树的家谱图轻轻推进壁炉，"从登船的那天起，你已是一位荣耀的美国人。"
+      </div>
+</div>
+<!-- Tab 2: Autumn in Cascade -->
+<div class="glass-panel p-6 copper-border hard-shadow relative rotate-[1deg] ml-4">
+<div class="pin-tape"></div>
+<div class="flex justify-between items-start mb-4">
+<h4 class="font-headline-md text-xl text-primary">喀斯卡特的秋天</h4>
+<span class="font-data-mono text-[9px] text-outline uppercase tracking-widest">Autumn in Cascade</span>
+</div>
+<p class="font-body-md text-sm text-on-surface-variant leading-relaxed mb-4">
+        她记得喀斯卡特山脉里的每一棵树木。苔藓的形状、生长轮的不规则、蚁窝的规模，每一棵树都是那么的不同。为了倾听它们的诉语，她多次背离母亲的期待，逃过一切没有结尾的宴会，只身闯入森林的长夜。
+      </p>
+<p class="font-body-md text-sm text-on-surface-variant leading-relaxed">
+        直到1928年的那一天。木材供应崩溃，他猛然陷入一场旷日持久的沉默。大萧条就像一场最时兴的宴会，曾经的新贵无人能够缺席。推平森林、变卖土地似乎成了唯一选择。
+      </p>
+</div>
+<!-- Tab 3: Philosophy -->
+<div class="bg-primary-container/10 glass-panel p-6 border border-primary/50 hard-shadow relative mr-4">
+<div class="flex items-center gap-2 mb-4">
+<span class="material-symbols-outlined text-primary text-sm">forum</span>
+<h4 class="font-headline-md text-xl text-primary">她的世界 有另一种哲学</h4>
+</div>
+<div class="space-y-3 font-body-md text-sm">
+<div class="flex gap-2">
+<span class="text-outline shrink-0">白雪松:</span>
+<span class="text-on-surface-variant">你是如何理解“美国梦”的？</span>
+</div>
+<div class="flex gap-2">
+<span class="text-primary shrink-0">槲寄生:</span>
+<span class="text-on-surface font-bold">我不理解。</span>
+</div>
+<div class="flex gap-2">
+<span class="text-outline shrink-0">白雪松:</span>
+<span class="text-on-surface-variant">如果用一个词语来形容它呢？</span>
+</div>
+<div class="flex gap-2">
+<span class="text-primary shrink-0">槲寄生:</span>
+<span class="text-on-surface font-bold">也是一门生意。</span>
+</div>
+<div class="flex gap-2">
+<span class="text-outline shrink-0">白雪松:</span>
+<span class="text-on-surface-variant">“美国梦”是焰火纷呈。</span>
+</div>
+<div class="flex gap-2">
+<span class="text-primary shrink-0">槲寄生:</span>
+<span class="text-on-surface font-bold">“美国梦”是遍地灰烬。</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Technical Footer -->
+<section class="mt-6" id="collection"><div class="flex items-center gap-4 mb-4 ml-4"><div class="h-px bg-outline-variant flex-1"></div><h3 class="font-data-mono text-[10px] tracking-[0.3em] text-outline uppercase">Collection // 藏品</h3><div class="h-px bg-outline-variant w-8"></div></div><div class="flex flex-col gap-4 mx-2"><div class="glass-panel p-3 copper-border flex items-center gap-4"><div class="w-20 h-20 bg-black/40 border border-outline/20 shrink-0"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAtR9gMAv-2AzXu6T74_GIKupS3zKSs5uic2IqREseZXgqI1_7AvuOYiUpS-7Bwlfb839PEzipO_Zws1WPqrq6Gpd4SDIuVJimqMz6ATBKL54_V2VzLzIuf_i1QaV6NESEpdK1cfGGZrXMg-EV8b414FMfV-bdJX2WCRU5Xsn-JxKetIYMNn4EpaTCBn07wq7_IVYNTMPFp33EwfrkW5sxBZPZtT0ZzhcqAY_w6xN8np3p_Dqj8yqZrHfWRva7h6qkHvF8dbxwQ"></div><div><div class="text-primary font-data-mono text-[10px] mb-1">ITEM_01</div><div class="text-on-surface text-sm font-bold">Acorn Choker</div><div class="text-outline text-[10px] uppercase tracking-wider mt-1">Value: High</div></div></div><div class="glass-panel p-3 copper-border flex items-center gap-4"><div class="w-20 h-20 bg-black/40 border border-outline/20 shrink-0"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAjX8OiCYqZyAZZx1sLt5_EJpj0XzH1OHc__xHmpSn124PnNrA0IZhWBJOLhArjeQeq1F8pqMH6ALZdAHzdmiTihkvYDEyeswynel0twtP0p6likcJVpsG6Z2-vlRyLJ0C9OVgFwWQQc7Bl9h8gvy9SgADzXk0mNsRpxRYNTAoRrtLvP96dmb_qPtle6YgLDo3qAyF_0BFsPcHOxIBazOs1nGufKP3PAXsxWm_Xr95AVcX7fMeLDZ1fvQ9MIWj0WSFKKUXaS7cB"></div><div><div class="text-primary font-data-mono text-[10px] mb-1">ITEM_02</div><div class="text-on-surface text-sm font-bold">Mistletoe Staff</div><div class="text-outline text-[10px] uppercase tracking-wider mt-1">Source: Forest</div></div></div><div class="glass-panel p-3 copper-border flex items-center gap-4"><div class="w-20 h-20 bg-black/40 border border-outline/20 shrink-0"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAph9TU3nnf7vYhFCrssccWAu-ZtI6V_IHT4aBIZxQCZHbijDwMwW1fMQ3Z6g9kiaPK4XpmncPTuQiEzcfBH-Li36URi5bfj4zs5tmEl2yLda3KqSwoCOmIcgqM5nGdtX9L-KqSHOwIiNK9RrRNPWKsjquPVwfV_85slioEysVJ7A6wygIIkQyPULZTPlx0JRef5TkwhzVEimU_H80j2fe2U6HDjIaoo--vj0VqPlX72-TCNv63QT3duHEc7cgKjaf8n1MahQxn"></div><div><div class="text-primary font-data-mono text-[10px] mb-1">ITEM_03</div><div class="text-on-surface text-sm font-bold">Mistletoe Bouquet</div><div class="text-outline text-[10px] uppercase tracking-wider mt-1">Value: Sacred</div></div></div><div class="glass-panel p-3 copper-border flex items-center gap-4"><div class="w-20 h-20 bg-black/40 border border-outline/20 shrink-0"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBNfoI7txXMfgvYCRCDK-crpb8Q7gSLhei9-ITornYdaybppi1T5jSYW-NtOf9vg0AuDG-YUOGEdqwAwdYfBFEfcEyblgegV0L2bPgaHmwlz64vLH6c5geZiCuYnT2LbFpQZq9ROK1f6mZLTyz45qm3sWPS_iAQwwvZErDgTmSeE4Q_vn-ZnAhUdzecKasHkEixZTmh7-33SFIIu-NXfL8q-G-DwH-DzWGEWPHVHzpxFrCqwpQOlUBCzt6VN2xxaVlfDEXgg3Ck"></div><div><div class="text-primary font-data-mono text-[10px] mb-1">ITEM_04</div><div class="text-on-surface text-sm font-bold">Golden Branch</div><div class="text-outline text-[10px] uppercase tracking-wider mt-1">Value: Rare</div></div></div><div class="glass-panel p-3 copper-border flex items-center gap-4"><div class="w-20 h-20 bg-black/40 border border-outline/20 shrink-0"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDH46hVoFvYGAXV-3FZ9z3VEGG4A6QWhDtM0jfKs5FcOTkPA1FsejhIEXcj2SKmBKFcoKkadIWcl37B1BbYso3GvYaD4UkNT9HXLQ0Y-Hlce7rW3ZcQXEbxeOXQ875euNtzhQMtIeivhR6eoaeryagCcGHf2HS5_pJ4LQ7q2LnUS6RfodQzg_cBkBuHdutA294pTeYeRuiFHc8I-sk9nxiPoD7cWWOlzX6QXqKdSYON4oAMb2EW7k1w9hO1QKk-4uQkbT4K8aR5"></div><div><div class="text-primary font-data-mono text-[10px] mb-1">ITEM_05</div><div class="text-on-surface text-sm font-bold">Pearl Ornament</div><div class="text-outline text-[10px] uppercase tracking-wider mt-1">Source: Legacy</div></div></div><div class="glass-panel p-3 copper-border flex items-center gap-4"><div class="w-20 h-20 bg-black/40 border border-outline/20 shrink-0"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB34AfaAD453NvO-kg4zA__U78mozQxcTKXvc9sGEnDrh4Ay6eUuk3ohwIulVAolJ78zb4VnQrfInLmdRHyhvPUzDZOXlvUFY14GDAhvCi3vP4ywOxI63_Cvu6BH_eYhuW6scPCmeOODbGmry-lhK0nnhxtdDGaDFuYx2JKR-o8oNRBTfgffXdzX1rUMhK2Azk7vOkL75PvQmpm3H550NG06Yy_jdIva3unccIoEwX4JbkiwmF2iA9EoJpYVEqfstOEKU8OZdeS"></div><div><div class="text-primary font-data-mono text-[10px] mb-1">ITEM_06</div><div class="text-on-surface text-sm font-bold">Silk Ribbon</div><div class="text-outline text-[10px] uppercase tracking-wider mt-1">Value: Sentimental</div></div></div></div></section><footer class="mt-8 pt-4 pb-12 px-2 flex flex-col items-center gap-2 opacity-40">
+<div class="flex gap-2">
+<div class="w-1 h-1 bg-outline rounded-full"></div>
+<div class="w-1 h-1 bg-outline rounded-full"></div>
+<div class="w-1 h-1 bg-outline rounded-full"></div>
+</div>
+<div class="flex justify-between w-full font-data-mono text-[9px] mt-4 border-t border-outline/30 pt-4">
+<span class="">FILE_REF: ARC_03_DRUVIS</span>
+<span class="">BUILD_LC_3.2</span>
+</div>
+</footer>
+</main>
+<!-- Bottom Navigation Tabs -->
+<div class="fixed bottom-0 left-0 w-full z-50 h-16 bg-surface-container-lowest border-t border-outline-variant flex items-end">
+<button class="flex-1 h-full flex flex-col items-center justify-center gap-1 border-r border-outline-variant/30 bg-primary-container/10 border-t-2 border-t-primary">
+<span class="material-symbols-outlined text-primary text-xl" style="font-variation-settings: 'FILL' 1;">dataset</span>
+<span class="font-data-mono text-[9px] font-bold text-primary tracking-widest">DOSSIER</span>
+</button>
+<button class="flex-1 h-14 flex flex-col items-center justify-center gap-1 border-r border-outline-variant/30 hover:bg-surface-variant/50 transition-colors">
+<span class="material-symbols-outlined text-outline text-xl">menu_book</span>
+<span class="font-data-mono text-[9px] font-bold text-outline tracking-widest">ARCHIVE</span>
+</button>
+<button class="flex-1 h-14 flex flex-col items-center justify-center gap-1 border-r border-outline-variant/30 hover:bg-surface-variant/50 transition-colors">
+<span class="material-symbols-outlined text-outline text-xl">psychology</span>
+<span class="font-data-mono text-[9px] font-bold text-outline tracking-widest">COMBAT</span>
+</button>
+</div>
+<script>
+        const toggleBtn = document.getElementById('toggle-artwork');
+        const imgInitial = document.getElementById('img-initial');
+        const imgInsight = document.getElementById('img-insight');
+        const artworkLabel = document.getElementById('artwork-label');
+        
+        let isInsight = false;
+
+        toggleBtn.addEventListener('click', () => {
+            isInsight = !isInsight;
+            
+            if (isInsight) {
+                imgInitial.classList.replace('active-portrait', 'hidden-portrait');
+                imgInsight.classList.replace('hidden-portrait', 'active-portrait');
+                artworkLabel.textContent = 'INSIGHT_V2';
+            } else {
+                imgInitial.classList.replace('hidden-portrait', 'active-portrait');
+                imgInsight.classList.replace('active-portrait', 'hidden-portrait');
+                artworkLabel.textContent = 'INIT_V1';
+            }
+        });
+    </script>
+</body></html>

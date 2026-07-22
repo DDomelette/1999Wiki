@@ -1,0 +1,267 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --global-background-image: url("/images/global-background.png");
+  --global-background-tint:
+    linear-gradient(180deg, rgba(10, 13, 12, 0.48), rgba(18, 12, 8, 0.78)),
+    radial-gradient(circle at 72% 22%, rgba(212, 175, 55, 0.12), transparent 32%),
+    radial-gradient(circle at 12% 72%, rgba(35, 65, 58, 0.42), transparent 38%);
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: var(--bg-base);
+  background-image: var(--global-background-tint), var(--global-background-image);
+  background-size: cover, cover;
+  background-position: center, center;
+  background-repeat: no-repeat, no-repeat;
+  background-attachment: fixed, fixed;
+  color: var(--text-primary);
+  overflow: hidden;
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+/* 羊皮纸噪声纹理叠加 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.04;
+  z-index: 1000;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+a { color: var(--link-accent); text-decoration: none; }
+a:hover { text-shadow: 0 0 8px var(--border-glow); }
+
+/* scroll-snap 主容器 */
+.snap-container {
+  height: 100vh;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+}
+
+.native-scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.native-scrollbar-hidden::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.overlay-scrollbar {
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 260ms ease;
+  z-index: 80;
+}
+
+.overlay-scrollbar[data-scrollbar-visible="true"] {
+  opacity: 1;
+}
+
+.overlay-scrollbar--fixed {
+  position: fixed;
+  top: 12px;
+  right: 8px;
+  bottom: 12px;
+  width: 6px;
+}
+
+.overlay-scrollbar--local {
+  position: absolute;
+  top: 6px;
+  right: 2px;
+  bottom: 6px;
+  width: 6px;
+}
+
+.overlay-scrollbar__thumb {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 100%;
+  min-height: 28px;
+  border-radius: 999px;
+  background: var(--border-card);
+  transition: transform 120ms linear, height 120ms linear;
+}
+
+.scrollable-description-shell {
+  position: relative;
+}
+
+.markdown-message {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.75;
+  word-break: break-word;
+}
+
+.markdown-message > :first-child {
+  margin-top: 0;
+}
+
+.markdown-message > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-message p {
+  margin: 0 0 0.75em;
+}
+
+.markdown-message h1,
+.markdown-message h2,
+.markdown-message h3,
+.markdown-message h4,
+.markdown-message h5,
+.markdown-message h6 {
+  margin: 0.85em 0 0.45em;
+  color: var(--accent-gold);
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.markdown-message h1 {
+  font-size: 1.45rem;
+}
+
+.markdown-message h2 {
+  font-size: 1.25rem;
+}
+
+.markdown-message h3 {
+  font-size: 1.12rem;
+}
+
+.markdown-message h4,
+.markdown-message h5,
+.markdown-message h6 {
+  font-size: 1rem;
+}
+
+.markdown-message strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.markdown-message em {
+  color: var(--text-secondary);
+}
+
+.markdown-message ul,
+.markdown-message ol {
+  margin: 0.4em 0 0.85em;
+  padding-left: 1.4em;
+}
+
+.markdown-message li {
+  margin: 0.25em 0;
+}
+
+.markdown-message blockquote {
+  margin: 0.75em 0;
+  padding-left: 0.85em;
+  border-left: 3px solid var(--border-card);
+  color: var(--text-secondary);
+}
+
+.markdown-message code {
+  padding: 0.12em 0.35em;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-base) 70%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.markdown-message pre {
+  margin: 0.75em 0;
+  overflow-x: auto;
+  padding: 0.85em;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-base) 80%, transparent);
+}
+
+.markdown-message pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.markdown-message a {
+  color: var(--accent-gold);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.markdown-message table {
+  width: 100%;
+  margin: 0.75em 0;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.markdown-message th,
+.markdown-message td {
+  border: 1px solid var(--border-subtle);
+  padding: 0.35em 0.5em;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-message th {
+  color: var(--accent-gold);
+  font-weight: 700;
+}
+
+.markdown-message__cursor {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--accent-gold);
+}
+
+.snap-section {
+  height: 100vh;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  position: relative;
+}
+
+/* 卡片基础样式 */
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-card);
+  border-radius: 4px;
+  box-shadow: var(--shadow-card);
+  padding: 24px;
+}
+
+/* 滚动条 */

@@ -1,0 +1,15 @@
+schema_version: huiji_crawler_config.v1
+site:
+  expected_user: POTATO BOT
+crawl:
+  namespaces: [0, 3500, 10, 828, 14]
+  include_file_manifest: false
+  sleep_seconds: 1.0
+  progress: true
+  log_every: 100
+  transport: requests
+browser:
+  headless: false
+  verify_account: true
+edge:
+  port: 9222

@@ -1,0 +1,9 @@
+{"id":"intro_sonetto","query":"介绍一下十四行诗","expected_entity":"十四行诗","expected_intent":"intro","required_sections":["profile","dossier"],"forbid_media_types":["voice","video"]}
+{"id":"skill_sonetto","query":"十四行诗的技能是什么","expected_entity":"十四行诗","expected_intent":"skill","required_sections":["skill"],"forbid_media_types":["voice","video"]}
+{"id":"item_sonetto","query":"介绍一下十四行诗的单品","expected_entity":"十四行诗","expected_intent":"item","required_sections":["item"],"forbid_media_types":["voice","video"]}
+{"id":"image_sonetto","query":"看一下十四行诗的立绘","expected_entity":"十四行诗","expected_intent":"media","required_media_types":["image"]}
+{"id":"voice_sonetto","query":"播放十四行诗语音","expected_entity":"十四行诗","expected_intent":"voice","required_media_types":["voice"]}
+{"id":"intro_matilda","query":"介绍一下玛蒂尔达","expected_entity":"玛蒂尔达","expected_intent":"intro","forbid_media_types":["voice","video"]}
+{"id":"skill_matilda","query":"玛蒂尔达的技能有什么","expected_entity":"玛蒂尔达","expected_intent":"skill","required_sections":["skill"]}
+{"id":"image_matilda","query":"看一下玛蒂尔达的图片","expected_entity":"玛蒂尔达","expected_intent":"media","required_media_types":["image"]}
+{"id":"general_game","query":"1999是什么游戏","expected_intent":"general_game","allow_no_entity":true}

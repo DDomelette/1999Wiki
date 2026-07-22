@@ -1,0 +1,5 @@
+{
+  "canonical_non_media_projection_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "name": "dev_inventory",
+  "schema_version": "evb.fixture/v1"
+}

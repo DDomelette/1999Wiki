@@ -1,0 +1,46 @@
+{
+  "schema_version": "rag_eval.thresholds/v1",
+  "p0_intents": [
+    "intro",
+    "profile_fact",
+    "skill",
+    "item",
+    "culture",
+    "voice",
+    "media",
+    "video",
+    "psychube",
+    "story",
+    "general_game",
+    "meta_question"
+  ],
+  "sample_minimums": {
+    "unique": 48,
+    "D1": 16,
+    "D2": 12,
+    "D3": 12,
+    "D4": 8,
+    "entities": 8,
+    "repeat_rate": 0.1
+  },
+  "difficulty": {
+    "D1": {"target": 90, "floor": 85, "floor_pass_rate": 0.95},
+    "D2": {"target": 85, "floor": 78, "floor_pass_rate": 0.90},
+    "D3": {"target": 80, "floor": 70, "floor_pass_rate": 0.85},
+    "D4": {"target": 90, "floor": 85, "floor_pass_rate": 1.0}
+  },
+  "weights": {
+    "text": {"M2": 0.4, "M3": 0.5, "M5": 0.1},
+    "media": {"M2": 0.3, "M4": 0.6, "M5": 0.1},
+    "hybrid": {"M2": 0.3, "M3": 0.3, "M4": 0.3, "M5": 0.1},
+    "boundary": {"M2": 0.3, "M3": 0.6, "M5": 0.1}
+  },
+  "reliability": {
+    "success_rate_min": 0.98,
+    "retrieval_p95_ms": 5000,
+    "ttft_p95_ms": 15000,
+    "total_p95_ms": 45000
+  },
+  "judge": {"likert_pass": 3, "human_alignment_min": 0.85},
+  "sync_stream_parity_minimum": 8
+}

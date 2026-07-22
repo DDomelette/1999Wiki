@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+.vitest/
+.pytest_cache/
+.ruff_cache/
+
+# Env
+.env
+.local/
+**/browser_profile/
+**/edge_profile/
+
+# Data & vectorstore (regeneratable)
+vectorstore/
+data/raw/
+data/processed/
+data/huiji/
+data/external/
+infra/milvus/volumes/
+workspace/
+dist/
+
+# Local runtime state, backups, and generated evidence
+backups/
+logs/
+*.log
+recovery-*.txt
+
+# Evaluation output is local evidence. Keep only stable test inputs in Git.
+eval/*
+!eval/queries_core.jsonl
+!eval/thresholds_core.json
+!eval/rag_full_chain_thresholds.v1.json
+!eval/rag_full_chain_boundary_seeds.v1.jsonl
+
+# The frontend public tree has been pruned to production-referenced shell assets.
+# Keep those files in Git so a clean checkout can build a complete frontend image.
+frontend/react-app/test-results/
+frontend/react-app/playwright-report/
+
+# Design references are preserved locally, not shipped as application source.
+/动效预选/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+.superpowers/

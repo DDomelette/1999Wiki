@@ -1,0 +1,192 @@
+.circular-gallery {
+  --gallery-shift: clamp(190px, 31%, 440px);
+  position: relative;
+  width: 100%;
+  height: clamp(300px, 42vh, 480px);
+  overflow: hidden;
+}
+
+.circular-gallery__viewport {
+  position: absolute;
+  inset: 0 0 46px;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.circular-gallery__viewport::before,
+.circular-gallery__viewport::after {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  bottom: 0;
+  width: clamp(32px, 9%, 120px);
+  content: '';
+  pointer-events: none;
+}
+
+.circular-gallery__viewport::before {
+  left: 0;
+  background: linear-gradient(to right, var(--bg-overlay), transparent);
+}
+
+.circular-gallery__viewport::after {
+  right: 0;
+  background: linear-gradient(to left, var(--bg-overlay), transparent);
+}
+
+.circular-gallery__slide {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: clamp(180px, 30%, 420px);
+  margin: 0;
+  padding: 6px;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  transform: translateX(-50%) scale(.72);
+  transition:
+    transform .48s cubic-bezier(.22, .61, .36, 1),
+    opacity .34s ease-out,
+    filter .34s ease-out;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+
+.circular-gallery__slide img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+
+.circular-gallery__slide--current {
+  z-index: 3;
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+  pointer-events: auto;
+}
+
+.circular-gallery__slide--previous,
+.circular-gallery__slide--next {
+  z-index: 2;
+  opacity: .64;
+  filter: saturate(.72) contrast(.92);
+  pointer-events: auto;
+}
+
+.circular-gallery__slide--previous {
+  transform: translateX(calc(-50% - var(--gallery-shift))) scale(.8);
+  mask-image: linear-gradient(to right, transparent 0, black 38%, black 100%);
+}
+
+.circular-gallery__slide--next {
+  transform: translateX(calc(-50% + var(--gallery-shift))) scale(.8);
+  mask-image: linear-gradient(to left, transparent 0, black 38%, black 100%);
+}
+
+.circular-gallery__slide--before {
+  transform: translateX(calc(-50% - var(--gallery-shift) - 160px)) scale(.68);
+}
+
+.circular-gallery__slide--after {
+  transform: translateX(calc(-50% + var(--gallery-shift) + 160px)) scale(.68);
+}
+
+.circular-gallery__controls {
+  position: absolute;
+  z-index: 6;
+  bottom: 4px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 16px);
+  color: var(--text-secondary);
+  transform: translateX(-50%);
+}
+
+.circular-gallery__controls button {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+.circular-gallery__controls button:disabled {
+  opacity: .32;
+  cursor: default;
+}
+
+.circular-gallery__controls button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.circular-gallery__controls span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.circular-gallery__lightbox {
+  position: fixed;
+  z-index: 300;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, .88);
+}
+
+.circular-gallery__lightbox > button {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .35);
+  background: rgba(0, 0, 0, .35);
+  color: #fff;
+}
+
+.circular-gallery__lightbox img {
+  max-width: min(94vw, 1600px);
+  max-height: 90vh;
+  object-fit: contain;
+}
+
+@media (max-width: 720px) {
+  .circular-gallery {
+    --gallery-shift: 61%;
+    height: clamp(280px, 48vh, 420px);
+  }
+
+  .circular-gallery__slide {
+    width: 70%;
+  }
+
+  .circular-gallery__slide--previous,
+  .circular-gallery__slide--next {
+    opacity: .5;
+    transform: translateX(calc(-50% - var(--gallery-shift))) scale(.72);
+  }
+
+  .circular-gallery__slide--next {
+    transform: translateX(calc(-50% + var(--gallery-shift))) scale(.72);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .circular-gallery__slide {
+    transition: none;
+  }
+}

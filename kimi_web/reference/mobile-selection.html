@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>REVERSE: 1999 - Dossier</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-tertiary-fixed": "#251913",
+                        "on-background": "#f5ded3",
+                        "surface-container-lowest": "#160c06",
+                        "primary-container": "#ed6916",
+                        "background": "#1c110b",
+                        "on-secondary": "#562000",
+                        "on-primary-fixed": "#351000",
+                        "surface-variant": "#40322b",
+                        "on-primary-fixed-variant": "#7a3000",
+                        "surface": "#1c110b",
+                        "tertiary": "#d9c2b8",
+                        "tertiary-fixed-dim": "#d9c2b8",
+                        "inverse-surface": "#f5ded3",
+                        "tertiary-container": "#a18d84",
+                        "surface-container-high": "#342720",
+                        "surface-container": "#291d16",
+                        "outline-variant": "#584237",
+                        "surface-bright": "#44362f",
+                        "on-error-container": "#ffdad6",
+                        "primary-fixed-dim": "#ffb693",
+                        "on-secondary-container": "#4b1b00",
+                        "inverse-primary": "#a04100",
+                        "on-primary": "#561f00",
+                        "error-container": "#93000a",
+                        "outline": "#a78b7e",
+                        "tertiary-fixed": "#f6ded4",
+                        "on-surface-variant": "#e0c0b2",
+                        "primary": "#ffb693",
+                        "on-primary-container": "#4b1b00",
+                        "on-tertiary-fixed-variant": "#53433c",
+                        "inverse-on-surface": "#3b2d26",
+                        "surface-container-low": "#251913",
+                        "secondary": "#ffb693",
+                        "on-surface": "#f5ded3",
+                        "on-secondary-fixed-variant": "#7a3000",
+                        "secondary-fixed": "#ffdbcc",
+                        "secondary-container": "#ed6916",
+                        "surface-tint": "#ffb693",
+                        "secondary-fixed-dim": "#ffb693",
+                        "primary-fixed": "#ffdbcc",
+                        "on-secondary-fixed": "#351000",
+                        "surface-container-highest": "#40322b",
+                        "error": "#ffb4ab",
+                        "on-tertiary-container": "#342720",
+                        "on-error": "#690005",
+                        "surface-dim": "#1c110b",
+                        "on-tertiary": "#3b2d27"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    spacing: {
+                        "margin-mobile": "16px",
+                        "panel-padding": "20px",
+                        "margin-desktop": "48px",
+                        "gutter": "24px",
+                        "unit": "4px"
+                    },
+                    fontFamily: {
+                        "headline-sm": ["Libre Caslon Text"],
+                        "headline-md": ["Libre Caslon Text"],
+                        "label-caps": ["JetBrains Mono"],
+                        "display-lg": ["Libre Caslon Text"],
+                        "body-md": ["Libre Caslon Text"],
+                        "body-lg": ["Libre Caslon Text"],
+                        "data-label": ["JetBrains Mono"],
+                        "data-code": ["JetBrains Mono"]
+                    },
+                    fontSize: {
+                        "headline-sm": ["24px", { "lineHeight": "1.3", "fontWeight": "400" }],
+                        "headline-md": ["32px", { "lineHeight": "1.2", "fontWeight": "400" }],
+                        "label-caps": ["11px", { "lineHeight": "1.2", "fontWeight": "700" }],
+                        "display-lg": ["48px", { "lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "body-md": ["16px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "data-label": ["14px", { "lineHeight": "1.4", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "data-code": ["12px", { "lineHeight": "1.4", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .noise-bg {
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.05'/%3E%3C/svg%3E");
+        }
+        .scanline {
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1));
+            background-size: 100% 4px;
+        }
+        /* Hide scrollbar for character list */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background h-screen w-screen overflow-hidden flex flex-col font-body-md noise-bg selection:bg-primary-container selection:text-on-primary-container">
+<!-- Top App Bar -->
+<header class="bg-surface/80 dark:bg-surface/80 backdrop-blur-xl fixed top-0 w-full z-50 border-b border-outline-variant shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center justify-between px-margin-mobile w-full h-16">
+<button class="text-primary dark:text-primary hover:text-primary-container transition-colors active:scale-95 duration-150 p-2">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">terminal</span>
+</button>
+<h1 class="font-headline-md text-headline-sm-mobile md:text-headline-md text-primary tracking-widest uppercase truncate font-bold">REVERSE: 1999</h1>
+<button class="text-primary dark:text-primary hover:text-primary-container transition-colors active:scale-95 duration-150 p-2">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">sensors</span>
+</button>
+</header>
+<!-- Main Content Canvas -->
+<main class="flex-1 mt-16 mb-20 relative flex flex-row overflow-hidden">
+<!-- Background Layer (Right Side Focus) -->
+<div class="absolute inset-0 right-0 left-1/3 md:left-1/4 z-0 bg-surface-container-lowest overflow-hidden">
+<div class="absolute inset-0 bg-cover bg-center opacity-40 mix-blend-luminosity" data-alt="A dimly lit, mid-century intelligence office. Mahogany desk with scattered documents, an old typewriter, and a vintage globe. Bookshelves line the walls. Warm, low-key lighting casting long shadows, archival noir aesthetic." style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuDYGec37lWwv8HE2UvE1E0onp8f2pb02SFgQTHBY_3oNG0gOTDuGfk8blQvzkEQeGe_84CbQVs__Ozy-eq4yV7QquC9P6C1P8xCXwdcPPdbkwEeNd7ug419SLHTSAv_M1zAq8ydSP6WYQk6qADwA-tv-XbZO_JAHLhMoYNaBTlpH8GV5bfsMGgTIF6LAObqy8pnWQCWNG6BM-QfnUFgOXoFTkuaik2mNYo_jp0SjGHBgt6bAn0zGlZB7mWHTNDWGf3w6Sbu-xqOdrJp')"></div>
+<!-- Character Portrait -->
+<img alt="Druvis III" class="absolute bottom-0 right-0 h-[90%] md:h-full object-contain object-bottom drop-shadow-2xl z-10 pointer-events-none transition-transform duration-1000 hover:scale-105 origin-bottom" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAx5q9tGCM1ktdU6jv3Y9NGRhPjR3bv6JR1dv0QejJKOm-ivrbgzO8CBbBDPtvxEC_jU6FUvESXN05sImTA3guc-clXDTvhV2xO787EvwjaRXe-3IFVCdEJvZG22nCY3xlsf9sixPrhN62rdkIUBxu5NOZOmTE22KYqxwmCfR_Y2WqpAvJ2XpR1lKPPw6LHgft3bVsqbueml7rPExCtBY02_1VJFAASBlCgqyxkISyb8wxwg9ZgXtQFSM-FXkjNmrMwB2GP5yoHB_V7"/>
+<!-- Overlay Scanlines -->
+<div class="absolute inset-0 scanline opacity-30 z-20 pointer-events-none"></div>
+<!-- Floating Data Overlay -->
+<div class="absolute top-8 left-8 z-30 font-data-code text-data-code text-primary/70 tracking-widest flex flex-col gap-1">
+<span class="uppercase">SYS.LOC: FOREST</span>
+<span class="opacity-50">CLASS: ARCANIST</span>
+<span class="opacity-50">STATUS: ACTIVE</span>
+</div>
+<!-- Full Dossier Button (Bottom Right) -->
+<div class="absolute bottom-8 right-margin-mobile md:right-margin-desktop z-40">
+<button class="flex items-center gap-3 bg-surface/70 backdrop-blur-md border border-primary px-6 py-3 shadow-[4px_4px_0px_0px_rgba(237,105,22,0.3)] hover:bg-primary-container hover:text-on-primary-container transition-all active:translate-y-1 group">
+<span class="material-symbols-outlined group-hover:text-on-primary-container text-primary transition-colors">assignment_ind</span>
+<span class="font-label-caps text-label-caps tracking-widest uppercase">查看完整档案</span>
+</button>
+</div>
+</div>
+<!-- Left Character List Panel -->
+<aside class="w-1/3 md:w-1/4 h-full bg-surface-container-high/90 backdrop-blur-xl border-r border-outline-variant z-30 flex flex-col relative shadow-[4px_0px_10px_rgba(0,0,0,0.5)]">
+<!-- Panel Header -->
+<div class="p-4 border-b border-outline/30 flex justify-between items-center">
+<span class="font-data-label text-data-label text-on-surface-variant">Wiki • 30</span>
+<span class="material-symbols-outlined text-outline text-sm">filter_list</span>
+</div>
+<!-- List -->
+<div class="flex-1 overflow-y-auto no-scrollbar p-4 space-y-6">
+<!-- Active Item (Druvis III) -->
+<div class="relative group cursor-pointer">
+<!-- Copper Bracket Accent -->
+<div class="absolute -top-2 -left-2 w-4 h-4 border-t border-l border-primary transition-transform group-hover:scale-110"></div>
+<div class="border border-primary bg-surface-container/50 p-2 shadow-[2px_2px_0px_0px_rgba(237,105,22,0.5)]">
+<div class="aspect-video bg-surface-container-lowest relative overflow-hidden mb-2 border border-outline/20">
+<img class="w-full h-full object-cover opacity-80 mix-blend-screen" data-alt="A small, stylized thumbnail portrait of a refined woman with blonde hair in an elegant blue dress, set against a dark terminal-like background with subtle data UI elements. Archival noir style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAYfhZlEJA-_RhSW8SiLYVPFUbCX2EGMQP3xEoJGuaJD6qWh53p1L0TQUTUvKX3Xtc_ikiLrVLwkOmbEQNgmqHO6UAQSeMDErW7a-GGW2GA6Tt31_z4tK7OUG_VFBNO1oAwCVZ_tCxCcgRnrMK56pwdYLN7hRv4IubVrpeOw4RlipmEfXryOMJkDZmBoXz-pwhoSZxyGpOpJGSCO8rbcN9MtD81q5lbZE3RlfKSPBnt6QwYyCDWpkFnzxHCHwWBabpt5hyeZZfvDQIR"/>
+</div>
+<div class="text-center font-data-label text-data-label text-primary tracking-widest">槲寄生</div>
+</div>
+</div>
+<!-- Inactive Item 1 -->
+<div class="relative group cursor-pointer opacity-60 hover:opacity-100 transition-opacity">
+<div class="border border-outline/30 bg-surface/30 p-2 hover:border-outline-variant hover:bg-surface-container/30 transition-colors">
+<div class="aspect-video bg-surface-container-lowest relative overflow-hidden mb-2 border border-outline/10 grayscale group-hover:grayscale-0 transition-all">
+<img class="w-full h-full object-cover mix-blend-screen" data-alt="A small thumbnail portrait of a young woman in tactical gear and goggles, dark industrial background. Archival noir style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAZE-r1wnRzOcxqKPHqqZMzN4fUaMS2c19FRUo3kG7OUKyWzMQ3rtk65yOiPGbPq-M2wOn5ffwoz6mgDcJ_omQLBliKqbHwdVRisIPLmUoob_xsIG8AlN02hO9q4sT9jjY4c38bVjIn_-GqF4JYuc_mXytHblIW9is2ZSu_z2rvAv8G_fRBBKNPpwuTYl3ixy5G3-PHkGMO1P5qGVzUiuujxPkC5yScejPoSyk9_PWI2SPbP0NvQlWCcTJDVXhaK29GIWSy2a2Nf0Ho"/>
+</div>
+<div class="text-center font-data-label text-data-label text-on-surface-variant tracking-widest">红弩箭</div>
+</div>
+</div>
+<!-- Inactive Item 2 -->
+<div class="relative group cursor-pointer opacity-60 hover:opacity-100 transition-opacity">
+<div class="border border-outline/30 bg-surface/30 p-2 hover:border-outline-variant hover:bg-surface-container/30 transition-colors">
+<div class="aspect-video bg-surface-container-lowest relative overflow-hidden mb-2 border border-outline/10 grayscale group-hover:grayscale-0 transition-all">
+<img class="w-full h-full object-cover mix-blend-screen" data-alt="A small thumbnail portrait of a boy with curly hair in a patterned jacket, dark terminal UI background. Archival noir style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCkR1C9Z7Qy8HWjFUGK7xi-M2aExxOJ2lEUqHxzqkTiHKbGIVtSTjOZ0A3J1lQFU3PC3m_952W0Hf1kG4QIajuAvW_vw9g2FT3jRIYLJHCxVCRoorNRr7hkts_a-KNvBa1NAW9eVcKFy73WDAcjvRkBtU7ctNMJNq7bl-z9H29zte-vM_v6GmpYl4gg09TVJuljwsl0AcrosOxJ3Zyw_RGfWAqjDZobfz8zZ2QIe3RL04treqsmztL4SO51dJ6Um-WaVUQQ4tg5F-Xa"/>
+</div>
+<div class="text-center font-data-label text-data-label text-on-surface-variant tracking-widest">尼克·波顿</div>
+</div>
+</div>
+<!-- Inactive Item 3 -->
+<div class="relative group cursor-pointer opacity-60 hover:opacity-100 transition-opacity">
+<div class="border border-outline/30 bg-surface/30 p-2 hover:border-outline-variant hover:bg-surface-container/30 transition-colors">
+<div class="aspect-video bg-surface-container-lowest relative overflow-hidden mb-2 border border-outline/10 grayscale group-hover:grayscale-0 transition-all">
+<img class="w-full h-full object-cover mix-blend-screen" data-alt="A small thumbnail portrait of an enigmatic figure, heavily shadowed, tactical readout background. Archival noir style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBTZ2iL-pzHPB7m8kUZShosFeIDK9zra07cWqtPp0H9A6ijwrps4cRi_cIDQivj4e4xKP5cPjxGu6CtR7qFsaLHRKtU7ZBbrVuRsdwYdV0vz3-8kwIYaEOVTCYle8WOHirbuOObjIuf1YAGLpRpNoWHvqkrSgHFSjuZsC8dgFJWLRnCoOMcSa6b2budcBwksR3PGfIZ2yZa5G-1GUQf33HycndhyFsxEWix0r1EFmw5A8eUHvR6Thyylm402hlkMWn-hUCMYAYs0KEo"/>
+</div>
+<div class="text-center font-data-label text-data-label text-on-surface-variant tracking-widest">星锑</div>
+</div>
+</div>
+</div>
+</aside>
+</main>
+<!-- Bottom Nav Bar (Mobile & Contextual Desktop) -->
+<nav class="bg-surface/90 dark:bg-surface/90 backdrop-blur-md fixed bottom-0 w-full z-50 border-t border-outline-variant flex justify-around items-center h-20 pb-safe px-4">
+<button class="flex flex-col items-center justify-center bg-secondary-container text-on-secondary-container rounded-lg p-unit shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-surface-container-high transition-all active:translate-y-0.5 duration-75 w-16">
+<span class="material-symbols-outlined mb-1 text-on-secondary-container" style="font-variation-settings: 'FILL' 1;">folder_open</span>
+<span class="font-label-caps text-[10px] tracking-wider text-on-secondary-container">DOSSIER</span>
+</button>
+<button class="flex flex-col items-center justify-center text-outline p-unit hover:bg-surface-container-high transition-all active:translate-y-0.5 duration-75 w-16">
+<span class="material-symbols-outlined mb-1">inventory_2</span>
+<span class="font-label-caps text-[10px] tracking-wider">ARCHIVE</span>
+</button>
+<!-- Primary Action FAB replacement for Mobile -->
+<button class="flex flex-col items-center justify-center text-outline p-unit hover:bg-surface-container-high transition-all active:translate-y-0.5 duration-75 w-16 relative">
+<div class="absolute -top-4 w-12 h-12 bg-primary flex items-center justify-center rounded-full shadow-[0_0_15px_rgba(255,182,147,0.4)] border-2 border-surface">
+<span class="material-symbols-outlined text-on-primary">rocket_launch</span>
+</div>
+<span class="font-label-caps text-[10px] tracking-wider mt-6 text-primary">DEPLOY</span>
+</button>
+<button class="flex flex-col items-center justify-center text-outline p-unit hover:bg-surface-container-high transition-all active:translate-y-0.5 duration-75 w-16">
+<span class="material-symbols-outlined mb-1">history_edu</span>
+<span class="font-label-caps text-[10px] tracking-wider">LOGS</span>
+</button>
+</nav>
+</body></html>

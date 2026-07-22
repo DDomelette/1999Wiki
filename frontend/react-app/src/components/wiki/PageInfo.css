@@ -1,0 +1,98 @@
+.wiki-dossier-info {
+  min-width: 0;
+  color: var(--text-secondary);
+  user-select: text;
+}
+
+.wiki-dossier-info__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--archive-line);
+}
+
+.wiki-dossier-info__header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.wiki-dossier-info__section {
+  margin-top: 20px;
+}
+
+.wiki-dossier-info__section h3 {
+  margin: 0 0 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.wiki-dossier-info__fields {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.wiki-dossier-info__fields > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(5.5rem, 0.75fr) minmax(0, 1.25fr);
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.wiki-dossier-info__fields dt {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.wiki-dossier-info__fields dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.wiki-dossier-info a {
+  color: var(--link-accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--link-accent) 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+.wiki-dossier-info a:focus-visible {
+  outline: 2px solid var(--link-accent);
+  outline-offset: 3px;
+}
+
+.wiki-dossier-info__relations {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wiki-dossier-info__relations li {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 620px) {
+  .wiki-dossier-info__fields > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

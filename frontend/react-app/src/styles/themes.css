@@ -1,0 +1,77 @@
+[data-theme="storm-dark"] {
+  --bg-base: #1c110b;
+  --bg-primary: #1c110b;
+  --bg-elevated: #27170f;
+  --bg-overlay: rgba(28, 17, 11, 0.9);
+  --text-primary: #f6ded4;
+  --text-secondary: #c8aaa0;
+  --text-muted: #967a70;
+  --accent-gold: #e2610b;
+  --accent-rust: #ed6916;
+  --accent-purple: #8d5135;
+  --border-subtle: rgba(226, 97, 11, 0.28);
+  --border-card: rgba(237, 105, 22, 0.5);
+  --border-glow: rgba(237, 105, 22, 0.3);
+  --archive-panel: rgba(28, 17, 11, 0.82);
+  --archive-panel-strong: rgba(20, 11, 7, 0.94);
+  --archive-line: rgba(226, 97, 11, 0.42);
+  --link-accent: #77a9d6;
+  --status-success: #7fa37d;
+  --status-warning: #ed9b45;
+  --status-error: #d96b62;
+  --shadow-card: 0 14px 40px rgba(0, 0, 0, 0.38);
+}
+
+[data-theme="manuscript-gold"] {
+  --bg-base: #f1e6d2;
+  --bg-primary: #f1e6d2;
+  --bg-elevated: #f8f0e2;
+  --bg-overlay: rgba(241, 230, 210, 0.92);
+  --text-primary: #2d1a12;
+  --text-secondary: #5f473b;
+  --text-muted: #80695c;
+  --accent-gold: #a9470a;
+  --accent-rust: #c6570d;
+  --accent-purple: #6f5d72;
+  --border-subtle: rgba(92, 52, 27, 0.22);
+  --border-card: rgba(169, 71, 10, 0.42);
+  --border-glow: rgba(198, 87, 13, 0.24);
+  --archive-panel: rgba(248, 240, 226, 0.86);
+  --archive-panel-strong: rgba(248, 240, 226, 0.97);
+  --archive-line: rgba(169, 71, 10, 0.4);
+  --link-accent: #1d5f99;
+  --status-success: #3f7147;
+  --status-warning: #a85d13;
+  --status-error: #a33e35;
+  --shadow-card: 0 14px 36px rgba(61, 36, 20, 0.18);
+}
+
+[data-theme="cold-archive"] {
+  --bg-base: #11191a;
+  --bg-primary: #11191a;
+  --bg-elevated: #182426;
+  --bg-overlay: rgba(17, 25, 26, 0.91);
+  --text-primary: #dce4df;
+  --text-secondary: #a8b7b1;
+  --text-muted: #748984;
+  --accent-gold: #c65d20;
+  --accent-rust: #e47731;
+  --accent-purple: #708b88;
+  --border-subtle: rgba(111, 143, 138, 0.26);
+  --border-card: rgba(198, 93, 32, 0.46);
+  --border-glow: rgba(228, 119, 49, 0.25);
+  --archive-panel: rgba(17, 25, 26, 0.84);
+  --archive-panel-strong: rgba(12, 19, 20, 0.95);
+  --archive-line: rgba(198, 93, 32, 0.4);
+  --link-accent: #76a8d2;
+  --status-success: #78a487;
+  --status-warning: #d59448;
+  --status-error: #d26f67;
+  --shadow-card: 0 14px 40px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme] {
+  --font-body: 'Noto Serif SC', 'Songti SC', serif;
+  --font-display: 'Libre Caslon Text', 'Noto Serif SC', Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+}
