@@ -11,6 +11,7 @@ streamlit
 gradio
 requests
 pydantic
+packaging
 pyyaml
 python-dotenv
 python-frontmatter
