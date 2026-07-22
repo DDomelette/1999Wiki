@@ -1,0 +1,22 @@
+// @vitest-environment node
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+
+const globalCss = readFileSync(new URL('../../styles/global.css', import.meta.url), 'utf8')
+const navCss = readFileSync(new URL('../animations/reactbits/CardNav.css', import.meta.url), 'utf8')
+
+describe('main page responsive CSS contract', () => {
+  it('uses dynamic viewport units and mobile-safe snap behavior', () => {
+    expect(globalCss).toContain('--main-nav-mobile-offset: 56px')
+    expect(globalCss).toMatch(/\.snap-container\s*\{[^}]*height:\s*100vh[^}]*height:\s*100dvh/s)
+    expect(globalCss).toMatch(/\.snap-section\s*\{[^}]*height:\s*100vh[^}]*height:\s*100dvh/s)
+    expect(globalCss).toMatch(/@media \(max-width: 720px\)[\s\S]*scroll-snap-type:\s*y proximity/)
+  })
+
+  it('compacts only the main Card Nav on phones', () => {
+    expect(navCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.card-nav--main \.card-nav__bar/)
+    expect(navCss).toMatch(/\.card-nav--main \.card-nav__bar\s*\{[^}]*min-height:\s*40px/s)
+    expect(navCss).toMatch(/\.card-nav--main \.card-nav__toggle[\s\S]*width:\s*36px[\s\S]*height:\s*36px/)
+    expect(navCss).not.toMatch(/\.card-nav--wiki \.card-nav__bar\s*\{[^}]*min-height:\s*40px/s)
+  })
+})

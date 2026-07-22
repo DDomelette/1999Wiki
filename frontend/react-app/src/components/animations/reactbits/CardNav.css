@@ -63,4 +63,19 @@
   .card-nav__group { border-top: 1px solid var(--border-subtle); border-left: 0; }
   .card-nav__group:first-child { border-top: 0; }
   .card-nav__menu::-webkit-scrollbar { display: none; }
+  .card-nav--main .card-nav__bar {
+    min-height: 40px;
+    gap: 8px;
+    padding: 2px 6px 2px 8px;
+  }
+  .card-nav--main .card-nav__toggle,
+  .card-nav--main .theme-toggle {
+    width: 36px;
+    height: 36px;
+  }
+  .card-nav--main .card-nav__primary {
+    min-width: 58px;
+    padding: 8px 9px;
+    font-size: 0.75rem;
+  }
 }
