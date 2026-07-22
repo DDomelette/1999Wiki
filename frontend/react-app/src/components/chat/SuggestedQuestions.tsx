@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import './SuggestedQuestions.css'
 
 export const SUGGESTED_QUESTION_POOL = [
   '十四行诗是怎样的人？',
