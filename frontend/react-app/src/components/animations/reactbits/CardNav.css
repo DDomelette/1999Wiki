@@ -58,6 +58,12 @@
 .card-nav__group :disabled, .card-nav__group [aria-disabled="true"] { opacity: .38; cursor: not-allowed; }
 @media (max-width: 720px) {
   .card-nav { top: 8px; width: calc(100vw - 16px); }
+  .card-nav--main {
+    top: calc(env(safe-area-inset-top, 0px) + 6px);
+    width: calc(100vw - 16px);
+  }
+  .card-nav--main .card-nav__brand { font-size: .68rem; white-space: nowrap; }
+  .card-nav--main .card-nav__actions { gap: 2px; }
   .card-nav__brand { font-size: .7rem; }
   .card-nav__menu { grid-template-columns: 1fr; max-height: calc(100dvh - 86px); overflow-y: auto; scrollbar-width: none; }
   .card-nav__group { border-top: 1px solid var(--border-subtle); border-left: 0; }
