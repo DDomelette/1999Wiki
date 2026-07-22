@@ -20,13 +20,13 @@
 | `SUGGEST-P0-02` | `sampleSuggestedQuestions` | 纯函数测试：4 条上限、唯一性、原数组不变、小题库 | 重载页面多次，推荐组允许变化且单组无重复 | 同组重复、超过 4 条、小题库报错或原题库被改写 |
 | `SUGGEST-P0-03` | `SuggestedQuestions` 挂载期状态 | 重渲染后按钮文本数组保持一致 | 编辑草稿、发送/完成、切换分类、清空对话时当前 4 条不跳变 | 用户阅读期间推荐项自行变化 |
 | `INPUT-P0-01` | `ChatInput.tsx` 选择回调与 input ref | Testing Library 点击后断言新值与焦点 | 先输入草稿再点推荐项，草稿被完整替换且光标回到输入框 | 只追加文本、未聚焦或草稿未更新 |
-| `INPUT-P0-02` | 推荐按钮 `type="button"` 与回调边界 | 点击后断言 `send` 未调用 | 点击推荐项后消息区不新增消息，发送按钮变为可用 | 点击即发起网络请求或新增消息 |
-| `INPUT-P0-03` | `ChatInput` 常驻渲染与 `sending` 透传 | 空/非空消息状态均存在推荐组；发送中按钮全部 disabled | 发起一次真实提问，流式响应期间不可点，结束后恢复且内容不变 | 推荐栏随消息消失、发送中仍可点或结束后未恢复 |
-| `INPUT-P0-04` | 既有 `ChatInput`、`ChatSection` | 相关测试、完整 `npm test`、`npm run build` | 手动发送问题并切换扩大检索/自由补充，旧流程行为不变 | 发送、重试、模式按钮、清空或分类筛选回归 |
+| `INPUT-P0-02` | `SuggestedQuestions.tsx` 的 `type="button"`；`ChatInput.tsx` 的选择回调 | `ChatInput.test.tsx` 点击后断言 `send` 未调用 | 点击推荐项后消息区不新增消息，发送按钮变为可用 | 点击即发起网络请求或新增消息 |
+| `INPUT-P0-03` | `ChatInput.tsx` 常驻渲染与 `sending` 透传 | `ChatInput.test.tsx`、`ChatSection.test.tsx`：空/非空消息状态均存在推荐组；发送中按钮全部 disabled | 发起一次真实提问，流式响应期间不可点，结束后恢复且内容不变 | 推荐栏随消息消失、发送中仍可点或结束后未恢复 |
+| `INPUT-P0-04` | `ChatInput.tsx`、`ChatSection.tsx`、既有 `chatStore.ts` 接口边界 | 相关组件测试、完整 `npm test`、`npm run build` | 手动发送问题并切换扩大检索/自由补充，旧流程行为不变 | 发送、重试、模式按钮、清空或分类筛选回归 |
 | `UI-P0-01` | `SuggestedQuestions.css` 与表单内渲染顺序 | 组件结构断言；构建通过 | 2048×1157 下推荐栏位于截图红框区域且不遮挡其他控件 | 推荐栏进入消息区、遮挡输入/发送/模式按钮 |
-| `UI-P0-02` | 推荐列表 flex 与 `overflow-x` | CSS 规则静态断言或真实浏览器检查 | 390×844 下推荐列表横向滚动，页面仍可操作且不持续增高 | 按钮多行挤压消息区或溢出页面 |
-| `UI-P0-03` | 仅使用现有 CSS 主题变量/`color-mix` | CSS 审查与前端构建 | `manuscript-gold`、`storm-dark` 下文字、边框和状态均清晰 | 某一主题低对比、出现固定浅/深色块 |
-| `A11Y-P0-01` | 分组语义、原生按钮和交互 CSS | Testing Library role/name/disabled；键盘测试 | Tab 可逐项聚焦，Enter/Space 只填草稿，焦点轮廓可见 | 无可访问名称、键盘不可用、按键提交或无焦点提示 |
+| `UI-P0-02` | `SuggestedQuestions.css` 的 flex、`white-space` 与 `overflow-x` | `SuggestedQuestions.css.test.ts` 静态断言；390×844 真实浏览器检查 | 390×844 下推荐列表横向滚动，页面仍可操作且不持续增高 | 按钮多行挤压消息区或溢出页面 |
+| `UI-P0-03` | `SuggestedQuestions.css` 的主题变量与 `color-mix` | `SuggestedQuestions.css.test.ts` 禁止独立主题色块；`npm run build` | `manuscript-gold`、`storm-dark` 下文字、边框和状态均清晰 | 某一主题低对比、出现固定浅/深色块 |
+| `A11Y-P0-01` | `SuggestedQuestions.tsx` 的分组/按钮语义；`SuggestedQuestions.css` 的交互状态 | `SuggestedQuestions.test.tsx` role/name/disabled/键盘测试；`SuggestedQuestions.css.test.ts` 焦点规则断言 | Tab 可逐项聚焦，Enter/Space 只填草稿，焦点轮廓可见 | 无可访问名称、键盘不可用、按键提交或无焦点提示 |
 
 完成判定：表中所有 P0 均有自动测试结果和对应真实验收记录；完整测试与构建通过；任何一项只有占位或只通过 mock 都不得标记完成。
 
@@ -89,13 +89,16 @@
 - 对应 specs：`UI-P0-01`、`UI-P0-02`、`UI-P0-03`、`A11Y-P0-01`
 - 新建：`frontend/react-app/src/components/chat/SuggestedQuestions.css`
 - 修改：`frontend/react-app/src/components/chat/SuggestedQuestions.tsx`（导入 CSS）
-- 修改测试：`frontend/react-app/src/components/chat/SuggestedQuestions.test.tsx`；必要时新增 `SuggestedQuestions.css.test.ts`
+- 修改测试：`frontend/react-app/src/components/chat/SuggestedQuestions.test.tsx`
+- 新建测试：`frontend/react-app/src/components/chat/SuggestedQuestions.css.test.ts`
 - 实现要点：
   - 推荐栏采用 flex，左侧固定“试着问问”，右侧推荐列表 `min-width: 0`、`overflow-x: auto`。
   - 推荐项为不换行胶囊按钮，定义 hover、`focus-visible` 和 disabled。
   - 仅使用 `--bg-elevated`、`--text-*`、`--accent-gold`、`--border-*` 等现有变量和 `color-mix`。
   - 窄屏允许标签与列表上下排列，但问题按钮保持单行横向滚动。
-- 测试：运行 `npm test -- --run src/components/chat/SuggestedQuestions.test.tsx src/components/chat/ChatInput.test.tsx src/components/sections/ChatSection.test.tsx`。
+- 测试：
+  - `SuggestedQuestions.css.test.ts` 必须读取 CSS 并断言推荐列表包含 `overflow-x: auto`、推荐按钮包含 `white-space: nowrap`、存在 `:focus-visible` 与 `:disabled` 规则，且颜色声明引用现有 `var(--*)` 或 `color-mix`。
+  - 运行 `npm test -- --run src/components/chat/SuggestedQuestions.test.tsx src/components/chat/SuggestedQuestions.css.test.ts src/components/chat/ChatInput.test.tsx src/components/sections/ChatSection.test.tsx`。
 - 真实验收：
   - 2048×1157、`manuscript-gold`：位置对应截图红框，4 条按钮可见或在栏内滚动，不遮挡输入区。
   - 390×844、`manuscript-gold`：列表横向滚动，输入/发送/模式按钮仍完整可用。
