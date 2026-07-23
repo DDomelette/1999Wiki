@@ -30,6 +30,58 @@ def test_build_public_media_url_supports_absolute_https_base():
 
 
 @pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://:443/base",
+        "https://exa mple.com/base",
+        "https://example.com:invalid/base",
+        "https://example.com:70000/base",
+        "https://[not-ipv6]/base",
+        "https://example..com/base",
+        "https://-example.com/base",
+        "https://example-.com/base",
+        "https://exa_mple.com/base",
+        f"https://{'a' * 64}.example/base",
+        "https://" + ".".join(["a" * 63] * 5) + "/base",
+    ],
+)
+def test_normalize_public_media_base_rejects_malformed_http_authorities(base_url):
+    with pytest.raises(ValueError):
+        normalize_public_media_base(base_url)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://例子.测试/base",
+        "https://[2001:db8::1]:9443/base",
+        "http://127.0.0.1:9002",
+        "http://localhost:9002",
+    ],
+)
+def test_normalize_public_media_base_accepts_valid_idna_ip_and_localhost(base_url):
+    assert normalize_public_media_base(base_url) == base_url
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://:443/base",
+        "https://exa mple.com/base",
+        "https://example..com/base",
+        "https://example.com:invalid/base",
+    ],
+)
+def test_projector_rejects_malformed_http_authorities(base_url):
+    with pytest.raises(ValueError):
+        build_public_media_url(
+            base_url,
+            "reverse1999-assets",
+            "voice/en/file.ogg",
+        )
+
+
+@pytest.mark.parametrize(
     "object_key",
     [
         "",
@@ -44,6 +96,10 @@ def test_build_public_media_url_supports_absolute_https_base():
         "portrait/file.webp#fragment",
         "portrait/\x00file.webp",
         "portrait/\x1ffile.webp",
+        "portrait/\x7ffile.webp",
+        "portrait/\x80file.webp",
+        "portrait/\u200bfile.webp",
+        "portrait/\ud800file.webp",
     ],
 )
 def test_build_public_media_url_rejects_unsafe_object_keys(object_key):
@@ -87,6 +143,10 @@ def test_build_public_media_url_rejects_unsafe_bucket_names(bucket_name):
         "/media/%252e%252e/secret",
         r"/media\private",
         "/media/\x00private",
+        "/media/\x7fprivate",
+        "/media/\x80private",
+        "/media/\u200bprivate",
+        "/media/\ud800private",
     ],
 )
 def test_normalize_public_media_base_rejects_unsafe_values(base_url):
@@ -130,12 +190,37 @@ def test_project_media_row_omits_missing_or_unsafe_object_keys(object_key):
 
 
 @pytest.mark.parametrize(
+    "unsafe_character",
+    ["\x7f", "\x80", "\u200b", "\ud800"],
+)
+def test_project_media_row_omits_all_unicode_control_categories(unsafe_character):
+    assert project_media_row(
+        {
+            "object_key": f"portrait/{unsafe_character}secret.webp",
+            "url": "https://stored.example/stale.webp",
+        },
+        base_url="/media",
+        bucket_name="reverse1999-assets",
+    ) is None
+    assert project_media_row(
+        {
+            "object_key": "portrait/safe.webp",
+            "url": "https://stored.example/stale.webp",
+        },
+        base_url=f"/media/{unsafe_character}private",
+        bucket_name="reverse1999-assets",
+    ) is None
+
+
+@pytest.mark.parametrize(
     "value",
     [
         "/media/bucket/key.webp",
         "/media/bucket/key%20name.webp",
         "http://media.example.com/bucket/key.webp",
         "https://media.example.com/bucket/key.webp",
+        "https://例子.测试/bucket/key.webp",
+        "https://[2001:db8::1]:9443/bucket/key.webp",
     ],
 )
 def test_safe_public_media_url_accepts_same_origin_paths_and_http_urls(value):
@@ -156,6 +241,14 @@ def test_safe_public_media_url_accepts_same_origin_paths_and_http_urls(value):
         "/media/key.webp?token=value",
         "/media/key.webp#fragment",
         "/media/\x00key.webp",
+        "/media/\x7fkey.webp",
+        "/media/\x80key.webp",
+        "/media/\u200bkey.webp",
+        "/media/\ud800key.webp",
+        "https://:443/key.webp",
+        "https://exa mple.com/key.webp",
+        "https://example..com/key.webp",
+        "https://example.com:invalid/key.webp",
     ],
 )
 def test_safe_public_media_url_rejects_unsafe_values(value):
