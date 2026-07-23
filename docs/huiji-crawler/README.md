@@ -16,7 +16,7 @@ docs/huiji-crawler/
 2. [P2 Windows 凭据生命周期设计](specs/2026-07-20-windows-crawler-p2-credential-lifecycle-design.md)
 3. [P2 Windows 自包含离线分发设计](specs/2026-07-20-windows-crawler-p2-offline-distribution-design.md)
 
-当前执行计划：[P1 Windows 可迁移工具实施计划](plans/2026-07-20-windows-crawler-p1-portable-tool.md)。P1 实现、标准包构建、四路径搬迁、真实 Edge 刷新、真实 Requests 只读验证和专项回归已经通过；最终完整测试复验正在等待并发 wiki v3 工作树恢复一致，尚未宣称 P1 最终完成。
+当前执行计划：[P1 Windows 可迁移工具实施计划](plans/2026-07-20-windows-crawler-p1-portable-tool.md)。P1 实现、确定性标准包构建、四路径搬迁、真实 Edge 刷新、真实 Requests 只读验证、Python 3.12 包专项回归和 `1999wiki` 仓库全量回归均已通过；P1 已完成最终验收。最终凭据位于 `eval/huiji-crawler/20260723-025717/p1/final-acceptance.v1.json`。
 
 每一阶段使用独立 plan、独立验收证据和独立完成判定。前一阶段未完成时，不激活后一阶段的运行时变更。
 

@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 import { useState } from 'react'
 import { GLOBAL_BACKGROUND_IMAGE_SRC, HOME_VIDEO_SRC } from '../../media/assets'
+import './HomeSection.css'
 
 const titleVariants = {
   hidden: { opacity: 0, y: 20 },
@@ -18,24 +19,20 @@ export function HomeSection() {
   return (
     <section
       data-snap-section="home"
-      className="snap-section"
-      style={{ position: 'relative', overflow: 'hidden' }}
+      className="snap-section home-section"
     >
       {/* 背景层:视频优先,失败时保留全局图片背景 */}
       <div
         aria-hidden="true"
+        className="home-section__fallback"
         style={{
-          position: 'absolute',
-          inset: 0,
           backgroundImage: `linear-gradient(rgba(12, 16, 15, 0.28), rgba(12, 16, 15, 0.62)), url(${GLOBAL_BACKGROUND_IMAGE_SRC})`,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
           filter: videoFailed ? 'none' : 'brightness(0.76)',
         }}
       />
       {!videoFailed && (
         <video
-          className="video-bg"
+          className="home-section__video"
           autoPlay
           muted
           loop
@@ -44,11 +41,6 @@ export function HomeSection() {
           onError={() => setVideoFailed(true)}
           onCanPlay={() => setVideoReady(true)}
           style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
             opacity: videoReady ? 1 : 0,
             transition: 'opacity 900ms ease',
           }}
@@ -58,25 +50,13 @@ export function HomeSection() {
       )}
 
       {/* 内容层 */}
-      <div
-        style={{
-          position: 'relative', zIndex: 10,
-          height: '100%', display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center', gap: 16,
-        }}
-      >
+      <div className="home-section__content">
         <motion.h1
           custom={0}
           variants={titleVariants}
           initial="hidden"
           animate="visible"
-          style={{
-            fontFamily: 'var(--font-body)',
-            fontWeight: 700,
-            fontSize: 'clamp(2.5rem, 6vw, 4.5rem)',
-            color: 'var(--text-primary)',
-            textShadow: '0 4px 24px rgba(0,0,0,0.6)',
-          }}
+          className="home-section__title"
         >
           重返未来:1999
         </motion.h1>
@@ -86,13 +66,7 @@ export function HomeSection() {
           variants={titleVariants}
           initial="hidden"
           animate="visible"
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontWeight: 700,
-            fontSize: 'clamp(1.5rem, 4vw, 3rem)',
-            color: 'var(--accent-gold)',
-            letterSpacing: '0.1em',
-          }}
+          className="home-section__subtitle"
         >
           REVERSE: 1999
         </motion.h2>
@@ -102,13 +76,7 @@ export function HomeSection() {
           variants={titleVariants}
           initial="hidden"
           animate="visible"
-          style={{
-            fontFamily: 'var(--font-display)',
-            fontWeight: 500,
-            fontSize: '1.25rem',
-            color: 'var(--accent-gold)',
-            opacity: 0.9,
-          }}
+          className="home-section__version"
         >
           3.8 版本 · 世纪末尺度
         </motion.p>
@@ -118,25 +86,14 @@ export function HomeSection() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.9 }}
-          style={{ marginTop: 48 }}
+          className="home-section__download"
         >
           <button
             onClick={() => {
               setShowToast(true)
               setTimeout(() => setShowToast(false), 2500)
             }}
-            style={{
-              padding: '12px 48px',
-              border: '1px solid var(--accent-gold)',
-              borderRadius: 4,
-              background: 'transparent',
-              color: 'var(--accent-gold)',
-              fontFamily: 'var(--font-body)',
-              fontSize: '1.1rem',
-              letterSpacing: '0.1em',
-              cursor: 'pointer',
-              transition: 'all 0.3s',
-            }}
+            className="home-section__cta"
             onMouseEnter={(e) => {
               e.currentTarget.style.boxShadow = '0 0 20px var(--border-glow)'
               e.currentTarget.style.background = 'rgba(212, 175, 55, 0.1)'
@@ -152,14 +109,7 @@ export function HomeSection() {
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              style={{
-                marginTop: 12, padding: '8px 16px',
-                background: 'var(--bg-elevated)',
-                border: '1px solid var(--border-card)',
-                borderRadius: 4,
-                color: 'var(--text-secondary)',
-                fontSize: '0.9rem',
-              }}
+              className="home-section__toast"
             >
               下载链接待补
             </motion.div>
@@ -171,12 +121,7 @@ export function HomeSection() {
       <motion.div
         animate={{ y: [0, 8, 0] }}
         transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
-        style={{
-          position: 'absolute', bottom: 32, left: '50%',
-          transform: 'translateX(-50%)',
-          color: 'var(--text-muted)',
-          fontSize: '1.5rem',
-        }}
+        className="home-section__scroll-cue"
       >
         ↓
       </motion.div>

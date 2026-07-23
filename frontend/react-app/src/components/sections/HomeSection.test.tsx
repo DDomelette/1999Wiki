@@ -20,4 +20,14 @@ describe('HomeSection media background', () => {
 
     expect(screen.getByRole('button', { name: '立即下载' })).toBeInTheDocument()
   })
+
+  it('exposes responsive home layout hooks without changing media behavior', () => {
+    const { container } = render(<HomeSection />)
+
+    expect(container.querySelector('.home-section')).toBeInTheDocument()
+    expect(container.querySelector('.home-section__content')).toBeInTheDocument()
+    expect(container.querySelector('.home-section__title')).toBeInTheDocument()
+    expect(container.querySelector('.home-section__cta')).toHaveTextContent('立即下载')
+    expect(container.querySelector('.home-section__scroll-cue')).toBeInTheDocument()
+  })
 })

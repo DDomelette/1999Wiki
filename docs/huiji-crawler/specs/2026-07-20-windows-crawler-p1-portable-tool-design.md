@@ -1,7 +1,7 @@
 # Windows Huiji Crawler P1 Portable Tool Design
 
 日期：2026-07-20  
-状态：实现与专项验收已完成；最终完整测试复验被并发 wiki v3 中间态阻断  
+状态：P1 已完成并通过最终验收
 父级优先级：P1  
 本规格完成后下一阶段：Windows DPAPI 凭据生命周期
 

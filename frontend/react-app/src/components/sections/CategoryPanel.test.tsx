@@ -63,14 +63,22 @@ describe('CategoryPanel cover media', () => {
     const layout = container.querySelector('[data-testid="category-panel-layout"]')
     const card = container.querySelector('[data-testid="tilted-image-card"]')
 
-    expect(layout).toHaveStyle({
-      maxWidth: '1680px',
-      gridTemplateColumns: 'minmax(320px, 0.72fr) minmax(560px, 1.45fr)',
-    })
+    expect(layout).toHaveClass('category-panel__layout')
+    expect(layout).not.toHaveAttribute('style')
     expect(card).toHaveStyle({
-      width: 'min(42vw, 680px)',
-      height: 'min(64vh, 620px)',
+      width: 'var(--category-cover-width)',
+      height: 'var(--category-cover-height)',
+      minWidth: 'var(--category-cover-min-width)',
     })
+  })
+
+  it('exposes the approved mobile poster layers and category identity', () => {
+    const { container } = render(<CategoryPanel meta={meta} />)
+
+    expect(container.querySelector('.category-panel')).toHaveAttribute('data-category', meta.key)
+    expect(container.querySelector('.category-panel__copy')).toBeInTheDocument()
+    expect(container.querySelector('.category-panel__media')).toBeInTheDocument()
+    expect(container.querySelector('.category-panel__card')).toBeInTheDocument()
   })
 
   it('loads category docs only after the panel enters the viewport', async () => {

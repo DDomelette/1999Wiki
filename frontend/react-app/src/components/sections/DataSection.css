@@ -1,0 +1,273 @@
+/* Data section: desktop showcase grid and mobile image-dominant poster. */
+
+/* --- Section shell ------------------------------------------------------- */
+.data-section {
+  position: relative;
+  overflow: hidden;
+}
+
+.data-section__scroll {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scroll-snap-type: y mandatory;
+  scroll-behavior: smooth;
+}
+
+/* --- Category navigation ------------------------------------------------- */
+.data-section__nav {
+  position: absolute;
+  left: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.data-section__nav-button {
+  padding: 6px 12px;
+  color: var(--text-muted);
+  border-left: 2px solid transparent;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  transition: color 0.2s, border-color 0.2s;
+  text-align: left;
+  background: transparent;
+}
+
+.data-section__nav-button[data-active="true"] {
+  color: var(--accent-gold);
+  border-left-color: var(--accent-gold);
+}
+
+/* --- Category panel: desktop showcase ------------------------------------ */
+.category-panel {
+  --category-cover-width: min(42vw, 680px);
+  --category-cover-height: min(64vh, 620px);
+  --category-cover-min-width: 320px;
+
+  display: flex;
+  align-items: center;
+  padding: 0 8%;
+  position: relative;
+}
+
+.category-panel__bar {
+  position: absolute;
+  left: 0;
+  top: 20%;
+  height: 60%;
+  width: 4px;
+  background: linear-gradient(180deg, var(--accent-gold), var(--accent-purple), var(--accent-rust));
+  border-radius: 2px;
+}
+
+.category-panel__layout {
+  display: grid;
+  grid-template-columns: minmax(320px, .72fr) minmax(560px, 1.45fr);
+  gap: clamp(40px, 5vw, 104px);
+  width: 100%;
+  max-width: 1680px;
+  margin: 0 auto;
+}
+
+.category-panel__copy {
+  /* Transparent copy block; never add a background here. */
+}
+
+.category-panel__title {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  color: var(--accent-gold);
+  margin-bottom: 8px;
+}
+
+.category-panel__meta {
+  font-family: var(--font-display);
+  color: var(--text-muted);
+  letter-spacing: 0.1em;
+  margin-bottom: 24px;
+}
+
+.category-panel__loading {
+  color: var(--text-muted);
+  margin-top: 16px;
+}
+
+.category-panel__media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.category-panel__card {
+  /* TiltedImageCard shell is styled through containerStyle variables. */
+}
+
+.category-panel__wiki-link {
+  position: absolute;
+  right: 48px;
+  bottom: 40px;
+  color: var(--accent-gold);
+  text-decoration: none;
+  font-family: var(--font-display);
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+.category-panel__wiki-link-label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.category-panel__wiki-link-arrow {
+  font-size: 32px;
+}
+
+/* --- Category-specific framing ------------------------------------------ */
+.category-panel[data-category="人物"] .category-panel__media,
+.category-panel[data-category="character"] .category-panel__media {
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+
+.category-panel[data-category="心相"] .category-panel__media,
+.category-panel[data-category="psychube"] .category-panel__media {
+  align-items: center;
+  justify-content: center;
+}
+
+.category-panel[data-category="剧情"] .category-panel__media,
+.category-panel[data-category="story"] .category-panel__media {
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- Mobile poster layout ------------------------------------------------ */
+@media (max-width: 980px) {
+  .data-section__scroll {
+    scroll-snap-type: y proximity;
+  }
+
+  .data-section__nav {
+    left: 12px;
+    right: 12px;
+    top: 88px;
+    transform: none;
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .data-section__nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .data-section__nav-button {
+    flex: 0 0 auto;
+    text-align: center;
+    border-left: none;
+    border-bottom: 2px solid transparent;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .data-section__nav-button[data-active="true"] {
+    border-bottom-color: var(--accent-gold);
+  }
+
+  .category-panel {
+    --category-cover-width: 100%;
+    --category-cover-height: 90%;
+    --category-cover-min-width: 0px;
+
+    padding: 0 16px;
+    overflow: hidden;
+  }
+
+  .category-panel__bar {
+    display: none;
+  }
+
+  .category-panel__layout {
+    position: relative;
+    height: 100%;
+    display: block;
+    grid-template-columns: none;
+    gap: 0;
+    max-width: none;
+  }
+
+  .category-panel__copy {
+    position: absolute;
+    left: 16px;
+    bottom: calc(16px + var(--main-page-bottom-safe));
+    z-index: 4;
+    width: min(64%, 310px);
+    text-shadow:
+      0 2px 12px rgba(0, 0, 0, 0.78),
+      0 1px 4px rgba(0, 0, 0, 0.65);
+  }
+
+  .category-panel__title {
+    font-size: clamp(1.5rem, 6vw, 2.5rem);
+  }
+
+  .category-panel__meta {
+    margin-bottom: 12px;
+  }
+
+  .category-panel__media {
+    position: absolute;
+    inset: 70px -12% 0 18%;
+    z-index: 1;
+  }
+
+  .category-panel__wiki-link {
+    right: 16px;
+    bottom: calc(16px + var(--main-page-bottom-safe));
+    z-index: 4;
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+  }
+
+  .category-panel__wiki-link-label {
+    margin-bottom: 2px;
+  }
+
+  .category-panel__wiki-link-arrow {
+    font-size: 20px;
+  }
+
+  /* Mobile category-specific framing. */
+  .category-panel[data-category="人物"] .category-panel__media,
+  .category-panel[data-category="character"] .category-panel__media {
+    align-items: flex-end;
+    justify-content: flex-end;
+  }
+
+  .category-panel[data-category="心相"] .category-panel__media,
+  .category-panel[data-category="psychube"] .category-panel__media {
+    align-items: center;
+    justify-content: center;
+  }
+
+  .category-panel[data-category="剧情"] .category-panel__media,
+  .category-panel[data-category="story"] .category-panel__media {
+    align-items: center;
+    justify-content: center;
+    inset: 70px -4% 0 4%;
+  }
+}
+
+@media (max-width: 720px) {
+  .data-section__nav {
+    top: calc(env(safe-area-inset-top, 0px) + var(--main-nav-mobile-offset));
+  }
+}

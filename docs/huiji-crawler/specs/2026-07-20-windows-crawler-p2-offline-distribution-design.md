@@ -1,7 +1,7 @@
 # Windows Huiji Crawler P2 Offline Distribution Design
 
 日期：2026-07-20  
-状态：书面规格已完成并通过自审，待用户审阅  
+状态：书面规格已获用户批准，待 P2-A 验收通过后编写 implementation plan
 父级优先级：P2-B  
 前置条件：P1 标准工具包与 P2-A DPAPI 凭据生命周期验收通过
 

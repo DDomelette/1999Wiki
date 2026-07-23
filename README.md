@@ -35,18 +35,19 @@ Huiji crawler snapshot
 
 ## 环境
 
-1. 使用 `langchain` Conda 环境安装依赖。
+1. 使用 `1999wiki` Conda 环境安装依赖。
 2. 在 `.env` 中配置 embedding、LLM、MinIO 与 MySQL 凭据。
-3. 启动 Milvus、MinIO 和 MySQL。
+3. 启动 Docker Desktop；一键启动器会自动启动并等待 Milvus、MinIO、etcd 和 MySQL。
 4. 保持 `config/settings.yaml` 中 `huiji.enabled: true` 与 `huiji.source_mode: huiji_crawler`。
 
 ```powershell
-conda activate langchain
-pip install -r requirements.txt
+conda activate 1999wiki
+python -m pip install -r requirements.txt
+python scripts\check_runtime_dependencies.py
 python scripts\verify_huiji_runtime.py
 ```
 
-非交互 shell 可直接使用环境中的 Python 绝对路径或 `conda run -n langchain`。
+一键启动器固定使用 `D:\Anaconda32024\envs\1999wiki\python.exe`，不依赖 `conda activate` 或 `conda run`。
 
 ## 启动
 
@@ -56,7 +57,7 @@ python scripts\verify_huiji_runtime.py
 .\start.bat
 ```
 
-启动器和直接 uvicorn 启动都会先执行 provenance verifier。默认入口：
+`start.ps1` 会检查 Python/React 依赖，执行项目 Compose 并等待基础设施健康，然后运行 provenance verifier、后端和三个前端。`start.bat` 委托给同一个 PowerShell 实现。按 Ctrl+C 会终止本次启动的应用进程，但长期运行的 Milvus、MinIO、etcd 和 MySQL 会保持运行。默认入口：
 
 | 服务 | 地址 |
 |---|---|
@@ -69,8 +70,10 @@ python scripts\verify_huiji_runtime.py
 手动启动后端：
 
 ```powershell
-python scripts\verify_huiji_runtime.py
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+$python = "D:\Anaconda32024\envs\1999wiki\python.exe"
+& $python scripts\check_runtime_dependencies.py
+& $python scripts\verify_huiji_runtime.py
+& $python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
 React 开发服务器：

@@ -3,7 +3,7 @@
 > **执行方式：** 使用 `superpowers:executing-plans` 在当前线程逐任务执行。默认不使用子代理，不创建 worktree，不执行 Git staging、commit、reset、checkout 或 clean。每个任务必须完成 RED、GREEN、邻接回归与任务自检后才能进入下一任务。
 
 日期：2026-07-20  
-状态：Task 0-8 已完成；Task 9 专项验收通过，最终完整测试复验被并发 wiki v3 中间态阻断  
+状态：Task 0-9 已完成；P1 已通过最终验收
 对应规格：[2026-07-20-windows-crawler-p1-portable-tool-design.md](../specs/2026-07-20-windows-crawler-p1-portable-tool-design.md)
 
 **目标：** 把现有灰机 Wiki crawler 收束为一个仅支持 Windows x64、使用系统 CPython 3.12 安装依赖、可整体搬迁、无 GUI、无外部项目路径依赖的标准工具包，同时保留 `src/huijiwiki` 作为唯一业务实现。
@@ -17,9 +17,10 @@
 - Task 0 至 Task 8 已完成；R2 双构建 ZIP、tree、manifest、SBOM 和 receipt 一致，独立解压 full verification 通过。
 - Task 9 Step 1 至 Step 6 已完成；普通路径、空格路径、中文路径和跨盘路径的安装、doctor、fail-closed、路径审计与 containment 全部通过。
 - 中文路径已完成真实 Edge refresh，账号为 `POTATO BOT`；真实 Requests dry-run 观测到 2 个 `GET + action=query` 请求，非只读动作和旧根访问均为 0。
-- 专项回归为 `120 passed`，source path audit 扫描 38 个文件且所有异常计数为 0。
+- 历史专项回归为 `120 passed`，source path audit 扫描 38 个文件且所有异常计数为 0。
 - 发布候选为 `dist/huiji-crawler/p1-a-r2/huiji-crawler-windows-standard.zip`，SHA-256 为 `7b209a11957ceb929cd4c8bf6bb37ec355a57e90b31761aef38d8b117cde88d8`。
-- Task 9 Step 7 与 Step 8 暂未关闭：并发 wiki v3 线路已经加入测试，但 `src/huiji_wiki/media_v3.py` 尚未落盘，且 `snapshot.py` 尚未接受 v3 active pointer。该范围不属于本计划，不在此线路修复；完整套件恢复绿色后才生成最终 `final-acceptance.v1.json` 并宣称 P1 完成。
+- 2026-07-23 最终复验：Python 3.12 包专项 `113 passed`，`1999wiki` 仓库全量 `1374 passed, 2 skipped`，`compileall` 通过；原 wiki v3 并发 blocker 已解除。
+- 最终凭据为 `eval/huiji-crawler/20260723-025717/p1/final-acceptance.v1.json`；旧 `acceptance-blocker.v1.json` 保留为历史证据并由最终凭据显式 supersede。
 
 ## 1. 本轮范围
 
@@ -46,7 +47,7 @@
 
 ## 3. 全局约束
 
-- 开发与测试解释器固定使用 `D:\Anaconda32024\envs\langchain\python.exe`；它是 CPython 3.12 x64。现有 `1999wiki` Python 3.11 仅用于基线对照，不作为标准包目标运行时。
+- 仓库开发与全量回归使用人为维护的 `D:\Anaconda32024\envs\1999wiki\python.exe`（当前为 CPython 3.11 x64）；标准包目标运行时仍固定为 CPython `>=3.12.0,<3.13` x64，并使用 `D:\Anaconda32024\envs\langchain\python.exe`、目标 wheel lock、安装后 `.venv` 和四路径搬迁证据完成专项兼容验收。两个解释器的职责和结果必须在最终凭据中分别记录。
 - 标准包的直接依赖固定从当前已验证版本起步：`requests==2.34.2`、`PyYAML==6.0.3`、`playwright==1.61.0`。传递依赖必须由目标为 CPython 3.12/win_amd64 的 lock 生成器解析并记录发行文件 SHA-256。
 - 工具根是唯一项目状态边界。`.local`、`.venv`、`workspace`、配置、日志、状态数据库、锁和浏览器 profile 全部必须在工具根内。
 - 系统 Edge executable 是唯一允许位于工具根外的文件依赖。URL、loopback CDP endpoint 和 Python 注册启动器不是项目数据路径。
@@ -149,7 +150,7 @@ default output   workspace/default/res1999
 
 **创建证据：** `eval/huiji-crawler/<run-id>/p1/baseline/**`
 
-- [ ] **Step 1: 建立唯一 evidence root，禁止覆盖**
+- [x] **Step 1: 建立唯一 evidence root，禁止覆盖**
 
 ```powershell
 $Project = (Resolve-Path 'D:\PycharmProjects\nlp\LangChain\1999Search').Path
@@ -160,7 +161,7 @@ if (Test-Path -LiteralPath $Evidence) { throw "Evidence root already exists: $Ev
 New-Item -ItemType Directory -Path (Join-Path $Evidence 'baseline') -ErrorAction Stop | Out-Null
 ```
 
-- [ ] **Step 2: 记录解释器、现有源和旧凭据源基线**
+- [x] **Step 2: 记录解释器、现有源和旧凭据源基线**
 
 ```powershell
 & $Python -c "import json,platform,sys; print(json.dumps({'implementation':sys.implementation.name,'version':list(sys.version_info[:3]),'machine':platform.machine()},sort_keys=True))" | Set-Content -Encoding UTF8 (Join-Path $Evidence 'baseline\python.json')
@@ -174,7 +175,7 @@ if (Test-Path -LiteralPath $LegacyCredential -PathType Leaf) {
 
 证据中只记录旧凭据路径、size、mtime 和 SHA-256，不读取或输出 Cookie 值。
 
-- [ ] **Step 3: 跑当前基线测试**
+- [x] **Step 3: 跑当前基线测试**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_cli.py tests/test_huiji_cookies.py tests/test_huiji_credential_store.py tests/test_huiji_credential_import_cli.py tests/test_huiji_credential_refresh.py tests/test_huiji_project_paths.py tests/test_runtime_path_audit.py tests/test_runtime_secret_audit.py tests/test_huiji_start_script.py tests/test_huiji_project_boundary_script.py -q
@@ -248,7 +249,7 @@ class RuntimeLock:
 
 `RuntimeLock` 使用 Windows `msvcrt.locking` 持有打开的 lock file；获取失败抛出 `RuntimeLockConflict`，不得删除其他进程的锁文件。
 
-- [ ] **Step 1: 添加 RED 测试**
+- [x] **Step 1: 添加 RED 测试**
 
 测试至少包括：
 
@@ -262,7 +263,7 @@ def test_config_error_does_not_create_local_workspace_or_profile(): ...
 def test_runtime_lock_rejects_second_holder_and_releases_cleanly(): ...
 ```
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_tool_paths.py tests/test_huiji_crawler_tool_config.py tests/test_huiji_crawler_runtime_lock.py -q
@@ -270,7 +271,7 @@ def test_runtime_lock_rejects_second_holder_and_releases_cleanly(): ...
 
 Expected: 因新模块不存在而失败。
 
-- [ ] **Step 3: 写入最小 `config/crawler.yaml`**
+- [x] **Step 3: 写入最小 `config/crawler.yaml`**
 
 ```yaml
 schema_version: huiji_crawler_config.v1
@@ -311,7 +312,7 @@ HUIJI_CRAWLER_EDGE_PROFILE
 
 后三个 owned-path 覆盖仍必须解析在工具根内。`HUIJI_CRAWLER_EDGE_EXECUTABLE` 可位于工具根外，但必须是存在的文件。
 
-- [ ] **Step 4: 实现真实路径 containment 与配置合并**
+- [x] **Step 4: 实现真实路径 containment 与配置合并**
 
 实现时先 `resolve(strict=False)`，再 `relative_to(root.resolve(strict=True))`。对尚不存在的路径也必须解析已有父目录中的 symlink/junction。YAML 顶层或分组出现未知 key 时 fail closed；布尔值不得使用 Python 的宽松真值转换。
 
@@ -322,7 +323,7 @@ workspace/
 dist/
 ```
 
-- [ ] **Step 5: 运行 GREEN 与邻接回归**
+- [x] **Step 5: 运行 GREEN 与邻接回归**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_tool_paths.py tests/test_huiji_crawler_tool_config.py tests/test_huiji_crawler_runtime_lock.py tests/test_huiji_project_paths.py tests/test_config.py -q
@@ -409,7 +410,7 @@ canonical payload 精确为：
 }
 ```
 
-- [ ] **Step 1: 将旧 loader 行为改写成 RED 断言**
+- [x] **Step 1: 将旧 loader 行为改写成 RED 断言**
 
 新增或改写测试：
 
@@ -429,7 +430,7 @@ def test_import_source_hash_size_and_mtime_are_unchanged(): ...
 def test_refresh_writes_v2_directly_with_expected_user(): ...
 ```
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_credential_schema.py tests/test_huiji_legacy_credentials.py tests/test_huiji_cookies.py tests/test_huiji_credential_store.py tests/test_huiji_credential_refresh.py tests/test_huiji_client.py tests/test_runtime_secret_audit.py -q
@@ -437,7 +438,7 @@ def test_refresh_writes_v2_directly_with_expected_user(): ...
 
 Expected: 当前无版本 JSON、行格式和 pickle 仍被稳定 loader 接受，且 refresh 未写 schema，因此失败。
 
-- [ ] **Step 3: 实现 strict canonical parser**
+- [x] **Step 3: 实现 strict canonical parser**
 
 要求：
 
@@ -447,7 +448,7 @@ Expected: 当前无版本 JSON、行格式和 pickle 仍被稳定 loader 接受�
 - `CookieLoader` 只调用 `CanonicalCredential.from_bytes()`；`src/huijiwiki/cookies.py` 中不得出现 `pickle` import、行格式解析或 legacy fallback。
 - `describe()`、inspection、status 和错误文本只包含文件名、schema、hash、size、Cookie 名称和数量。
 
-- [ ] **Step 4: 实现显式 legacy migration 与原子写**
+- [x] **Step 4: 实现显式 legacy migration 与原子写**
 
 `legacy_credentials.py` 是唯一可 import `pickle` 的生产模块。导入流程固定为：
 
@@ -468,7 +469,7 @@ read source bytes
 
 任一失败保持目标原样；源文件永不写入、移动或删除。报告 schema 升级为 `huiji_credential_import.v2`，source 与 target hash 不要求相同，因为目标是 canonical 转换结果。
 
-- [ ] **Step 5: 让 browser refresh 直接生成 v2**
+- [x] **Step 5: 让 browser refresh 直接生成 v2**
 
 将接口改为：
 
@@ -479,7 +480,7 @@ def serialize_huiji_cookies(raw_cookies: list[dict[str, object]], *,
 
 Playwright 的 `httpOnly` 显式映射为 canonical `http_only`。账号验证必须先成功，之后才读取 Cookie 和替换目标。
 
-- [ ] **Step 6: 运行 GREEN、静态隔离和邻接回归**
+- [x] **Step 6: 运行 GREEN、静态隔离和邻接回归**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_credential_schema.py tests/test_huiji_legacy_credentials.py tests/test_huiji_cookies.py tests/test_huiji_credential_store.py tests/test_huiji_credential_import_cli.py tests/test_huiji_credential_refresh.py tests/test_huiji_client.py tests/test_runtime_secret_audit.py tests/test_huiji_cli.py -q
@@ -536,7 +537,7 @@ def main(argv: Sequence[str] | None = None, *, tool_root: Path | None = None,
          environ: Mapping[str, str] | None = None) -> int: ...
 ```
 
-- [ ] **Step 1: 添加统一命令和退出码 RED 测试**
+- [x] **Step 1: 添加统一命令和退出码 RED 测试**
 
 ```python
 def test_cli_exposes_exact_p1_command_surface_without_p2_commands(): ...
@@ -551,13 +552,13 @@ def test_old_import_source_alias_translates_to_legacy_source(): ...
 def test_boundary_wrapper_accepts_explicit_tool_root_without_hardcoded_forbidden_root(): ...
 ```
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_tool_cli.py tests/test_huiji_cli.py tests/test_huiji_credential_import_cli.py tests/test_huiji_credential_refresh.py tests/test_huiji_start_script.py tests/test_huiji_project_boundary_script.py -q
 ```
 
-- [ ] **Step 3: 实现一个 argparse 权威入口**
+- [x] **Step 3: 实现一个 argparse 权威入口**
 
 旧 Python 脚本不再 import `config.config`，不再定义独立 parser：
 
@@ -570,7 +571,7 @@ import wrapper 仅把旧 `--source` token 翻译为 `--legacy-source`；refresh 
 
 `verify_huiji_project_boundary.py` 必须在解析 `--tool-root` 前只 import stdlib；随后把该工具根放到 `sys.path[0]` 并从该 root 加载统一 CLI。这样使用包内 `.venv` 运行 wrapper 时，审计 hook 覆盖的是真实解压包源码，而不是项目工作树副本。
 
-- [ ] **Step 4: 重排 crawler 前置顺序**
+- [x] **Step 4: 重排 crawler 前置顺序**
 
 `run_crawl()` 调整为：
 
@@ -591,7 +592,7 @@ validated settings and package gate
 
 不得在凭据缺失、配置越界、包损坏或环境不支持时创建 `crawl_state.sqlite`、`errors.jsonl`、profile 或抓取目录。账号不匹配时不得创建抓取 workspace；browser/edge transport 可在路径与环境门禁通过后创建固定的工具内 profile，用于完成登录检查。异常写入输出时只保留 `error_type` 和脱敏消息。
 
-- [ ] **Step 5: 更新兼容启动器**
+- [x] **Step 5: 更新兼容启动器**
 
 `crawl_huiji_res1999.ps1` 移除 Conda `1999wiki` 硬依赖和自己维护的 refresh 重试流程，按以下顺序发现开发解释器：
 
@@ -603,7 +604,7 @@ python.exe on PATH
 
 然后只执行 `-m src.huiji_crawler_tool crawl @Args`。BAT 保持 UTF-8 和 CRLF，仅包装 PowerShell。正式包的 `.cmd` 在 Task 6 实现。
 
-- [ ] **Step 6: 运行 GREEN 与完整 Huiji 邻接测试**
+- [x] **Step 6: 运行 GREEN 与完整 Huiji 邻接测试**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_tool_cli.py tests/test_huiji_cli.py tests/test_huiji_credential_import_cli.py tests/test_huiji_credential_refresh.py tests/test_huiji_start_script.py tests/test_huiji_project_boundary_script.py tests/test_huiji_client.py tests/test_huiji_browser_client.py tests/test_huiji_read_only.py -q
@@ -643,7 +644,7 @@ Edge:   --edge-executable -> HUIJI_CRAWLER_EDGE_EXECUTABLE
 
 `bootstrap/python_runtime.py` 仅依赖 stdlib，定义当前解释器校验和可序列化 `PythonRuntimeInfo`。支持条件必须同时满足：Windows、CPython、64-bit、`3.12.0 <= version < 3.13.0`。
 
-- [ ] **Step 1: 添加 RED 测试**
+- [x] **Step 1: 添加 RED 测试**
 
 ```python
 def test_python_runtime_accepts_only_windows_cpython_312_x64(): ...
@@ -656,13 +657,13 @@ def test_credential_status_reports_hash_names_expiry_without_values(): ...
 def test_doctor_invalid_environment_returns_exit_8_without_network(): ...
 ```
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_discovery.py tests/test_huiji_crawler_doctor.py tests/test_huiji_browser_client.py -q
 ```
 
-- [ ] **Step 3: 实现脱敏 doctor schema**
+- [x] **Step 3: 实现脱敏 doctor schema**
 
 输出 schema 固定为 `huiji_crawler_doctor.v1`，至少包含：
 
@@ -681,13 +682,13 @@ overall status
 
 doctor 不访问网络，不启动 Edge，不创建 profile/workspace，不读取 Cookie value。工具根可完整显示；环境变量只记录名称、是否设置和命中来源，不记录值。
 
-- [ ] **Step 4: 将 browser client 委托给统一 Edge discovery**
+- [x] **Step 4: 将 browser client 委托给统一 Edge discovery**
 
 移除 `browser_client.py` 中重复的默认 Edge 常量和 Conda 安装提示。`MissingPlaywrightError` 只提示执行工具根 `install.cmd`；不得出现 `conda activate 1999wiki`。
 
 同步把 `config/external-path-allowlist.yaml` 两个 Edge 条目的 `file` 改为 `src/huiji_crawler_tool/discovery.py`，保持精确值和类别。
 
-- [ ] **Step 5: 运行 GREEN**
+- [x] **Step 5: 运行 GREEN**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_discovery.py tests/test_huiji_crawler_doctor.py tests/test_huiji_browser_client.py tests/test_runtime_path_audit.py -q
@@ -723,7 +724,7 @@ Expected: 当前开发解释器通过 Python gate；doctor 可因真实凭据过
 - allowlist policy 文件作为审计输入单独验证，不把其 `value` 字段再次当成生产依赖匹配。
 - source 模式只扫描显式 `--include` 的 crawler 生产范围；stage 模式扫描除三个 mutable prefixes 外的完整工具包。include 路径本身必须位于 root 内且不得重叠或逃逸。
 
-- [ ] **Step 1: 添加 RED 测试**
+- [x] **Step 1: 添加 RED 测试**
 
 ```python
 def test_python_ast_finds_runtime_path_but_ignores_regex_and_docs(): ...
@@ -737,13 +738,13 @@ def test_huiji_crawler_docs_are_non_executable_history_not_runtime_dependencies(
 def test_report_never_echoes_unrelated_secret_values(): ...
 ```
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_path_audit.py tests/test_runtime_path_audit.py -q
 ```
 
-- [ ] **Step 3: 实现统一报告**
+- [x] **Step 3: 实现统一报告**
 
 报告 schema 为 `huiji_crawler_path_audit.v1`，每个 match 记录 parser、file、line、column、value、category、allowlist_id 和 reason。完成条件必须同时满足：
 
@@ -757,11 +758,11 @@ path_escape_count == 0
 
 允许类别仍只有 `system_executable` 与 `diagnostic_sentinel`。禁止 wildcard、目录级豁免、重复 ID、重复 file/value 和未命中旧条目。
 
-- [ ] **Step 4: 调整现有 project audit 的历史文档语义**
+- [x] **Step 4: 调整现有 project audit 的历史文档语义**
 
 现有 `src/runtime_path_audit.py` 应把 `docs/huiji-crawler/specs` 和 `docs/huiji-crawler/plans` 标记为非执行历史文档，不因为文档记录旧绝对路径产生 runtime dependency 误报；生产 Python、PowerShell、YAML、JSON 和 CMD 仍由新结构化审计覆盖。
 
-- [ ] **Step 5: 运行 GREEN 与实际源审计**
+- [x] **Step 5: 运行 GREEN 与实际源审计**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_path_audit.py tests/test_runtime_path_audit.py -q
@@ -803,7 +804,7 @@ manifest 不自包含自身 hash。`package-manifest.v1.json` 覆盖所有不可
 5. critical 模式至少验证 launcher、bootstrap verifier、CLI、config 和依赖 lock。
 6. 拒绝任何 symlink/junction 逃逸。
 
-- [ ] **Step 1: 添加 RED 测试**
+- [x] **Step 1: 添加 RED 测试**
 
 ```python
 def test_package_verifier_accepts_valid_manifest_and_detached_hash(): ...
@@ -818,13 +819,13 @@ def test_runtime_launcher_verifies_critical_files_before_cli_import(): ...
 def test_cmd_files_use_crlf_and_contain_no_conda_or_absolute_project_path(): ...
 ```
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_package_verify.py tests/test_huiji_crawler_install.py tests/test_huiji_crawler_cmd_launchers.py -q
 ```
 
-- [ ] **Step 3: 实现安装流程**
+- [x] **Step 3: 实现安装流程**
 
 构建时把 `select-python.cmd` 映射到包内 `bootstrap/select-python.cmd`。它的候选顺序固定为 `HUIJI_CRAWLER_PYTHON`、`py -3.12-64`、PATH `python.exe`。`install.cmd` 调用 stdlib `bootstrap/install.py`，后者：
 
@@ -840,7 +841,7 @@ validate current interpreter
 
 success marker 记录 Python version、machine、lock SHA-256 和 manifest SHA-256，不含安装机用户名或绝对源项目路径。任一命令失败删除临时 marker，不声称成功。
 
-- [ ] **Step 4: 实现运行启动器**
+- [x] **Step 4: 实现运行启动器**
 
 `huiji-crawler.cmd` 只使用 `<root>\.venv\Scripts\python.exe`。若缺失或 marker 不匹配，退出 8 并提示运行 `install.cmd`；存在时先运行 `bootstrap\package_verify.py --critical-only`，成功后才执行：
 
@@ -850,7 +851,7 @@ success marker 记录 Python version、machine、lock SHA-256 和 manifest SHA-2
 
 `verify-package.cmd` 可在安装前通过 system Python 执行 full verifier。所有 `.cmd` 使用 `%~dp0` 定位真实根、正确引用带空格/中文路径，并保存 CRLF。
 
-- [ ] **Step 5: 运行 GREEN**
+- [x] **Step 5: 运行 GREEN**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_package_verify.py tests/test_huiji_crawler_install.py tests/test_huiji_crawler_cmd_launchers.py -q
@@ -960,7 +961,7 @@ __pycache__/
 *.pyc
 ```
 
-- [ ] **Step 1: 添加 RED 测试**
+- [x] **Step 1: 添加 RED 测试**
 
 ```python
 def test_lock_contains_only_complete_win_amd64_cp312_binary_graph_with_hashes(): ...
@@ -979,13 +980,13 @@ def test_size_target_warns_and_only_zip_over_50_mib_blocks(): ...
 def test_build_failure_publishes_no_release_zip(): ...
 ```
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_dependency_lock.py tests/test_huiji_crawler_package_builder.py -q
 ```
 
-- [ ] **Step 3: 实现 staged build DAG**
+- [x] **Step 3: 实现 staged build DAG**
 
 构建顺序固定为：
 
@@ -1023,13 +1024,13 @@ SBOM 的 metadata timestamp 同样来自 `SOURCE_DATE_EPOCH`；serial number 使
 }
 ```
 
-- [ ] **Step 4: 实现 secret 与误打包阻断**
+- [x] **Step 4: 实现 secret 与误打包阻断**
 
 若 `.local/accounts/default/credential.json` 存在，构建器只在内存中读取 sensitive Cookie 值用于 staging 搜索；报告只列命中的目标文件与 Cookie 名。即使凭据不存在，也必须执行 forbidden filename/prefix、典型 Cookie/header 结构和高风险配置字段扫描。
 
 任何失败只保留 staging/evidence 供诊断，不把临时 ZIP rename 为正式产物。
 
-- [ ] **Step 5: 运行 GREEN**
+- [x] **Step 5: 运行 GREEN**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_dependency_lock.py tests/test_huiji_crawler_package_builder.py tests/test_huiji_crawler_package_verify.py tests/test_huiji_crawler_path_audit.py -q
@@ -1045,7 +1046,7 @@ SBOM 的 metadata timestamp 同样来自 `SOURCE_DATE_EPOCH`；serial number 使
 **输入：** Task 7 的 allowlist、lock、wheel cache 和构建器。  
 **输出：** `dist/huiji-crawler/p1-a/**`、`dist/huiji-crawler/p1-b/**`、`eval/huiji-crawler/<run-id>/p1/package/**`。
 
-- [ ] **Step 1: 生成或验证完整 hash lock**
+- [x] **Step 1: 生成或验证完整 hash lock**
 
 ```powershell
 & $Python scripts/lock_huiji_crawler_requirements.py --input packaging/huiji-crawler/requirements-crawler.in --output packaging/huiji-crawler/requirements-crawler.lock.txt --wheelhouse dist/huiji-crawler/wheel-cache --python-version 3.12 --platform win_amd64
@@ -1054,14 +1055,14 @@ SBOM 的 metadata timestamp 同样来自 `SOURCE_DATE_EPOCH`；serial number 使
 
 网络、wheel、metadata 或 hash 任一失败即停止。标准 ZIP 不包含 `wheel-cache`。
 
-- [ ] **Step 2: 从同一输入独立构建两次**
+- [x] **Step 2: 从同一输入独立构建两次**
 
 ```powershell
 & $Python scripts/build_huiji_crawler_standard_package.py --project-root $Project --policy packaging/huiji-crawler/files.v1.yaml --lock packaging/huiji-crawler/requirements-crawler.lock.txt --wheelhouse dist/huiji-crawler/wheel-cache --output dist/huiji-crawler/p1-a --evidence (Join-Path $Evidence 'package/build-a')
 & $Python scripts/build_huiji_crawler_standard_package.py --project-root $Project --policy packaging/huiji-crawler/files.v1.yaml --lock packaging/huiji-crawler/requirements-crawler.lock.txt --wheelhouse dist/huiji-crawler/wheel-cache --output dist/huiji-crawler/p1-b --evidence (Join-Path $Evidence 'package/build-b')
 ```
 
-- [ ] **Step 3: 比较双构建**
+- [x] **Step 3: 比较双构建**
 
 ```powershell
 $ZipA = Join-Path $Project 'dist\huiji-crawler\p1-a\huiji-crawler-windows-standard.zip'
@@ -1073,7 +1074,7 @@ if ($HashA -ne $HashB) { throw "Deterministic ZIP hash mismatch: $HashA != $Hash
 
 同时比较两次 build receipt、manifest、SBOM 和 stage tree hash。任一不同都视为确定性失败。
 
-- [ ] **Step 4: 解压后执行 full package verification 和内容清点**
+- [x] **Step 4: 解压后执行 full package verification 和内容清点**
 
 ```powershell
 $VerifyRoot = Join-Path $Evidence 'package\verified-extract'
@@ -1086,7 +1087,7 @@ if ($LASTEXITCODE -ne 0) { throw "Package verification failed" }
 
 再断言以下内容计数为 0：Cookie/`.env`/profile/抓取数据、RAG、backend、frontend、Docker/数据库、allowlist 外源码、绝对原项目路径。确认 ZIP 不含 wheel、Python runtime 或 `.venv`。
 
-- [ ] **Step 5: 记录体积与发布候选**
+- [x] **Step 5: 记录体积与发布候选**
 
 标准 ZIP 超过参考目标只写 warning；只有 ZIP 大于 50 MiB 或出现明显误打包内容才阻断。通过后把 `p1-a` 标记为 relocation candidate，不删除 `p1-b`，以便复审确定性证据。
 
@@ -1174,7 +1175,7 @@ no non-read-only API action
 
 真实 refresh 后重新验证原 ZIP 和 source staging 不包含新凭据值。构建器 secret audit 可以读取 `RealRoot/.local/accounts/default/credential.json` 作为仅内存扫描输入，但输出只能记录 violation count 和 Cookie 名称。原 ZIP hash 必须保持不变。
 
-- [ ] **Step 7: 运行最终自动化回归**
+- [x] **Step 7: 运行最终自动化回归**
 
 ```powershell
 & $Python -m pytest tests/test_huiji_crawler_tool_paths.py tests/test_huiji_crawler_tool_config.py tests/test_huiji_crawler_runtime_lock.py tests/test_huiji_credential_schema.py tests/test_huiji_legacy_credentials.py tests/test_huiji_crawler_tool_cli.py tests/test_huiji_crawler_discovery.py tests/test_huiji_crawler_doctor.py tests/test_huiji_crawler_path_audit.py tests/test_huiji_crawler_package_verify.py tests/test_huiji_crawler_install.py tests/test_huiji_crawler_cmd_launchers.py tests/test_huiji_crawler_dependency_lock.py tests/test_huiji_crawler_package_builder.py -q
@@ -1182,7 +1183,7 @@ no non-read-only API action
 & $Python -m compileall -q src bootstrap scripts
 ```
 
-- [ ] **Step 8: 生成最终验收 receipt**
+- [x] **Step 8: 生成最终验收 receipt**
 
 最终 `eval/huiji-crawler/<run-id>/p1/final-acceptance.v1.json` 必须 hash-pin：
 
@@ -1209,54 +1210,54 @@ secret scan and size report
 
 ### CLI
 
-- [ ] `CLI-P0-01`：包内 `huiji-crawler.cmd` 从真实脚本路径定位 root，四个 relocation root 均通过。
-- [ ] `CLI-P0-02`：六个 P1 命令存在且可执行，无 P2 命令。
-- [ ] `CLI-P0-03`：三个旧 Python 入口只委托统一 CLI。
-- [ ] `CLI-P0-04`：无 GUI、托盘或常驻进程。
-- [ ] `CLI-P0-05`：退出码稳定，错误提供工具内恢复命令且无秘密。
+- [x] `CLI-P0-01`：包内 `huiji-crawler.cmd` 从真实脚本路径定位 root，四个 relocation root 均通过。
+- [x] `CLI-P0-02`：六个 P1 命令存在且可执行，无 P2 命令。
+- [x] `CLI-P0-03`：三个旧 Python 入口只委托统一 CLI。
+- [x] `CLI-P0-04`：无 GUI、托盘或常驻进程。
+- [x] `CLI-P0-05`：退出码稳定，错误提供工具内恢复命令且无秘密。
 
 ### Config
 
-- [ ] `CONFIG-P0-01`：crawler 只读 `config/crawler.yaml`，入口不 import RAG settings。
-- [ ] `CONFIG-P0-02`：CLI、env、YAML、defaults 优先级测试通过。
-- [ ] `CONFIG-P0-03`：全部 owned paths 在工具 root 内。
-- [ ] `CONFIG-P0-04`：绝对路径、`..`、symlink、junction 逃逸均前置停止。
-- [ ] `CONFIG-P0-05`：只有精确 Edge executable 可在 root 外。
-- [ ] `CONFIG-P0-06`：默认输出为 `workspace/default/res1999` 且不在 ZIP。
-- [ ] `CONFIG-P0-07`：配置、doctor 和错误报告不含凭据值。
+- [x] `CONFIG-P0-01`：crawler 只读 `config/crawler.yaml`，入口不 import RAG settings。
+- [x] `CONFIG-P0-02`：CLI、env、YAML、defaults 优先级测试通过。
+- [x] `CONFIG-P0-03`：全部 owned paths 在工具 root 内。
+- [x] `CONFIG-P0-04`：绝对路径、`..`、symlink、junction 逃逸均前置停止。
+- [x] `CONFIG-P0-05`：只有精确 Edge executable 可在 root 外。
+- [x] `CONFIG-P0-06`：默认输出为 `workspace/default/res1999` 且不在 ZIP。
+- [x] `CONFIG-P0-07`：配置、doctor 和错误报告不含凭据值。
 
 ### Credential
 
-- [ ] `CREDENTIAL-P0-01`：稳定 loader 只接受 `huiji_credential.v2`。
-- [ ] `CREDENTIAL-P0-02`：legacy decoder 只由显式 import 命令调用。
-- [ ] `CREDENTIAL-P0-03`：目标固定在 `.local/accounts/default/credential.json`，源可外部且不被修改。
-- [ ] `CREDENTIAL-P0-04`：结构/hash/size/names 验证、冲突停止和 replace 通过。
-- [ ] `CREDENTIAL-P0-05`：真实 Edge refresh 直接写 v2。
-- [ ] `CREDENTIAL-P0-06`：凭据不在 Git、包、日志、evidence 或快照。
-- [ ] `CREDENTIAL-P0-07`：flush/fsync/re-read/atomic replace 和失败保持原目标测试通过。
+- [x] `CREDENTIAL-P0-01`：稳定 loader 只接受 `huiji_credential.v2`。
+- [x] `CREDENTIAL-P0-02`：legacy decoder 只由显式 import 命令调用。
+- [x] `CREDENTIAL-P0-03`：目标固定在 `.local/accounts/default/credential.json`，源可外部且不被修改。
+- [x] `CREDENTIAL-P0-04`：结构/hash/size/names 验证、冲突停止和 replace 通过。
+- [x] `CREDENTIAL-P0-05`：真实 Edge refresh 直接写 v2。
+- [x] `CREDENTIAL-P0-06`：凭据不在 Git、包、日志、evidence 或快照。
+- [x] `CREDENTIAL-P0-07`：flush/fsync/re-read/atomic replace 和失败保持原目标测试通过。
 
 ### Package
 
-- [ ] `PACKAGE-P0-01`：`files.v1.yaml` 是唯一 source allowlist，新文件默认不入包。
-- [ ] `PACKAGE-P0-02`：包只含允许的 crawler runtime、配置、启动器、lock、manifest、SBOM、license、README。
-- [ ] `PACKAGE-P0-03`：所有禁止目录/文件计数为 0。
-- [ ] `PACKAGE-P0-04`：direct input 与完整 hash lock 已生成和验证。
-- [ ] `PACKAGE-P0-05`：install 校验 Python、创建 root-local `.venv`、`--require-hashes` 安装并 smoke 成功。
-- [ ] `PACKAGE-P0-06`：双构建 ZIP/tree hash 完全一致。
-- [ ] `PACKAGE-P0-07`：manifest 覆盖全部 immutable payload，detached hash 正确。
-- [ ] `PACKAGE-P0-08`：SBOM、license、receipt、ZIP SHA-256、size report 齐全。
-- [ ] `PACKAGE-P0-09`：secret、绝对原项目路径和 allowlist 外文件均为 0。
-- [ ] `PACKAGE-P0-10`：体积 warning 不误阻断，50 MiB gross cap 和明显误打包会阻断。
+- [x] `PACKAGE-P0-01`：`files.v1.yaml` 是唯一 source allowlist，新文件默认不入包。
+- [x] `PACKAGE-P0-02`：包只含允许的 crawler runtime、配置、启动器、lock、manifest、SBOM、license、README。
+- [x] `PACKAGE-P0-03`：所有禁止目录/文件计数为 0。
+- [x] `PACKAGE-P0-04`：direct input 与完整 hash lock 已生成和验证。
+- [x] `PACKAGE-P0-05`：install 校验 Python、创建 root-local `.venv`、`--require-hashes` 安装并 smoke 成功。
+- [x] `PACKAGE-P0-06`：双构建 ZIP/tree hash 完全一致。
+- [x] `PACKAGE-P0-07`：manifest 覆盖全部 immutable payload，detached hash 正确。
+- [x] `PACKAGE-P0-08`：SBOM、license、receipt、ZIP SHA-256、size report 齐全。
+- [x] `PACKAGE-P0-09`：secret、绝对原项目路径和 allowlist 外文件均为 0。
+- [x] `PACKAGE-P0-10`：体积 warning 不误阻断，50 MiB gross cap 和明显误打包会阻断。
 
 ### Discovery And Audit
 
-- [ ] `DISCOVERY-P0-01`：只接受 Windows x64 CPython 3.12。
-- [ ] `DISCOVERY-P0-02`：Python 顺序、版本和命中路径进入脱敏 doctor。
-- [ ] `DISCOVERY-P0-03`：Edge 发现顺序正确，profile/output containment 未放宽。
-- [ ] `AUDIT-P0-01`：Python/PowerShell/YAML/JSON 使用对应结构化解析器，CMD fallback 明确。
-- [ ] `AUDIT-P0-02`：drive、UNC、file URL、symlink、junction 生产入口测试通过。
-- [ ] `AUDIT-P0-03`：HTTP(S)、loopback 和非执行历史文档无误报。
-- [ ] `AUDIT-P0-04`：allowlist 仅有精确 Edge/system sentinel，无宽泛、重复或 stale 条目。
+- [x] `DISCOVERY-P0-01`：只接受 Windows x64 CPython 3.12。
+- [x] `DISCOVERY-P0-02`：Python 顺序、版本和命中路径进入脱敏 doctor。
+- [x] `DISCOVERY-P0-03`：Edge 发现顺序正确，profile/output containment 未放宽。
+- [x] `AUDIT-P0-01`：Python/PowerShell/YAML/JSON 使用对应结构化解析器，CMD fallback 明确。
+- [x] `AUDIT-P0-02`：drive、UNC、file URL、symlink、junction 生产入口测试通过。
+- [x] `AUDIT-P0-03`：HTTP(S)、loopback 和非执行历史文档无误报。
+- [x] `AUDIT-P0-04`：allowlist 仅有精确 Edge/system sentinel，无宽泛、重复或 stale 条目。
 
 ## 7. 最终停止条件
 

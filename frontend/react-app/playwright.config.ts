@@ -19,6 +19,7 @@ export default defineConfig({
     { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } } },
     { name: 'narrow', use: { ...devices['Desktop Chrome'], viewport: { width: 900, height: 900 } } },
     { name: 'mobile', use: { ...devices['Pixel 7'], viewport: { width: 390, height: 844 } } },
+    { name: 'mobile-webkit', use: { ...devices['iPhone 13'], viewport: { width: 390, height: 844 } } },
     { name: 'reduced-motion', use: { ...devices['Desktop Chrome'], viewport: { width: 1200, height: 900 }, reducedMotion: 'reduce' } },
     { name: 'webgl-fallback', use: { ...devices['Desktop Chrome'], viewport: { width: 1200, height: 900 } } },
   ],

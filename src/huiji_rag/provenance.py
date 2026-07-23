@@ -16,6 +16,7 @@ BASELINE_SCHEMA = "huiji.provenance_baseline/v1"
 AUDIT_SCHEMA = "huiji.provenance_audit/v1"
 RUNTIME_SCHEMA = "huiji.runtime_verification/v1"
 SOURCE_MODE = "huiji_crawler"
+MILVUS_CONNECT_TIMEOUT_SECONDS = 10.0
 
 _HEX_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _SAFE_PUBLIC_TOKEN_RE = re.compile(r"[A-Za-z0-9_.\-/]{1,256}\Z")
@@ -1039,6 +1040,7 @@ def _runtime_milvus_client(cfg: object) -> object:
     return MilvusClient(
         uri=str(getattr(vectorstore, "uri")),
         db_name=str(getattr(vectorstore, "db_name")),
+        timeout=MILVUS_CONNECT_TIMEOUT_SECONDS,
     )
 
 

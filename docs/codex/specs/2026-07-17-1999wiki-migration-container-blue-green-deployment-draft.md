@@ -1,7 +1,7 @@
 # 1999Wiki 项目迁移、容器发布与蓝绿部署规范（初稿）
 
 > 状态：Draft / 初稿（本地迁移基线准备完成）  
-> 版本：v0.3  
+> 版本：v0.5
 > 日期：2026-07-23  
 > 目标仓库：`git@github.com:DDomelette/1999Wiki.git`  
 > 本地工作区：`D:\1999Wiki`  
@@ -22,7 +22,7 @@
 7. 大版本采用蓝绿方式发布，支持新旧应用短暂并存、原子切换和快速回退。
 8. 备份流程由独立线程维护，本规范只定义部署与备份流程之间的最小衔接契约。
 
-RAG、Wiki 与当前前端迭代已经形成可运行基线。本规范仍为初稿，但后续调整必须以本轮完整迁移副本、活动构建清单和测试结果为基准，不再回到旧目录直接修改。
+RAG 与 Wiki 已经形成可运行基线，React 前端仍有独立功能迭代。本规范仍为初稿，但后续调整必须以本轮完整迁移副本、活动构建清单和测试结果为基准，不再回到旧目录直接修改。镜像发布只针对一个已经冻结、测试通过并推送到 GitHub 的 release commit，不把仍停留在设计或实现过程中的前端改动打入中间版本镜像。当前正式 Wiki 前端仅指 `/wiki/*`；从未上线的 `/wiki-preview/*` Kimi/Stitch 并行预览不转正，并在容器化前彻底删除。
 
 ## 2. 术语与约束级别
 
@@ -103,7 +103,7 @@ RAG、Wiki 与当前前端迭代已经形成可运行基线。本规范仍为初
 | MySQL 逻辑数据 | 约 140.72 MiB | 服务器 MySQL 常驻 |
 | `frontend/react-app/public` | 17 个生产引用文件，约 168.21 MiB | 作为前端壳层资源进入 Git/Frontend 镜像；MP4 使用 Git LFS |
 | `infra/milvus/volumes` | 约 16.59 GB | 含 3 份 MinIO 历史/切换副本，不得整体照搬生产 |
-| 当前 Git 可跟踪基线 | 768 文件，工作区约 181.76 MiB | 其中 `pv.mp4` 约 111.51 MiB 使用 Git LFS |
+| 当前 Git 可跟踪基线 | 795 文件，工作区约 182.13 MiB | 2026-07-23 扫描快照；其中 `pv.mp4` 约 111.51 MiB 使用 Git LFS，文件数会随已批准迭代变化 |
 
 当前活动数据身份：
 
@@ -248,6 +248,14 @@ flowchart LR
 
 本轮 `.gitignore` 已建立上述边界，但“被忽略”不等于“已删除”。后续修剪必须分批提交，不得一次性删除 43 GB 副本后再判断用途。
 
+以下源码保留在 Git，但不得进入 Backend 或 Frontend 最终运行镜像：
+
+- 爬虫、语料构建、向量化、导入、迁移、审计和离线修复脚本。
+- 对应测试、评测、设计文档、实施计划和运维辅助源码。
+- 本地启动器和仅供开发/数据构建使用的依赖清单。
+
+Frontend 构建阶段是例外：它应接收完整的 `frontend/react-app` 构建输入，以便自动包含持续迭代的 React 源码和测试之外的必要配置；最终运行镜像仍只接收构建产物。不得按当前 React 文件数量或文件名维护脆弱的构建白名单。
+
 ### 7.4 迁移提交门禁
 
 首次源码迁移提交前必须完成：
@@ -271,6 +279,8 @@ flowchart LR
 4. Python 依赖不可复现：当前单一 `requirements.txt` 混合运行、开发、浏览器和 UI 依赖，且本地环境与声明版本漂移。必须拆分 runtime/dev 并生成锁文件。
 5. 完整 Compose 恢复时 Milvus 可能早于 etcd 可连接而退出。生产配置必须使用健康依赖、合理启动探针和 `restart: unless-stopped`，并完成整机重启演练。
 6. **已完成**：`frontend/react-app/public` 已按生产引用清点并删除 495 个未引用文件（约 451.21 MiB），保留 17 个必要壳层资源（约 168.21 MiB）。其中 111.51 MiB 的 `videos/pv.mp4` 使用 Git LFS，其他资源使用普通 Git；干净 checkout 必须能取得 LFS 对象并完成前端构建。
+7. **当前迭代保护项**：`docs/superpowers/specs/2026-07-23-chat-suggested-questions-design.md` 与对应 plan 定义了聊天推荐问题功能。该功能尚未进入实现代码，范围仅限 `frontend/react-app`，不新增 Backend API、数据库字段、运行时依赖或 `public` 媒体。修剪不得删除或替换其依赖的 `ChatInput`、`ChatSection`、聊天 store 契约和 React 测试基础设施。
+8. **已决定、待实施**：彻底退役 `/wiki-preview/*`，不保留重定向、兼容开关或隐藏构建开关。删除 React `wiki-preview` 组件树、双路由映射和仅供预览使用的健康提示；同时删除独立 `kimi_web/`。正式 `/wiki/*`、Wiki API、MySQL、MinIO 媒体链路和当前 17 个 `public` 壳层资源不受影响。
 
 ## 8. 镜像规范
 
@@ -329,17 +339,19 @@ Backend 镜像应使用多阶段构建并只包含：
 
 Frontend 镜像应使用 Node 构建阶段和轻量静态运行阶段。
 
+构建阶段复制完整的 `frontend/react-app` 项目输入，并通过 `.dockerignore` 排除 `node_modules`、`dist`、测试输出、浏览器缓存和本地日志。这样当前推荐问题功能及后续同类 React 迭代在进入 release commit 后会自然参与构建，不需要修改 Dockerfile 文件白名单。
+
 运行镜像只包含：
 
 - React 生产构建产物。
 - SPA fallback 配置。
 - API/SSE 反向代理配置。
-- 必要字体、图标、Logo、背景和占位图。
+- 已完成引用审计的 17 个 `public` 壳层资源。
 
 不得包含：
 
 - `node_modules` 构建目录。
-- 角色立绘、语音、视频等批量媒体。
+- 除上述 17 个壳层资源外的角色立绘、语音、视频等批量媒体。
 - 测试结果、Playwright 浏览器和开发服务器日志。
 
 当前构建命令已经验证为 `npm run build`（`tsc && vite build`）。在 GitHub Actions 启用前，必须先完成 `public` 使用清单；CI 从 Git checkout 构建的结果不能依赖工作区中被 `.gitignore` 排除的本地媒体。
@@ -509,6 +521,7 @@ Backend 可以仅对 Frontend 所在 Docker 网络开放；是否保留宿主机
 - 服务器磁盘、内存和 Docker 状态通过预检。
 - 当前活动槽位与旧版本清晰可辨。
 - 如包含潜在破坏性数据迁移，备份线程已确认可恢复点。
+- 当前所有纳入发布的 React 迭代均已完成实现与验收；release commit 冻结后工作区干净，前后端镜像由同一 commit 构建。
 
 ### 13.2 部署步骤
 
@@ -540,6 +553,7 @@ Backend 可以仅对 Frontend 所在 Docker 网络开放；是否保留宿主机
 - RAG 普通问答正常。
 - SSE 流式响应可完整结束。
 - 图片、语音等关键媒体可从正式域名访问。
+- 若 release commit 已包含聊天推荐问题功能，必须验证四条推荐在同次挂载期稳定、点击只回填草稿不自动发送、发送期间禁用，并在桌面/移动端及两套主题下可用。
 
 ## 14. 回滚流程
 
@@ -727,6 +741,8 @@ Milvus 上线不以官方建议内存作为唯一判断，而以当前数据集�
 - 新 Git 历史不包含旧 `.git`；staged/committed 内容不包含运行数据、批量媒体、真实密钥、卷和本地备份。
 - 活动制品清单与来源 SHA256 一致。
 - 新仓库全量 Python 测试、Frontend 测试和 production build 通过。
+- 仍处于设计或实现中的功能不得被误认为迁移/容器化缺陷；发布前必须先形成明确 release commit，再按该提交重新执行完整门禁。
+- Frontend 运行时代码和构建产物不再包含 `/wiki-preview`、`kimi-preview`、`KimiWiki*` 或独立 `kimi_web`；正式 `/wiki/character` 与 Wiki 详情路由继续通过原有真实 API 验收。
 - 首次有效源码提交前，7.5 的阻断项要么完成，要么拆成明确、不可发布的后续提交；不得把当前副本误标记为可生产部署。
 - 修剪完成后 Git 工作区可解释，迁移提交已推送目标 GitHub 仓库。
 
@@ -759,15 +775,16 @@ Milvus 上线不以官方建议内存作为唯一判断，而以当前数据集�
 
 ### 阶段 0：规范与清单
 
-- 状态：已完成本轮扫描，本文更新至 v0.2 初稿。
+- 状态：已完成本轮扫描，本文更新至 v0.5 初稿。
 - 已得到完整本地数据清单、Git 排除清单、服务器基线与容器化阻断清单。
 
-### 阶段 1：项目迁移
+### 阶段 1：项目迁移与修剪
 
-- 状态：完整副本已落地，修剪尚未开始。
+- 状态：完整副本与 Git 迁移基线已落地，修剪及容器化阻断项修复继续在新仓库中进行。
 - 下一步在 `D:\1999Wiki` 分提交清理旧 prototype、生成物和重复文档；每批删除前确认没有生产引用。
+- 前端修剪批次删除独立 `kimi_web/` 和 React 内嵌 `/wiki-preview/*`。项目尚未上线，因此旧预览地址彻底失效，不增加重定向或兼容代码。
 - 修复配置环境覆盖、媒体 public URL、Milvus 分类计数与依赖锁。
-- 完成 staged 密钥扫描和干净 checkout 回归后，建立新仓库首个有效源码提交。
+- 完成 staged 密钥扫描和干净 checkout 回归后，建立可用于容器化的 release candidate 提交。
 
 ### 阶段 2：容器化
 
@@ -802,9 +819,9 @@ Milvus 上线不以官方建议内存作为唯一判断，而以当前数据集�
 
 ## 23. 前端与静态资源收敛项
 
-当前 React/Vite 基线已经通过测试与构建；以下部署细节仍需在容器化阶段收敛：
+当前 React/Vite 已有基线通过测试与构建，但聊天推荐问题仍处于已批准设计、尚未实现阶段；以下部署细节仍需在容器化阶段收敛：
 
-1. 前端最终目录结构和构建命令。
+1. 前端构建上下文固定为完整 `frontend/react-app`，最终运行镜像只复制 production `dist`；构建命令维持 `npm run build`，不得按当前源码文件数维护 allowlist。
 2. React 路由和 SPA fallback 规则。
 3. `/api`、`/api/wiki`、`/api/media` 的最终反向代理语义。
 4. SSE 路径、超时和代理缓冲设置。
@@ -814,6 +831,10 @@ Milvus 上线不以官方建议内存作为唯一判断，而以当前数据集�
 8. 正式域名、媒体域名和证书切换方式。
 9. Frontend/Backend healthcheck 的最终端点。
 10. **已收敛**：`public` 仅保留 17 个生产引用资源并随 Frontend 镜像交付；`pv.mp4` 使用 Git LFS。CI checkout 必须启用 LFS。
+11. **迭代保护**：推荐问题功能只增加 React/TypeScript/CSS 与测试输入，不增加服务器服务、环境变量、数据库、媒体迁移或生产 Python 依赖；实现完成后必须运行功能定向测试、Frontend 全量测试和 production build，再冻结 release SHA。
+12. **清理边界已收敛**：删除独立 `kimi_web/`、React 内嵌 `/wiki-preview/*`、`frontend/html/`、`frontend/streamlit_app.py` 和 `frontend/gradio_app.py`；保留正式 `/wiki/*`、聊天页、推荐问题迭代及其测试。爬虫、向量化和离线导入源码保留在 Git，但不进入服务器镜像。
+13. **预览退役实现边界**：删除 `frontend/react-app/src/components/wiki-preview/` 的 11 个跟踪文件；从 `App.tsx` 删除预览路由；将 `WikiShell` 收敛为单一正式实现；从 `wikiRoutes` 删除 preview base 和双向转换；移除仅供预览使用的前端 Wiki health client/type；删除或改写所有 preview 专属测试，并解除正式 Wiki CSS 测试对 `KimiWikiPreview.css` 的读取依赖。
+14. **预览退役验证**：先增加会在现状失败的路由测试，证明 `/wiki-preview/*` 不再渲染 Wiki；实现后运行 Wiki/App 定向测试、Frontend 全量测试、`npm run build` 和残留引用扫描。历史 Kimi preview spec/plan 保留为 Git 决策记录，但必须标记“未转正且已退役”，不得继续作为发布范围来源。
 
 无论前端如何调整，以下原则不变：
 
@@ -832,7 +853,7 @@ Milvus 上线不以官方建议内存作为唯一判断，而以当前数据集�
 - Milvus、MySQL 和 Backend 的实际资源参数。
 - 备份线程与部署脚本的自动化确认接口。
 - 正式域名和 Caddy 配置结构。
-- 当前 `kimi_web`、历史前端 preview、历史 docs/eval 中哪些保留进 Git、哪些仅留本地/COS；必须以引用扫描和 Git 分批提交决定。
+- 历史 docs/eval 中最终哪些证据保留进 Git、哪些仅留本地/COS；必须以可追溯性价值、体积和 Git 分批提交决定。
 
 ## 25. 变更记录
 
@@ -841,3 +862,5 @@ Milvus 上线不以官方建议内存作为唯一判断，而以当前数据集�
 | v0.1 | 2026-07-17 | Draft | 固化项目迁移、GHCR 镜像、服务器本地数据、蓝绿发布和职责边界；前端细节保留待定。 |
 | v0.2 | 2026-07-23 | Draft | 按用户决策改为完整副本优先；记录 43.481 GB 搬迁、活动数据身份、全量测试结果、Git 安全边界及 6 项容器化阻断项。 |
 | v0.3 | 2026-07-23 | Draft | 记录 Frontend public 清理结果：删除 495 个未引用文件，保留并跟踪 17 个生产资源，超 100 MiB 的 MP4 改由 Git LFS 管理。 |
+| v0.4 | 2026-07-23 | Draft | 纳入聊天推荐问题迭代保护范围；明确完整 React 构建上下文、release commit 冻结门禁，以及 Kimi/HTML/Streamlit/Gradio 与离线工具的清理和镜像排除边界。 |
+| v0.5 | 2026-07-23 | Draft | 决定彻底退役未上线的 `/wiki-preview/*`，不保留重定向；明确删除 React preview 组件、独立 `kimi_web`、双路由与预览专属测试，同时保护正式 `/wiki/*` 和当前前端迭代。 |
