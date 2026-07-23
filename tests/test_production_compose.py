@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,8 @@ REQUIRED_RUNTIME_KEYS = {
     "MYSQL_DATABASE",
     "MYSQL_USER",
     "MYSQL_PASSWORD",
+    "DEEPSEEK_API_KEY",
+    "SILICONFLOW_API_KEY",
     "HUIJI_PROCESSED_ROOT",
 }
 INFRA_SECRET_KEYS = {
@@ -62,6 +65,8 @@ APP_SECRET_KEYS = {
     "MINIO_SECRET_KEY",
     "MYSQL_USER",
     "MYSQL_PASSWORD",
+    "DEEPSEEK_API_KEY",
+    "SILICONFLOW_API_KEY",
 }
 
 
@@ -116,6 +121,8 @@ def _validation_app_env(tmp_path: Path) -> Path:
             "MINIO_SECRET_KEY": "compose-validation-not-a-secret",
             "MYSQL_USER": "compose-validation-user",
             "MYSQL_PASSWORD": "compose-validation-not-a-secret",
+            "DEEPSEEK_API_KEY": "compose-validation-not-a-secret",
+            "SILICONFLOW_API_KEY": "compose-validation-not-a-secret",
         }
     )
     path = tmp_path / "app.env"
@@ -240,6 +247,11 @@ def test_backend_healthcheck_enforces_full_production_readiness() -> None:
     compile(command, "<backend-compose-healthcheck>", "exec")
     assert "json.load" in command
     assert "timeout=3" in command
+    assert "os.environ.get" in command
+    for variable in APP_SECRET_KEYS:
+        assert variable in command
+    assert "raise SystemExit" in command
+    assert command.index("raise SystemExit") < command.index("urlopen")
     assert re.search(r"""data\.get\(['"]status['"]\)\s*==\s*['"]ok['"]""", command)
     assert re.search(
         r"""data\.get\(['"]vectorstore_loaded['"]\)\s+is\s+True""", command
@@ -248,6 +260,72 @@ def test_backend_healthcheck_enforces_full_production_readiness() -> None:
         r"""data\.get\(['"]provenance_status['"]\)\s*==\s*['"]pass['"]""",
         command,
     )
+    assert re.search(r"""data\.get\(['"]llm_ready['"]\)\s+is\s+True""", command)
+
+
+def test_checked_in_app_example_cannot_pass_backend_credential_health_gate() -> None:
+    command = _compose(APP_COMPOSE)["services"]["backend"]["healthcheck"]["test"][3]
+    environment = os.environ.copy()
+    example_values = _env_values(APP_ENV)
+    environment.update(example_values)
+    environment["APP_ENV_FILE"] = str(APP_ENV)
+
+    docker = shutil.which("docker")
+    assert docker, "Docker CLI is required to validate production Compose"
+    render = subprocess.run(
+        [
+            docker,
+            "compose",
+            "-p",
+            "1999wiki-explicit-example",
+            "--env-file",
+            str(RELEASE_ENV),
+            "-f",
+            str(APP_COMPOSE),
+            "config",
+        ],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert render.returncode == 0, render.stderr
+
+    result = subprocess.run(
+        [sys.executable, "-c", command],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode != 0
+    diagnostics = result.stdout + result.stderr
+    for variable in APP_SECRET_KEYS:
+        assert variable in diagnostics
+    assert "urlopen" not in diagnostics
+
+    sentinel_environment = os.environ.copy()
+    sentinel_environment.update(
+        {variable: "must-never-appear-in-diagnostics" for variable in APP_SECRET_KEYS}
+    )
+    sentinel_environment["MINIO_ACCESS_KEY"] = ""
+    sentinel_result = subprocess.run(
+        [sys.executable, "-c", command],
+        cwd=ROOT,
+        env=sentinel_environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert sentinel_result.returncode != 0
+    sentinel_diagnostics = sentinel_result.stdout + sentinel_result.stderr
+    assert "MINIO_ACCESS_KEY" in sentinel_diagnostics
+    assert "must-never-appear-in-diagnostics" not in sentinel_diagnostics
 
 
 def test_frontend_healthcheck_enforces_static_and_proxied_backend_readiness() -> None:
@@ -266,6 +344,7 @@ def test_frontend_healthcheck_enforces_static_and_proxied_backend_readiness() ->
         """grep -Eq '"provenance_status"[[:space:]]*:[[:space:]]*"pass"'"""
         in command
     )
+    assert """grep -Eq '"llm_ready"[[:space:]]*:[[:space:]]*true'""" in command
     assert "&&" in command
 
 
