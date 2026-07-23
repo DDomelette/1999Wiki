@@ -15,6 +15,13 @@ from src.huijiwiki.project_paths import ProjectPathViolation
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _reset_config_singleton():
+    reset_config_for_test()
+    yield
+    reset_config_for_test()
+
+
 def _settings_payload() -> dict:
     return yaml.safe_load((ROOT / "config" / "settings.yaml").read_text(encoding="utf-8"))
 
@@ -92,7 +99,44 @@ def test_runtime_service_environment_overrides(monkeypatch):
     assert cfg.assets.secure is False
     assert cfg.assets.bucket_name == "reverse1999-assets"
     assert cfg.assets.public_base_url == "/media"
-    assert cfg.huiji.processed_root == Path("/runtime/rag/huiji")
+    assert cfg.huiji.processed_root.as_posix() == "/runtime/rag/huiji"
+
+
+def test_huiji_processed_root_accepts_native_absolute_path(monkeypatch, tmp_path):
+    processed_root = tmp_path / "processed"
+    monkeypatch.setenv("HUIJI_PROCESSED_ROOT", str(processed_root))
+
+    cfg = get_config()
+
+    assert cfg.huiji.processed_root == processed_root
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "   ", "runtime/rag/huiji", " /runtime/rag/huiji", "//host/share"],
+)
+def test_huiji_processed_root_rejects_missing_or_relative_overrides(monkeypatch, value):
+    monkeypatch.setenv("HUIJI_PROCESSED_ROOT", value)
+
+    with pytest.raises(ValueError, match="HUIJI_PROCESSED_ROOT") as error:
+        get_config()
+
+    if value:
+        assert value not in str(error.value)
+
+
+def test_empty_mysql_environment_values_override_yaml_defaults(monkeypatch):
+    monkeypatch.setenv("MYSQL_HOST", "")
+    monkeypatch.setenv("MYSQL_DATABASE", "")
+    monkeypatch.setenv("MYSQL_USER", "")
+    monkeypatch.setenv("MYSQL_PASSWORD", "")
+
+    cfg = get_config()
+
+    assert cfg.mysql.host == ""
+    assert cfg.mysql.database == ""
+    assert cfg.mysql.user == ""
+    assert cfg.mysql.password == ""
 
 
 def test_api_keys_empty_when_env_unset(monkeypatch):

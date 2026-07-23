@@ -1,6 +1,13 @@
+import pytest
+
 from config.config import get_config, reset_config_for_test
 
-import pytest
+
+@pytest.fixture(autouse=True)
+def _reset_config_singleton():
+    reset_config_for_test()
+    yield
+    reset_config_for_test()
 
 
 def test_asset_storage_config_uses_yaml_and_env(monkeypatch):
@@ -22,7 +29,8 @@ def test_asset_storage_config_uses_yaml_and_env(monkeypatch):
 def test_asset_storage_credentials_empty_when_env_unset(monkeypatch):
     monkeypatch.delenv("MINIO_ACCESS_KEY", raising=False)
     monkeypatch.delenv("MINIO_SECRET_KEY", raising=False)
-    reset_config_for_test()
+    monkeypatch.delenv("MINIO_ROOT_USER", raising=False)
+    monkeypatch.delenv("MINIO_ROOT_PASSWORD", raising=False)
 
     cfg = get_config()
 
@@ -43,12 +51,28 @@ def test_asset_storage_config_accepts_minio_root_credentials(monkeypatch):
     assert cfg.assets.secret_key == "root-password"
 
 
+def test_empty_minio_primary_credentials_do_not_fall_back_to_root_credentials(monkeypatch):
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "")
+    monkeypatch.setenv("MINIO_ROOT_USER", "root-user")
+    monkeypatch.setenv("MINIO_ROOT_PASSWORD", "root-password")
+
+    cfg = get_config()
+
+    assert cfg.assets.access_key == ""
+    assert cfg.assets.secret_key == ""
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [
         ("MINIO_SECURE", "perhaps"),
         ("MEDIA_PUBLIC_BASE_URL", "ftp://media.example.com"),
+        ("MEDIA_PUBLIC_BASE_URL", "//media.example.com"),
+        ("MEDIA_PUBLIC_BASE_URL", "///media.example.com"),
         ("MEDIA_PUBLIC_BASE_URL", "/media/../secret"),
+        ("MEDIA_PUBLIC_BASE_URL", "/media/%2e%2e/secret"),
+        ("MEDIA_PUBLIC_BASE_URL", "https://media.example.com/media/%2E%2E/secret"),
         ("MEDIA_PUBLIC_BASE_URL", "https://user:pass@example.com/media"),
         ("MEDIA_PUBLIC_BASE_URL", "/media?token=value"),
     ],

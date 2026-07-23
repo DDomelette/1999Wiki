@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import yaml
 from dotenv import load_dotenv
@@ -161,10 +161,28 @@ def _env_bool(name: str, fallback: bool) -> bool:
     raise ValueError(f"{name} must be a boolean")
 
 
+def _env_string(name: str, fallback: str) -> str:
+    return os.environ[name] if name in os.environ else fallback
+
+
+def _env_string_with_legacy_fallback(
+    name: str,
+    legacy_name: str,
+    fallback: str,
+) -> str:
+    if name in os.environ:
+        return os.environ[name]
+    if legacy_name in os.environ:
+        return os.environ[legacy_name]
+    return fallback
+
+
 def _validated_media_public_base_url(value: str) -> str:
     candidate = str(value).strip()
     if not candidate or "\\" in candidate or any(ord(char) < 32 for char in candidate):
         raise ValueError("MEDIA_PUBLIC_BASE_URL must be a safe path or HTTP(S) URL")
+    if candidate.startswith("//"):
+        raise ValueError("MEDIA_PUBLIC_BASE_URL must be a same-origin path or HTTP(S) URL")
     try:
         parsed = urlsplit(candidate)
         _port = parsed.port
@@ -172,7 +190,7 @@ def _validated_media_public_base_url(value: str) -> str:
         raise ValueError("MEDIA_PUBLIC_BASE_URL must be a safe path or HTTP(S) URL") from error
     if parsed.query or parsed.fragment:
         raise ValueError("MEDIA_PUBLIC_BASE_URL must not contain query or fragment")
-    if any(segment in {".", ".."} for segment in parsed.path.split("/")):
+    if any(segment in {".", ".."} for segment in unquote(parsed.path).split("/")):
         raise ValueError("MEDIA_PUBLIC_BASE_URL must not contain traversal segments")
     if parsed.scheme:
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -186,6 +204,19 @@ def _validated_media_public_base_url(value: str) -> str:
     ):
         raise ValueError("MEDIA_PUBLIC_BASE_URL must be a same-origin path or HTTP(S) URL")
     return candidate
+
+
+def _runtime_absolute_path_override(name: str) -> Path | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    candidate = value.strip()
+    if not candidate or candidate.startswith(("//", "\\\\")):
+        raise ValueError(f"{name} must be an absolute local path")
+    path = Path(value).expanduser()
+    if not (path.is_absolute() or value.startswith("/")):
+        raise ValueError(f"{name} must be an absolute local path")
+    return path
 
 
 def get_config() -> Config:
@@ -218,7 +249,7 @@ def get_config() -> Config:
         project_root=project_root,
         label="HUIJI_CONFIG_PATH" if credential_env else "huiji.credential_file",
     )
-    processed_root_env = os.getenv("HUIJI_PROCESSED_ROOT")
+    processed_root_override = _runtime_absolute_path_override("HUIJI_PROCESSED_ROOT")
 
     cfg = Config(
         embedding=EmbeddingCfg(
@@ -263,25 +294,26 @@ def get_config() -> Config:
             bucket_name=os.getenv("MINIO_BUCKET", assets_raw["bucket_name"]),
             secure=_env_bool("MINIO_SECURE", bool(assets_raw.get("secure", False))),
             object_prefix=assets_raw.get("object_prefix", "reverse1999"),
-            access_key=(
-                os.environ.get("MINIO_ACCESS_KEY")
-                or os.environ.get("MINIO_ROOT_USER")
-                or assets_raw.get("access_key", "")
-                or ""
+            access_key=_env_string_with_legacy_fallback(
+                "MINIO_ACCESS_KEY",
+                "MINIO_ROOT_USER",
+                str(assets_raw.get("access_key", "") or ""),
             ),
-            secret_key=(
-                os.environ.get("MINIO_SECRET_KEY")
-                or os.environ.get("MINIO_ROOT_PASSWORD")
-                or assets_raw.get("secret_key", "")
-                or ""
+            secret_key=_env_string_with_legacy_fallback(
+                "MINIO_SECRET_KEY",
+                "MINIO_ROOT_PASSWORD",
+                str(assets_raw.get("secret_key", "") or ""),
             ),
         ),
         mysql=MysqlCfg(
-            host=os.environ.get("MYSQL_HOST") or str(mysql_raw.get("host", "127.0.0.1")),
+            host=_env_string("MYSQL_HOST", str(mysql_raw.get("host", "127.0.0.1"))),
             port=int(os.environ.get("MYSQL_PORT") or mysql_raw.get("port", 3306)),
-            database=os.environ.get("MYSQL_DATABASE") or str(mysql_raw.get("database", "reverse1999_wiki")),
-            user=os.environ.get("MYSQL_USER") or str(mysql_raw.get("user", "root")),
-            password=os.environ.get("MYSQL_PASSWORD") or str(mysql_raw.get("password", "")),
+            database=_env_string(
+                "MYSQL_DATABASE",
+                str(mysql_raw.get("database", "reverse1999_wiki")),
+            ),
+            user=_env_string("MYSQL_USER", str(mysql_raw.get("user", "root"))),
+            password=_env_string("MYSQL_PASSWORD", str(mysql_raw.get("password", ""))),
             charset=str(mysql_raw.get("charset", "utf8mb4")),
         ),
         wiki=WikiCfg(
@@ -297,8 +329,8 @@ def get_config() -> Config:
                 label="huiji.raw_root",
             ),
             processed_root=(
-                Path(processed_root_env).expanduser()
-                if processed_root_env is not None
+                processed_root_override
+                if processed_root_override is not None
                 else resolve_project_local_path(
                     huiji_raw.get("processed_root", "data/processed/huiji"),
                     project_root=project_root,
