@@ -17,8 +17,12 @@ services:
       - /srv/1999wiki/mysql:/var/lib/mysql
     healthcheck:
       test:
-        - CMD-SHELL
-        - mysqladmin ping -h 127.0.0.1 -u root -p"$${MYSQL_ROOT_PASSWORD}" --silent
+        - CMD
+        - mysqladmin
+        - ping
+        - -h
+        - 127.0.0.1
+        - --silent
       interval: 30s
       timeout: 10s
       retries: 5

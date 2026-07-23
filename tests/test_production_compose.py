@@ -50,6 +50,19 @@ REQUIRED_RUNTIME_KEYS = {
     "MYSQL_PASSWORD",
     "HUIJI_PROCESSED_ROOT",
 }
+INFRA_SECRET_KEYS = {
+    "MYSQL_ROOT_PASSWORD",
+    "MYSQL_USER",
+    "MYSQL_PASSWORD",
+    "MINIO_ROOT_USER",
+    "MINIO_ROOT_PASSWORD",
+}
+APP_SECRET_KEYS = {
+    "MINIO_ACCESS_KEY",
+    "MINIO_SECRET_KEY",
+    "MYSQL_USER",
+    "MYSQL_PASSWORD",
+}
 
 
 def _read(path: Path) -> str:
@@ -83,6 +96,35 @@ def _env_keys(path: Path) -> set[str]:
         if line and not line.startswith("#") and "=" in line:
             keys.add(line.split("=", 1)[0])
     return keys
+
+
+def _env_values(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for raw_line in _read(path).splitlines():
+        line = raw_line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            values[key] = value
+    return values
+
+
+def _validation_app_env(tmp_path: Path) -> Path:
+    values = _env_values(APP_ENV)
+    values.update(
+        {
+            "MINIO_ACCESS_KEY": "compose-validation-user",
+            "MINIO_SECRET_KEY": "compose-validation-not-a-secret",
+            "MYSQL_USER": "compose-validation-user",
+            "MYSQL_PASSWORD": "compose-validation-not-a-secret",
+        }
+    )
+    path = tmp_path / "app.env"
+    path.write_text(
+        "\n".join(f"{key}={value}" for key, value in values.items()) + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+    return path
 
 
 def _service_networks(service: dict[str, Any]) -> set[str]:
@@ -153,14 +195,7 @@ def test_only_minio_api_is_normally_published_and_attu_is_diagnostic_only() -> N
 
 def test_infrastructure_secrets_are_required_without_password_defaults() -> None:
     raw = _read(INFRA_COMPOSE)
-    required = {
-        "MYSQL_ROOT_PASSWORD",
-        "MYSQL_USER",
-        "MYSQL_PASSWORD",
-        "MINIO_ROOT_USER",
-        "MINIO_ROOT_PASSWORD",
-    }
-    for variable in required:
+    for variable in INFRA_SECRET_KEYS:
         assert re.search(
             rf"\$\{{{variable}:\?[^}}]+\}}", raw
         ), f"{variable} must use required interpolation"
@@ -168,11 +203,21 @@ def test_infrastructure_secrets_are_required_without_password_defaults() -> None
             rf"(?<!\$)\$\{{{variable}(?::-|-[^}}])", raw
         ), f"{variable} must not have a fallback"
 
-    example = _read(INFRA_ENV)
-    for variable in required:
-        assert re.search(
-            rf"(?m)^{variable}=replace-before-production$", example
-        ), f"{variable} example must be an obvious non-secret placeholder"
+    values = _env_values(INFRA_ENV)
+    assert all(values[variable] == "" for variable in INFRA_SECRET_KEYS)
+    instructions = _read(INFRA_ENV)
+    assert "chmod 600" in instructions
+    assert "outside Git" in instructions
+
+
+def test_mysql_healthcheck_never_places_a_password_in_process_arguments() -> None:
+    command = " ".join(
+        str(part)
+        for part in _compose(INFRA_COMPOSE)["services"]["mysql"]["healthcheck"]["test"]
+    )
+    assert command == "CMD mysqladmin ping -h 127.0.0.1 --silent"
+    assert "MYSQL_ROOT_PASSWORD" not in command
+    assert not re.search(r"(?:^|\s)(?:-p|--password)(?:\s|=|$)", command)
 
 
 def test_application_services_have_operational_guards() -> None:
@@ -188,6 +233,42 @@ def test_application_services_have_operational_guards() -> None:
     }
 
 
+def test_backend_healthcheck_enforces_full_production_readiness() -> None:
+    healthcheck = _compose(APP_COMPOSE)["services"]["backend"]["healthcheck"]
+    assert healthcheck["test"][:3] == ["CMD", "python", "-c"]
+    command = healthcheck["test"][3]
+    compile(command, "<backend-compose-healthcheck>", "exec")
+    assert "json.load" in command
+    assert "timeout=3" in command
+    assert re.search(r"""data\.get\(['"]status['"]\)\s*==\s*['"]ok['"]""", command)
+    assert re.search(
+        r"""data\.get\(['"]vectorstore_loaded['"]\)\s+is\s+True""", command
+    )
+    assert re.search(
+        r"""data\.get\(['"]provenance_status['"]\)\s*==\s*['"]pass['"]""",
+        command,
+    )
+
+
+def test_frontend_healthcheck_enforces_static_and_proxied_backend_readiness() -> None:
+    healthcheck = _compose(APP_COMPOSE)["services"]["frontend"]["healthcheck"]
+    assert healthcheck["test"][0] == "CMD-SHELL"
+    command = healthcheck["test"][1]
+    assert "wget -q -T 3 -O - http://127.0.0.1:8080/)" in command
+    assert "wget -q -T 3 -O - http://127.0.0.1:8080/health)" in command
+    assert '<div id="root"></div>' in command
+    assert """grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'""" in command
+    assert (
+        """grep -Eq '"vectorstore_loaded"[[:space:]]*:[[:space:]]*true'"""
+        in command
+    )
+    assert (
+        """grep -Eq '"provenance_status"[[:space:]]*:[[:space:]]*"pass"'"""
+        in command
+    )
+    assert "&&" in command
+
+
 def test_application_images_ports_and_rag_mount_are_release_scoped() -> None:
     services = _compose(APP_COMPOSE)["services"]
     assert services["backend"]["image"] == "${BACKEND_IMAGE:?Set BACKEND_IMAGE}"
@@ -199,6 +280,9 @@ def test_application_images_ports_and_rag_mount_are_release_scoped() -> None:
         in services["backend"]["volumes"]
     )
     assert "volumes" not in services["frontend"]
+    assert services["backend"]["env_file"] == [
+        "${APP_ENV_FILE:?Set APP_ENV_FILE to a protected runtime env file}"
+    ]
 
 
 def test_application_slot_network_stays_project_private() -> None:
@@ -236,14 +320,43 @@ def test_runtime_and_release_environment_examples_are_separated() -> None:
     assert "APP_ENV=production" in app_example
     assert "MEDIA_PUBLIC_BASE_URL=/media" in app_example
     assert "HUIJI_PROCESSED_ROOT=/runtime/rag/huiji" in app_example
-    for variable in ("MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "MYSQL_USER", "MYSQL_PASSWORD"):
-        assert re.search(
-            rf"(?m)^{variable}=replace-before-production$", app_example
-        )
+    app_values = _env_values(APP_ENV)
+    assert all(app_values[variable] == "" for variable in APP_SECRET_KEYS)
+    assert "chmod 600" in app_example
+    assert "outside Git" in app_example
 
     release_example = _read(RELEASE_ENV)
     assert "ghcr.io/ddomelette/1999wiki-backend:sha-replace-before-production" in release_example
     assert "ghcr.io/ddomelette/1999wiki-frontend:sha-replace-before-production" in release_example
+
+
+def test_application_compose_rejects_missing_protected_runtime_env_path() -> None:
+    docker = shutil.which("docker")
+    assert docker, "Docker CLI is required to validate production Compose"
+
+    environment = os.environ.copy()
+    environment.pop("APP_ENV_FILE", None)
+    result = subprocess.run(
+        [
+            docker,
+            "compose",
+            "-p",
+            "1999wiki-missing-app-env",
+            "--env-file",
+            str(RELEASE_ENV),
+            "-f",
+            str(APP_COMPOSE),
+            "config",
+        ],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "APP_ENV_FILE" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -262,8 +375,7 @@ def test_docker_compose_config_renders_each_application_slot(
     docker = shutil.which("docker")
     assert docker, "Docker CLI is required to validate production Compose"
 
-    app_env = tmp_path / "app.env"
-    app_env.write_text(_read(APP_ENV), encoding="utf-8")
+    app_env = _validation_app_env(tmp_path)
     environment = os.environ.copy()
     environment.update(
         {
@@ -332,3 +444,33 @@ def test_docker_compose_config_renders_infrastructure_without_network_creation()
     )
     assert result.returncode == 0, result.stderr
     assert "name: 1999wiki-infra" in result.stdout
+
+
+def test_infrastructure_example_cannot_satisfy_required_secrets() -> None:
+    docker = shutil.which("docker")
+    assert docker, "Docker CLI is required to validate production Compose"
+
+    environment = os.environ.copy()
+    for variable in INFRA_SECRET_KEYS:
+        environment.pop(variable, None)
+    result = subprocess.run(
+        [
+            docker,
+            "compose",
+            "-p",
+            "1999wiki-empty-infra-secrets",
+            "--env-file",
+            str(INFRA_ENV),
+            "-f",
+            str(INFRA_COMPOSE),
+            "config",
+        ],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert any(variable in result.stderr for variable in INFRA_SECRET_KEYS)

@@ -5,7 +5,7 @@ services:
     image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE}
     restart: unless-stopped
     env_file:
-      - ${APP_ENV_FILE:-./env/app.env.example}
+      - ${APP_ENV_FILE:?Set APP_ENV_FILE to a protected runtime env file}
     volumes:
       - /srv/1999wiki/rag-artifacts:/runtime/rag/huiji:ro
     ports:
@@ -15,7 +15,12 @@ services:
         - CMD
         - python
         - -c
-        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)
+        - >-
+          import json, urllib.request;
+          data = json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3));
+          assert data.get('status') == 'ok'
+          and data.get('vectorstore_loaded') is True
+          and data.get('provenance_status') == 'pass'
       interval: 30s
       timeout: 5s
       retries: 3
@@ -39,11 +44,14 @@ services:
         condition: service_healthy
     healthcheck:
       test:
-        - CMD
-        - wget
-        - --quiet
-        - --spider
-        - http://127.0.0.1:8080/health
+        - CMD-SHELL
+        - >-
+          static="$$(wget -q -T 3 -O - http://127.0.0.1:8080/)" &&
+          printf '%s' "$$static" | grep -Fq '<div id="root"></div>' &&
+          readiness="$$(wget -q -T 3 -O - http://127.0.0.1:8080/health)" &&
+          printf '%s' "$$readiness" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' &&
+          printf '%s' "$$readiness" | grep -Eq '"vectorstore_loaded"[[:space:]]*:[[:space:]]*true' &&
+          printf '%s' "$$readiness" | grep -Eq '"provenance_status"[[:space:]]*:[[:space:]]*"pass"'
       interval: 30s
       timeout: 5s
       retries: 3
