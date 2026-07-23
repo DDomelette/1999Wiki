@@ -11,7 +11,10 @@ RUN npm run build
 
 FROM caddy:2.11.4-alpine
 
+RUN addgroup -S caddy && adduser -S -D -H -G caddy caddy \
+    && chown -R caddy:caddy /config /data
 COPY --from=build /app/dist /srv
 COPY docker/frontend.Caddyfile /etc/caddy/Caddyfile
 
+USER caddy
 EXPOSE 8080

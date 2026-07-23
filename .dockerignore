@@ -6,12 +6,15 @@
 .vscode/
 
 # Secrets, credentials, and browser state
+.local/
 .env
 .env.*
 **/.env
 **/.env.*
 **/*credentials*.json
 **/*cookies*.json
+**/*credential*
+**/*credential*/
 **/browser_profile/
 **/edge_profile/
 **/*.pem
@@ -31,6 +34,8 @@ logs/
 recovery-*.txt
 
 # Development dependencies, caches, tests, and local builds
+.venv/
+venv/
 **/node_modules/
 **/dist/
 tests/
