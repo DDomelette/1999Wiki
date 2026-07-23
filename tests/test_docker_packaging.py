@@ -4,6 +4,8 @@ import json
 import posixpath
 import re
 import shlex
+import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -415,7 +417,13 @@ def test_caddy_configuration_exactly_routes_api_before_spa() -> None:
         "handle /health {",
         "reverse_proxy backend:8000",
         "}",
-        "handle /api/* {",
+        "handle /api/wiki/* {",
+        "reverse_proxy backend:8000",
+        "}",
+        "handle /api/media/* {",
+        "reverse_proxy backend:8000",
+        "}",
+        "handle_path /api/* {",
         "reverse_proxy backend:8000",
         "}",
         "handle {",
@@ -425,6 +433,59 @@ def test_caddy_configuration_exactly_routes_api_before_spa() -> None:
         "}",
         "}",
     )
+
+
+def test_frontend_caddy_routes_preserved_and_stripped_api_families(
+    tmp_path: Path,
+) -> None:
+    docker = shutil.which("docker")
+    assert docker, "Docker CLI is required for Caddy routing validation"
+    frontend = _read(CADDYFILE).replace("backend:8000", "127.0.0.1:18000")
+    config = tmp_path / "Caddyfile"
+    config.write_text(
+        "{\n\tadmin off\n\tauto_https off\n}\n\n"
+        + frontend
+        + '\n:18000 {\n\trespond "{uri}" 200\n}\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    probe = (
+        "set -eu; "
+        "caddy start --config /tmp/Caddyfile --adapter caddyfile >/tmp/caddy.log 2>&1; "
+        "trap 'caddy stop >/dev/null 2>&1 || true' EXIT; "
+        "wget -qO- 'http://127.0.0.1:8080/health'; printf '\\n'; "
+        "wget -qO- 'http://127.0.0.1:8080/api/wiki/pages?limit=1'; printf '\\n'; "
+        "wget -qO- 'http://127.0.0.1:8080/api/media/voice/page?cursor=x'; printf '\\n'; "
+        "wget -qO- 'http://127.0.0.1:8080/api/ask'; printf '\\n'; "
+        "wget -qO- 'http://127.0.0.1:8080/api/category/story/docs?limit=1'; printf '\\n'"
+    )
+    result = subprocess.run(
+        [
+            docker,
+            "run",
+            "--rm",
+            "-v",
+            f"{config}:/tmp/Caddyfile:ro",
+            "--entrypoint",
+            "/bin/sh",
+            "caddy:2.11.4-alpine",
+            "-c",
+            probe,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "/health",
+        "/api/wiki/pages?limit=1",
+        "/api/media/voice/page?cursor=x",
+        "/ask",
+        "/category/story/docs?limit=1",
+    ]
 
 
 def test_dockerignore_excludes_representative_private_and_development_paths() -> None:

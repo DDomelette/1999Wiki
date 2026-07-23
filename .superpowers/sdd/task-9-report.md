@@ -146,3 +146,105 @@ is HTTP-only; using a domain in `SITE_ADDRESS` enables normal automatic HTTPS.
   fail closed before switching. Fixing the prior-task container routing was
   outside the requested Task 9 file scope.
 - The only test warning is an existing Starlette/httpx deprecation warning.
+
+## Fix wave: reviewer findings
+
+The rejected first pass was reworked around one shared, fail-closed operations
+control plane rather than independent script-local state:
+
+- `ops_helper.py` is now the only non-evaluating parser and validator for
+  release, app, infra, Caddy, snapshot, active-state, transaction-journal,
+  Compose-status, fragment, and health inputs. It rejects duplicate/unexpected
+  keys, quotes, whitespace, and unresolved `${...}` values without `source` or
+  `eval`.
+- `ops-common.sh` owns the global nonblocking `flock`, immutable mode-`0600`
+  snapshots, exact Compose identity checks, Caddy service readability and
+  metadata preservation, atomic fsync-backed replacements, and the durable
+  `prepared` / `traffic_installed` / `state_committed` journal.
+- Deploy establishes its partial-candidate cleanup responsibility immediately
+  before Compose `up`; any partial `up` failure stops the named candidate
+  services.
+- Switch takes only `SLOT RELEASE_SNAPSHOT`, derives all ports/images/app
+  configuration from the validated snapshot, and repeats readiness plus smoke
+  under the inherited operations lock.
+- Rollback regenerates traffic from strictly reconciled previous metadata,
+  verifies the previous project/images before switching, atomically swaps
+  active/previous state, and restores the old fragment/state if reload fails.
+- Cleanup requires a complete v2 active state and exact active-fragment
+  agreement, and protects the active deployment, the recorded rollback target,
+  and all images used by either even when their containers are stopped.
+- The smoke test follows redirects, requires a hashed asset with a final 2xx
+  non-HTML response, derives media projection only from the snapshotted
+  `MEDIA_PUBLIC_BASE_URL`, and parses SSE blocks so one `done` event is last and
+  no `error` event occurs.
+- The container Caddyfile now preserves `/health`, `/api/wiki/*`, and
+  `/api/media/*`, strips `/api` for Backend `/ask` and category routes, and
+  places the SPA fallback last.
+
+### Fix-wave RED/GREEN evidence
+
+The new reviewer-safety static tests started at `5 failed`. After the shared
+control-plane implementation and script rewiring, the focused deployment and
+packaging suite finished:
+
+```text
+pytest -q tests/test_deploy_scripts.py tests/test_docker_packaging.py
+87 passed in 50.86s
+```
+
+The Linux-container behavioral tests now cover:
+
+- global lock contention;
+- strict placeholder rejection without ambient expansion;
+- immutable snapshot/TOCTOU behavior and wrong-slot rejection;
+- candidate cleanup when Compose `up` partially fails;
+- fragment ownership/group/mode preservation (`0:1234:0640`) for a
+  group-readable Caddy service identity;
+- missing, malformed, divergent, stopped-active, and wrong-confirmation
+  cleanup states;
+- real `SIGKILL` injection before state commit and after state commit, followed
+  by deterministic journal reconciliation;
+- successful rollback state swapping and reload-failure restoration;
+- HTML asset fallback, nonterminal SSE, and unrelated media-base rejection;
+- actual Caddy 2.11.4 request routing for health, Wiki, media, Ask, and category
+  paths.
+
+Fresh full repository regression:
+
+```text
+PYTHONPATH=. pytest -q
+1646 passed, 2 skipped, 2 warnings in 124.55s
+```
+
+Both warnings are the existing FastAPI `on_event` deprecations.
+
+### Fix-wave static and container validation
+
+All seven shell files passed `bash -n`. ShellCheck v0.10.0 passed with no
+findings using external source resolution for `ops-common.sh`.
+
+The mounted host Caddy configuration passed Caddy 2.11.4 validation with
+`Valid configuration`; no host Caddy command was run.
+
+The frontend was rebuilt without `--pull`, using cached Node/Caddy layers:
+
+```text
+docker build --progress=plain -f docker/Dockerfile.frontend \
+  -t 1999wiki-frontend:task9-review .
+```
+
+Resulting manifest-list digest:
+`sha256:cb95f1d3db91c34410dfaee8573b87014f58ea38da103f61e345b66ec264b704`.
+The Caddyfile copied into that image also passed Caddy 2.11.4 validation.
+
+`git diff --check` passed. No live Compose project, host Caddy service, DNS, or
+production deployment state was read or changed.
+
+### Remaining concerns
+
+- Crash recovery is durable at file/journal boundaries and tested with real
+  process kills; like any userspace design, guarantees still depend on the
+  underlying filesystem honoring fsync and atomic rename semantics.
+- The full Windows pytest run printed transient native Torch DLL access-
+  violation diagnostics during collection, but collection continued and the
+  run completed with exit code 0 and the result above.

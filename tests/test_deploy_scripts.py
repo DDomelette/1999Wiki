@@ -20,10 +20,14 @@ SCRIPTS = (
     "smoke-test.sh",
     "cleanup.sh",
 )
+OPS_COMMON = BIN / "ops-common.sh"
+OPS_HELPER = BIN / "ops_helper.py"
 REQUIRED_FILES = (
     DEPLOY / "Caddyfile",
     DEPLOY / "caddy" / "active-upstream.caddy.example",
     DEPLOY / "env" / "caddy.env.example",
+    OPS_COMMON,
+    OPS_HELPER,
     *(BIN / name for name in SCRIPTS),
 )
 FORBIDDEN_OPERATIONS = (
@@ -83,6 +87,7 @@ def _preflight_harness(customize: str = "") -> str:
             >"$root/rag-artifacts/active_build.v1.json"
         cp /repo/deploy/Caddyfile "$root/Caddyfile"
         cp /repo/deploy/caddy/active-upstream.caddy.example "$root/active.caddy"
+        chmod 644 "$root/active.caddy"
         : >"$calls"
         cat >"$root/protected/app.env" <<'EOF'
         APP_ENV=production
@@ -121,7 +126,9 @@ def _preflight_harness(customize: str = "") -> str:
         FRONTEND_PORT=18080
         EOF
         chmod 600 "$root/protected/app.env" "$root/protected/infra.env" \
-            "$root/protected/caddy.env"
+            "$root/protected/caddy.env" \
+            "$root/releases/sha-abcdef0/blue.env"
+        chmod 700 "$root/deploy-state"
         cat >"$stub/docker" <<'EOF'
         #!/usr/bin/env bash
         set -Eeuo pipefail
@@ -176,6 +183,8 @@ def _preflight_harness(customize: str = "") -> str:
             APP_ENV_FILE="${{APP_ENV_FILE_OVERRIDE:-$root/protected/app.env}}" \
             INFRA_ENV_FILE="$root/protected/infra.env" \
             CADDY_ENV_FILE="$root/protected/caddy.env" \
+            CADDY_SERVICE_UID=0 \
+            CADDY_SERVICE_GIDS=0 \
             RELEASE_ENV_FILE="$root/releases/sha-abcdef0/blue.env" \
             /bin/bash /repo/deploy/bin/preflight.sh sha-abcdef0 blue 2>&1
         )"
@@ -194,16 +203,50 @@ def _smoke_harness() -> str:
         calls=/tmp/calls
         mkdir -p "$stub"
         : >"$calls"
+        cat >/tmp/app.env <<'EOF'
+        APP_ENV=production
+        MILVUS_URI=http://standalone:19530
+        MILVUS_DB_NAME=wiki
+        MILVUS_COLLECTION_NAME=collection
+        MINIO_ENDPOINT=minio:9000
+        MINIO_ACCESS_KEY=x
+        MINIO_SECRET_KEY=x
+        MINIO_BUCKET=assets
+        MEDIA_PUBLIC_BASE_URL=/media
+        MYSQL_HOST=mysql
+        MYSQL_PORT=3306
+        MYSQL_DATABASE=wiki
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        DEEPSEEK_API_KEY=x
+        SILICONFLOW_API_KEY=x
+        HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
+        EOF
         cat >"$stub/curl" <<'EOF'
         #!/usr/bin/env bash
         set -Eeuo pipefail
         output=/dev/stdout
+        headers=
+        write_out=
+        location=false
         url=
         while (($#)); do
             case "$1" in
                 -o|--output)
                     output="$2"
                     shift 2
+                    ;;
+                --dump-header)
+                    headers="$2"
+                    shift 2
+                    ;;
+                --write-out)
+                    write_out="$2"
+                    shift 2
+                    ;;
+                --location)
+                    location=true
+                    shift
                     ;;
                 http://*|https://*)
                     url="$1"
@@ -214,12 +257,16 @@ def _smoke_harness() -> str:
                     ;;
             esac
         done
+        [[ "$location" == "true" ]] || exit 88
         printf '%s\\n' "$url" >>/tmp/calls
+        content_type=application/json
         case "$url" in
             http://127.0.0.1:18080/)
-                printf '<!doctype html><div id="root"></div><script src="/assets/app.js"></script>' >"$output"
+                content_type=text/html
+                printf '<!doctype html><div id="root"></div><script src="/assets/app-ABCDEF12.js"></script>' >"$output"
                 ;;
-            http://127.0.0.1:18080/assets/app.js)
+            http://127.0.0.1:18080/assets/app-ABCDEF12.js)
+                content_type=application/javascript
                 printf 'console.log("formal build");' >"$output"
                 ;;
             http://127.0.0.1:18080/health)
@@ -241,6 +288,7 @@ def _smoke_harness() -> str:
                 printf 'event: sources\\ndata: {"sources":[]}\\n\\nevent: done\\ndata: {"answer":"ok"}\\n\\n' >"$output"
                 ;;
             http://127.0.0.1/media/reverse1999-assets/fixture.webp)
+                content_type=image/webp
                 printf 'fixture-media' >"$output"
                 ;;
             *)
@@ -248,12 +296,14 @@ def _smoke_harness() -> str:
                 exit 22
                 ;;
         esac
+        [[ -z "$headers" ]] || printf 'HTTP/1.1 200 OK\\r\\nContent-Type: %s\\r\\n\\r\\n' "$content_type" >"$headers"
+        [[ -z "$write_out" ]] || printf '200\\n%s\\n' "$content_type"
         EOF
         chmod +x "$stub/curl"
         PATH="$stub:$PATH" \
             SMOKE_RAG_QUESTION='fixture question' \
             /bin/bash /repo/deploy/bin/smoke-test.sh \
-            http://127.0.0.1:18080 http://127.0.0.1
+            http://127.0.0.1:18080 http://127.0.0.1 /tmp/app.env
         printf '%s\\n' '__CALLS__'
         sed -n '1,200p' "$calls"
     """
@@ -274,8 +324,11 @@ def _deploy_failure_harness() -> str:
             printf '1999wiki-infra\\n'
             exit 0
         fi
+        if [[ " $* " == *" up -d --no-build --pull never backend frontend "* ]]; then
+            exit 12
+        fi
         if [[ " $* " == *" ps --format json backend frontend "* ]]; then
-            printf '%s\\n' '[{"Service":"backend","State":"running","Health":"healthy"},{"Service":"frontend","State":"running","Health":"healthy"}]'
+            printf '%s\\n' '[{"Service":"backend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"},{"Service":"frontend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"}]'
             exit 0
         fi
         if [[ " $* " == *" ps --format json "* ]]; then
@@ -330,6 +383,8 @@ def _deploy_failure_harness() -> str:
             APP_ENV_FILE="$root/protected/app.env" \
             INFRA_ENV_FILE="$root/protected/infra.env" \
             CADDY_ENV_FILE="$root/protected/caddy.env" \
+            CADDY_SERVICE_UID=0 \
+            CADDY_SERVICE_GIDS=0 \
             RELEASE_ENV_FILE="$root/releases/sha-abcdef0/blue.env" \
             HEALTH_ATTEMPTS=1 \
             HEALTH_INTERVAL_SECONDS=0 \
@@ -350,28 +405,18 @@ def _switch_restore_harness() -> str:
         root=/tmp/1999wiki
         stub=/tmp/stub
         calls=/tmp/calls
-        mkdir -p "$root/protected" "$root/releases/sha-abcdef0" \
-            "$root/deploy-state" "$root/caddy" "$stub"
+        mkdir -p "$root/protected" "$root/deploy-state" "$root/caddy" "$stub"
+        chmod 700 "$root/deploy-state"
         : >"$calls"
-        cat >"$root/Caddyfile" <<'EOF'
-        :80 {
-            import /etc/caddy/active-upstream.caddy
-        }
-        EOF
         printf 'reverse_proxy 127.0.0.1:18080\\n' >"$root/caddy/active.caddy"
+        printf 'reverse_proxy 127.0.0.1:18180\\n' >"$root/candidate.caddy"
+        chown 0:1234 "$root/caddy/active.caddy"
+        chmod 640 "$root/caddy/active.caddy"
         cat >"$root/protected/caddy.env" <<'EOF'
         SITE_ADDRESS=:80
         MINIO_PROXY_UPSTREAM=127.0.0.1:19000
         EOF
-        cat >"$root/protected/app.env" <<'EOF'
-        APP_ENV=production
-        EOF
-        cat >"$root/releases/sha-abcdef0/green.env" <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
-        BACKEND_PORT=18100
-        FRONTEND_PORT=18180
-        EOF
+        chmod 600 "$root/protected/caddy.env"
         cat >"$stub/caddy" <<'EOF'
         #!/usr/bin/env bash
         set -Eeuo pipefail
@@ -388,36 +433,38 @@ def _switch_restore_harness() -> str:
         fi
         exit 0
         EOF
-        cat >"$stub/curl" <<'EOF'
-        #!/usr/bin/env bash
-        exit 99
-        EOF
-        cat >"$stub/docker" <<'EOF'
-        #!/usr/bin/env bash
-        printf 'docker %s\\n' "$*" >>/tmp/calls
-        exit 0
-        EOF
-        chmod +x "$stub/caddy" "$stub/curl" "$stub/docker"
+        chmod +x "$stub/caddy"
         set +e
         output="$(
             PATH="$stub:$PATH" \
             DEPLOY_ROOT="$root" \
             STATE_DIR="$root/deploy-state" \
-            RELEASES_DIR="$root/releases" \
-            APP_COMPOSE_FILE=/repo/deploy/compose.app.yml \
-            APP_ENV_FILE="$root/protected/app.env" \
             CADDY_CONFIG="$root/Caddyfile" \
             CADDY_ENV_FILE="$root/protected/caddy.env" \
-            CADDY_IMPORT_PATH=/etc/caddy/active-upstream.caddy \
             ACTIVE_FRAGMENT="$root/caddy/active.caddy" \
-            RELEASE_ENV_FILE="$root/releases/sha-abcdef0/green.env" \
-            /bin/bash /repo/deploy/bin/switch.sh sha-abcdef0 green 18180 2>&1
+            CADDY_SERVICE_UID=65534 \
+            CADDY_SERVICE_GIDS=1234 \
+            /bin/bash -c '
+                SCRIPT_DIR=/repo/deploy/bin
+                OPS_CONTEXT=test-transaction
+                source /repo/deploy/bin/ops-common.sh
+                ops_acquire_lock
+                ops_begin_transaction switch
+                set +e
+                ops_install_fragment /tmp/1999wiki/candidate.caddy
+                ops_caddy_reload
+                status=$?
+                set -e
+                [[ "$status" -ne 0 ]]
+                ops_reconcile_journal
+            ' 2>&1
         )"
         status=$?
         set -e
         printf '%s\\n__STATUS=%s\\n' "$output" "$status"
         printf '%s\\n' '__FRAGMENT__'
         sed -n '1,20p' "$root/caddy/active.caddy"
+        stat -c '__FRAGMENT_META__=%u:%g:%a' "$root/caddy/active.caddy"
         printf '%s\\n' '__CALLS__'
         sed -n '1,200p' "$calls"
         if [[ -e "$root/deploy-state/active.env" ]]; then
@@ -426,26 +473,88 @@ def _switch_restore_harness() -> str:
     """
 
 
-def _cleanup_harness(confirmation: str) -> str:
+def _cleanup_harness(
+    confirmation: str,
+    customize: str = "",
+    release: str = "sha-abcdef0",
+    slot: str = "green",
+) -> str:
     return f"""\
         set -Eeuo pipefail
         root=/tmp/1999wiki
         stub=/tmp/stub
         calls=/tmp/calls
         mkdir -p "$root/protected" "$root/releases/sha-abcdef0" \
-            "$root/deploy-state" "$stub"
+            "$root/releases/sha-1234567" "$root/deploy-state" "$stub"
+        chmod 700 "$root/deploy-state"
         : >"$calls"
-        printf 'APP_ENV=production\\n' >"$root/protected/app.env"
+        cat >"$root/protected/app.env" <<'EOF'
+        APP_ENV=production
+        MILVUS_URI=http://standalone:19530
+        MILVUS_DB_NAME=wiki
+        MILVUS_COLLECTION_NAME=collection
+        MINIO_ENDPOINT=minio:9000
+        MINIO_ACCESS_KEY=x
+        MINIO_SECRET_KEY=x
+        MINIO_BUCKET=assets
+        MEDIA_PUBLIC_BASE_URL=/media
+        MYSQL_HOST=mysql
+        MYSQL_PORT=3306
+        MYSQL_DATABASE=wiki
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        DEEPSEEK_API_KEY=x
+        SILICONFLOW_API_KEY=x
+        HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
+        EOF
         cat >"$root/releases/sha-abcdef0/green.env" <<'EOF'
         BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
         FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
         BACKEND_PORT=18100
         FRONTEND_PORT=18180
         EOF
+        cat >"$root/releases/sha-1234567/blue.env" <<'EOF'
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        BACKEND_PORT=18000
+        FRONTEND_PORT=18080
+        EOF
+        chmod 600 "$root/protected/app.env" \
+            "$root/releases/sha-abcdef0/green.env" \
+            "$root/releases/sha-1234567/blue.env"
+        python3 /repo/deploy/bin/ops_helper.py snapshot \
+            "$root/deploy-state" sha-abcdef0 green \
+            "$root/releases/sha-abcdef0/green.env" "$root/protected/app.env" /repo \
+            >/dev/null
+        python3 /repo/deploy/bin/ops_helper.py snapshot \
+            "$root/deploy-state" sha-1234567 blue \
+            "$root/releases/sha-1234567/blue.env" "$root/protected/app.env" /repo \
+            >/dev/null
+        printf 'reverse_proxy 127.0.0.1:18080\\n' >"$root/active.caddy"
         cat >"$root/deploy-state/active.env" <<'EOF'
+        STATE_VERSION=2
+        GENERATION=gen-0123456789abcdef01234567
         ACTIVE_SLOT=blue
         ACTIVE_RELEASE=sha-1234567
+        ACTIVE_PROJECT=1999wiki-blue
+        ACTIVE_FRONTEND_PORT=18080
+        ACTIVE_RELEASE_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-1234567/blue/release.env
+        ACTIVE_APP_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-1234567/blue/app.env
+        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
+        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        HAS_PREVIOUS=0
+        PREVIOUS_SLOT=
+        PREVIOUS_RELEASE=
+        PREVIOUS_PROJECT=
+        PREVIOUS_FRONTEND_PORT=
+        PREVIOUS_RELEASE_SNAPSHOT=
+        PREVIOUS_APP_SNAPSHOT=
+        PREVIOUS_BACKEND_IMAGE=
+        PREVIOUS_FRONTEND_IMAGE=
+        PREVIOUS_FRAGMENT_BACKUP=
         EOF
+        chmod 600 "$root/deploy-state/active.env"
+        {textwrap.dedent(customize)}
         cat >"$stub/docker" <<'EOF'
         #!/usr/bin/env bash
         set -Eeuo pipefail
@@ -461,9 +570,10 @@ def _cleanup_harness(confirmation: str) -> str:
             STATE_DIR="$root/deploy-state" \
             APP_COMPOSE_FILE=/repo/deploy/compose.app.yml \
             APP_ENV_FILE="$root/protected/app.env" \
+            ACTIVE_FRAGMENT="$root/active.caddy" \
             RELEASE_ENV_FILE="$root/releases/sha-abcdef0/green.env" \
             /bin/bash /repo/deploy/bin/cleanup.sh \
-            sha-abcdef0 green {confirmation!r} 2>&1
+            {release} {slot} {confirmation!r} 2>&1
         )"
         status=$?
         set -e
@@ -473,9 +583,384 @@ def _cleanup_harness(confirmation: str) -> str:
     """
 
 
+def _journal_recovery_harness(phase: str) -> str:
+    assert phase in {"before-state-commit", "after-state-commit"}
+    if phase == "before-state-commit":
+        commit_block = (
+            "OPS_TEST_CRASH_PHASE=before-state-commit; "
+            "export OPS_TEST_CRASH_PHASE; "
+            "ops_test_crash_before_state_commit"
+        )
+    else:
+        commit_block = (
+            'sed "s/GENERATION_PLACEHOLDER/$TRANSACTION_GENERATION/" '
+            "/tmp/ops/state-template.env >/tmp/ops/state/new-state.env; "
+            "chmod 600 /tmp/ops/state/new-state.env; "
+            "OPS_TEST_CRASH_PHASE=after-state-commit; "
+            "export OPS_TEST_CRASH_PHASE; "
+            "ops_commit_transaction_state /tmp/ops/state/new-state.env"
+        )
+    return f"""\
+        set -Eeuo pipefail
+        root=/tmp/ops
+        stub=/tmp/stub
+        calls=/tmp/calls
+        mkdir -p "$root/state" "$root/source" "$stub"
+        chmod 700 "$root/state"
+        : >"$calls"
+        cat >"$root/source/release.env" <<'EOF'
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        BACKEND_PORT=18100
+        FRONTEND_PORT=18180
+        EOF
+        cat >"$root/source/app.env" <<'EOF'
+        APP_ENV=production
+        MILVUS_URI=http://standalone:19530
+        MILVUS_DB_NAME=wiki
+        MILVUS_COLLECTION_NAME=collection
+        MINIO_ENDPOINT=minio:9000
+        MINIO_ACCESS_KEY=x
+        MINIO_SECRET_KEY=x
+        MINIO_BUCKET=assets
+        MEDIA_PUBLIC_BASE_URL=/media
+        MYSQL_HOST=mysql
+        MYSQL_PORT=3306
+        MYSQL_DATABASE=wiki
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        DEEPSEEK_API_KEY=x
+        SILICONFLOW_API_KEY=x
+        HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
+        EOF
+        chmod 600 "$root/source/release.env" "$root/source/app.env"
+        python3 /repo/deploy/bin/ops_helper.py snapshot \
+            "$root/state" sha-abcdef0 green \
+            "$root/source/release.env" "$root/source/app.env" /repo >/dev/null
+        cat >"$root/state-template.env" <<'EOF'
+        STATE_VERSION=2
+        GENERATION=GENERATION_PLACEHOLDER
+        ACTIVE_SLOT=green
+        ACTIVE_RELEASE=sha-abcdef0
+        ACTIVE_PROJECT=1999wiki-green
+        ACTIVE_FRONTEND_PORT=18180
+        ACTIVE_RELEASE_SNAPSHOT=/tmp/ops/state/snapshots/sha-abcdef0/green/release.env
+        ACTIVE_APP_SNAPSHOT=/tmp/ops/state/snapshots/sha-abcdef0/green/app.env
+        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
+        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        HAS_PREVIOUS=0
+        PREVIOUS_SLOT=
+        PREVIOUS_RELEASE=
+        PREVIOUS_PROJECT=
+        PREVIOUS_FRONTEND_PORT=
+        PREVIOUS_RELEASE_SNAPSHOT=
+        PREVIOUS_APP_SNAPSHOT=
+        PREVIOUS_BACKEND_IMAGE=
+        PREVIOUS_FRONTEND_IMAGE=
+        PREVIOUS_FRAGMENT_BACKUP=
+        EOF
+        printf 'reverse_proxy 127.0.0.1:18080\\n' >"$root/active.caddy"
+        printf 'reverse_proxy 127.0.0.1:18180\\n' >"$root/candidate.caddy"
+        chmod 640 "$root/active.caddy"
+        cat >"$root/caddy.env" <<'EOF'
+        SITE_ADDRESS=:80
+        MINIO_PROXY_UPSTREAM=127.0.0.1:19000
+        EOF
+        chmod 600 "$root/caddy.env"
+        cat >"$stub/caddy" <<'EOF'
+        #!/usr/bin/env bash
+        printf 'caddy %s\\n' "$*" >>/tmp/calls
+        exit 0
+        EOF
+        chmod +x "$stub/caddy"
+        common_env=(
+            PATH="$stub:$PATH"
+            DEPLOY_STATE_ROOT="$root/state"
+            ACTIVE_FRAGMENT="$root/active.caddy"
+            CADDY_CONFIG="$root/Caddyfile"
+            CADDY_ENV_FILE="$root/caddy.env"
+            CADDY_SERVICE_UID=0
+            CADDY_SERVICE_GIDS=0
+        )
+        set +e
+        env "${{common_env[@]}}" /bin/bash -c '
+            SCRIPT_DIR=/repo/deploy/bin
+            OPS_CONTEXT=crash-producer
+            source /repo/deploy/bin/ops-common.sh
+            ops_acquire_lock
+            ops_begin_transaction switch
+            ops_install_transaction_traffic /tmp/ops/candidate.caddy
+            {commit_block}
+        '
+        producer_status=$?
+        set -e
+        [[ "$producer_status" -ne 0 ]]
+        [[ -e "$root/state/transaction.env" ]]
+        env "${{common_env[@]}}" /bin/bash -c '
+            SCRIPT_DIR=/repo/deploy/bin
+            OPS_CONTEXT=crash-reconciler
+            source /repo/deploy/bin/ops-common.sh
+            ops_acquire_lock
+            ops_reconcile_journal
+        '
+        printf '__FRAGMENT__\\n'
+        sed -n '1,10p' "$root/active.caddy"
+        printf '__STATE__\\n'
+        if [[ -e "$root/state/active.env" ]]; then
+            sed -n '1,30p' "$root/state/active.env"
+        else
+            printf 'absent\\n'
+        fi
+        printf '__JOURNAL=%s\\n' "$([[ -e "$root/state/transaction.env" ]] && printf present || printf absent)"
+        printf '__TX_BACKUPS=%s\\n' "$(find "$root/state" -maxdepth 1 -name 'tx-*-old-fragment.caddy' | wc -l)"
+        printf '__CALLS__\\n'
+        sed -n '1,40p' "$calls"
+    """
+
+
+def _rollback_harness(reload_failure: bool) -> str:
+    reload_failure_flag = "1" if reload_failure else "0"
+    return f"""\
+        set -Eeuo pipefail
+        root=/tmp/rollback
+        stub=/tmp/stub
+        calls=/tmp/calls
+        mkdir -p "$root/state" "$root/source/blue" "$root/source/green" \
+            "$root/bin" "$stub"
+        chmod 700 "$root/state"
+        : >"$calls"
+        cp /repo/deploy/bin/*.sh /repo/deploy/bin/ops_helper.py "$root/bin/"
+        cat >"$root/bin/smoke-test.sh" <<'EOF'
+        #!/usr/bin/env bash
+        printf 'smoke %s\\n' "$*" >>/tmp/calls
+        exit 0
+        EOF
+        chmod +x "$root/bin/"*.sh "$root/bin/ops_helper.py"
+        cat >"$root/source/app.env" <<'EOF'
+        APP_ENV=production
+        MILVUS_URI=http://standalone:19530
+        MILVUS_DB_NAME=wiki
+        MILVUS_COLLECTION_NAME=collection
+        MINIO_ENDPOINT=minio:9000
+        MINIO_ACCESS_KEY=x
+        MINIO_SECRET_KEY=x
+        MINIO_BUCKET=assets
+        MEDIA_PUBLIC_BASE_URL=/media
+        MYSQL_HOST=mysql
+        MYSQL_PORT=3306
+        MYSQL_DATABASE=wiki
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        DEEPSEEK_API_KEY=x
+        SILICONFLOW_API_KEY=x
+        HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
+        EOF
+        cat >"$root/source/blue/release.env" <<'EOF'
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        BACKEND_PORT=18000
+        FRONTEND_PORT=18080
+        EOF
+        cat >"$root/source/green/release.env" <<'EOF'
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        BACKEND_PORT=18100
+        FRONTEND_PORT=18180
+        EOF
+        chmod 600 "$root/source/app.env" \
+            "$root/source/blue/release.env" "$root/source/green/release.env"
+        python3 "$root/bin/ops_helper.py" snapshot \
+            "$root/state" sha-1234567 blue \
+            "$root/source/blue/release.env" "$root/source/app.env" /repo >/dev/null
+        python3 "$root/bin/ops_helper.py" snapshot \
+            "$root/state" sha-abcdef0 green \
+            "$root/source/green/release.env" "$root/source/app.env" /repo >/dev/null
+        printf 'reverse_proxy 127.0.0.1:18080\\n' >"$root/active.caddy"
+        printf 'reverse_proxy 127.0.0.1:18180\\n' >"$root/state/previous.caddy"
+        chmod 640 "$root/active.caddy" "$root/state/previous.caddy"
+        cat >"$root/state/active.env" <<'EOF'
+        STATE_VERSION=2
+        GENERATION=gen-0123456789abcdef01234567
+        ACTIVE_SLOT=blue
+        ACTIVE_RELEASE=sha-1234567
+        ACTIVE_PROJECT=1999wiki-blue
+        ACTIVE_FRONTEND_PORT=18080
+        ACTIVE_RELEASE_SNAPSHOT=/tmp/rollback/state/snapshots/sha-1234567/blue/release.env
+        ACTIVE_APP_SNAPSHOT=/tmp/rollback/state/snapshots/sha-1234567/blue/app.env
+        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
+        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        HAS_PREVIOUS=1
+        PREVIOUS_SLOT=green
+        PREVIOUS_RELEASE=sha-abcdef0
+        PREVIOUS_PROJECT=1999wiki-green
+        PREVIOUS_FRONTEND_PORT=18180
+        PREVIOUS_RELEASE_SNAPSHOT=/tmp/rollback/state/snapshots/sha-abcdef0/green/release.env
+        PREVIOUS_APP_SNAPSHOT=/tmp/rollback/state/snapshots/sha-abcdef0/green/app.env
+        PREVIOUS_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
+        PREVIOUS_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        PREVIOUS_FRAGMENT_BACKUP=/tmp/rollback/state/previous.caddy
+        EOF
+        chmod 600 "$root/state/active.env"
+        cat >"$root/Caddyfile" <<EOF
+        :80 {{
+            import $root/active.caddy
+        }}
+        EOF
+        cat >"$root/caddy.env" <<'EOF'
+        SITE_ADDRESS=:80
+        MINIO_PROXY_UPSTREAM=127.0.0.1:19000
+        EOF
+        chmod 600 "$root/caddy.env"
+        cat >"$stub/docker" <<'EOF'
+        #!/usr/bin/env bash
+        set -Eeuo pipefail
+        printf 'docker %s\\n' "$*" >>/tmp/calls
+        if [[ " $* " == *" ps --format json backend frontend "* ]]; then
+            printf '%s\\n' '[{{"Service":"backend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"}},{{"Service":"frontend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"}}]'
+        fi
+        exit 0
+        EOF
+        cat >"$stub/curl" <<'EOF'
+        #!/usr/bin/env bash
+        set -Eeuo pipefail
+        output=/dev/stdout
+        while (($#)); do
+            case "$1" in
+                -o|--output) output="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        printf '%s' '{{"status":"ok","vectorstore_loaded":true,"provenance_status":"pass","llm_ready":true}}' >"$output"
+        exit 0
+        EOF
+        cat >"$stub/caddy" <<'EOF'
+        #!/usr/bin/env bash
+        set -Eeuo pipefail
+        printf 'caddy %s\\n' "$*" >>/tmp/calls
+        if [[ "$1" == "reload" ]]; then
+            count=0
+            [[ ! -f /tmp/reload-count ]] || count="$(</tmp/reload-count)"
+            count=$((count + 1))
+            printf '%s\\n' "$count" >/tmp/reload-count
+            if [[ "{reload_failure_flag}" == "1" && "$count" == "1" ]]; then
+                exit 17
+            fi
+        fi
+        exit 0
+        EOF
+        chmod +x "$stub/docker" "$stub/curl" "$stub/caddy"
+        set +e
+        output="$(
+            PATH="$stub:$PATH" \
+            DEPLOY_STATE_ROOT="$root/state" \
+            ACTIVE_FRAGMENT="$root/active.caddy" \
+            CADDY_IMPORT_PATH="$root/active.caddy" \
+            CADDY_CONFIG="$root/Caddyfile" \
+            CADDY_ENV_FILE="$root/caddy.env" \
+            CADDY_SERVICE_UID=0 \
+            CADDY_SERVICE_GIDS=0 \
+            APP_COMPOSE_FILE=/repo/deploy/compose.app.yml \
+            PUBLIC_BASE_URL=http://127.0.0.1 \
+            HEALTH_ATTEMPTS=1 \
+            HEALTH_INTERVAL_SECONDS=0 \
+            VERIFY_ATTEMPTS=1 \
+            VERIFY_INTERVAL_SECONDS=0 \
+            SMOKE_RAG_QUESTION=fixture \
+            /bin/bash "$root/bin/rollback.sh" 2>&1
+        )"
+        status=$?
+        set -e
+        printf '%s\\n__STATUS=%s\\n' "$output" "$status"
+        printf '__FRAGMENT__\\n'
+        sed -n '1,10p' "$root/active.caddy"
+        printf '__STATE__\\n'
+        sed -n '1,30p' "$root/state/active.env"
+        printf '__JOURNAL=%s\\n' "$([[ -e "$root/state/transaction.env" ]] && printf present || printf absent)"
+        printf '__CALLS__\\n'
+        sed -n '1,100p' "$calls"
+    """
+
+
 @pytest.mark.parametrize("path", REQUIRED_FILES)
 def test_required_blue_green_controls_exist(path: Path) -> None:
     assert path.is_file(), f"missing {path.relative_to(ROOT)}"
+
+
+def test_mutating_operations_share_lock_snapshot_and_journal_controls() -> None:
+    common = _read(OPS_COMMON)
+    helper = _read(OPS_HELPER)
+    for contract in (
+        "DEPLOY_STATE_ROOT",
+        "operations.lock",
+        "flock -n",
+        "OPS_LOCK_HELD",
+        "ops_reconcile_journal",
+        "transaction.env",
+        "prepared",
+        "traffic_installed",
+        "state_committed",
+        "ops_snapshot_release",
+        "ops_install_fragment",
+    ):
+        assert contract in common
+    for contract in (
+        "strict_env",
+        "atomic_replace",
+        "fsync",
+        "validate_state",
+        "validate_journal",
+        "fragment_metadata",
+        "snapshot",
+    ):
+        assert contract in helper
+
+    for script_name in ("deploy.sh", "switch.sh", "rollback.sh", "cleanup.sh"):
+        text = _read(BIN / script_name)
+        assert 'source "$SCRIPT_DIR/ops-common.sh"' in text
+        assert "ops_acquire_lock" in text
+        assert "ops_reconcile_journal" in text
+
+
+def test_deploy_owns_partial_candidate_cleanup_before_compose_up() -> None:
+    text = _read(BIN / "deploy.sh")
+    responsibility = text.index("candidate_cleanup_required=true")
+    compose_up = text.index(" up ")
+    assert responsibility < compose_up
+    assert "ops_acquire_lock" in text
+    assert "ops_snapshot_release" in text
+    assert '"$SCRIPT_DIR/switch.sh" "$SLOT" "$RELEASE_SNAPSHOT"' in text
+
+
+def test_switch_derives_identity_from_snapshot_and_never_accepts_a_port() -> None:
+    text = _read(BIN / "switch.sh")
+    assert "usage:" in text
+    assert "SLOT RELEASE_SNAPSHOT" in text
+    assert "FRONTEND_PORT=\"$3\"" not in text
+    assert "ops_load_snapshot" in text
+    assert "ops_verify_project_identity" in text
+    assert "ops_begin_transaction" in text
+    common = _read(OPS_COMMON)
+    assert "ops_mark_transaction_phase traffic_installed" in common
+    assert "ops_mark_transaction_phase state_committed" in common
+
+
+def test_cleanup_requires_strict_reconciled_state_and_protects_previous() -> None:
+    text = _read(BIN / "cleanup.sh")
+    assert "ops_load_active_state" in text
+    assert "ops_validate_active_consistency" in text
+    assert "PREVIOUS_SLOT" in text
+    assert "PREVIOUS_RELEASE" in text
+    assert "recorded rollback target" in text
+
+
+def test_smoke_hardens_assets_redirects_media_base_and_terminal_sse() -> None:
+    text = _read(BIN / "smoke-test.sh")
+    assert "Content-Type" in text
+    assert "--location" in text
+    assert "MEDIA_PUBLIC_BASE_URL" in text
+    assert "APP_ENV_FILE" in text
+    assert "terminal event is not done" in text
+    assert "text/html" in text
 
 
 @pytest.mark.parametrize("script_name", SCRIPTS)
@@ -513,6 +998,7 @@ def test_host_caddy_strips_media_prefix_before_minio_and_imports_active_app() ->
 
 def test_preflight_contains_fail_closed_security_and_readiness_gates() -> None:
     text = _read(BIN / "preflight.sh")
+    contracts_text = text + _read(OPS_HELPER)
     for command in ("docker", "caddy", "curl", "python3"):
         assert command in text
     for contract in (
@@ -531,7 +1017,7 @@ def test_preflight_contains_fail_closed_security_and_readiness_gates() -> None:
         "sha-[0-9a-f]{7}",
         "rag-artifacts",
     ):
-        assert contract in text
+        assert contract in contracts_text
     assert "mkdir" not in text
     assert " up " not in text
     assert "create" not in text.lower()
@@ -575,14 +1061,14 @@ def test_preflight_success_is_read_only_and_does_not_disclose_credentials(
         ),
         (
             """\
-            sed -i 's/^MINIO_SECRET_KEY=.*/MINIO_SECRET_KEY=""/' \
+                sed -i 's/^MINIO_SECRET_KEY=.*/MINIO_SECRET_KEY=/' \
                 "$root/protected/app.env"
             """,
             "MINIO_SECRET_KEY",
         ),
         (
             'rm -f "$root/rag-artifacts/active_build.v1.json"',
-            "active RAG pointer",
+            "active_build.v1.json",
         ),
     ],
 )
@@ -635,9 +1121,9 @@ def test_deploy_stops_failed_candidate_without_switching_or_leaking_secrets(
         "docker pull ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"
     )
     compose_up = calls.index(" up -d --no-build --pull never backend frontend")
-    smoke_root = calls.index("curl http://127.0.0.1:18080/")
     candidate_stop = calls.index(" stop backend frontend")
-    assert backend_pull < frontend_pull < compose_up < smoke_root < candidate_stop
+    assert backend_pull < frontend_pull < compose_up < candidate_stop
+    assert "curl http://127.0.0.1:18080/" not in calls
     assert "caddy reload" not in calls
     for sentinel in (
         "minio-secret-sentinel",
@@ -650,27 +1136,31 @@ def test_deploy_stops_failed_candidate_without_switching_or_leaking_secrets(
 
 def test_switch_validates_complete_temp_config_before_atomic_replace() -> None:
     text = _read(BIN / "switch.sh")
+    common = _read(OPS_COMMON)
     temp_config = text.index("TEMP_CONFIG")
     validate = text.index('caddy validate --config "$TEMP_CONFIG"')
-    save_previous = text.index('cp -p "$ACTIVE_FRAGMENT" "$PRIOR_FRAGMENT_TMP"')
-    replace = text.index('mv -f "$TEMP_FRAGMENT" "$ACTIVE_FRAGMENT"')
-    reload_caddy = text.index('caddy reload --config "$CADDY_CONFIG"', replace)
-    public_verify = text.index("verify_public_health ||", reload_caddy)
-    record_state = text.index('mv -f "$STATE_TMP" "$ACTIVE_STATE_FILE"')
-    stop_old = text.index("stop_previous_slot", record_state)
-    assert temp_config < validate < save_previous < replace < reload_caddy
-    assert reload_caddy < public_verify < record_state < stop_old
-    assert "restore_previous_fragment" in text
+    begin = text.index("ops_begin_transaction")
+    replace = text.index("ops_install_transaction_traffic")
+    public_verify = text.index("ops_verify_public_health", replace)
+    record_state = text.index("ops_commit_transaction_state", public_verify)
+    stop_old = text.index('ops_compose "$OLD_PROJECT" stop', record_state)
+    assert temp_config < validate < begin < replace
+    assert replace < public_verify < record_state < stop_old
+    assert "ops_reconcile_journal" in common
+    assert "atomic-copy" in common
 
 
-def test_switch_reload_failure_atomically_restores_fragment_and_omits_state(
+def test_transaction_reload_failure_atomically_restores_fragment_and_omits_state(
     tmp_path: Path,
 ) -> None:
     result = _run_linux_harness(tmp_path, _switch_restore_harness())
     assert result.returncode == 0, result.stderr
-    assert "__STATUS=0" not in result.stdout
-    fragment = result.stdout.partition("__FRAGMENT__")[2].partition("__CALLS__")[0]
+    assert "__STATUS=0" in result.stdout
+    fragment = result.stdout.partition("__FRAGMENT__")[2].partition(
+        "__FRAGMENT_META__"
+    )[0]
     assert fragment.strip() == "reverse_proxy 127.0.0.1:18080"
+    assert "__FRAGMENT_META__=0:1234:640" in result.stdout
     calls = result.stdout.partition("__CALLS__")[2]
     assert calls.count("caddy reload") == 2
     assert "__STATE_WAS_WRITTEN__" not in result.stdout
@@ -678,14 +1168,14 @@ def test_switch_reload_failure_atomically_restores_fragment_and_omits_state(
 
 def test_rollback_only_restores_the_recorded_application_and_fragment() -> None:
     text = _read(BIN / "rollback.sh")
+    common = _read(OPS_COMMON)
     assert "compose.infra" not in text
     assert "1999wiki-infra" not in text
-    assert '-p "$PREVIOUS_PROJECT"' in text
-    assert "previous_compose start backend frontend" in text
-    assert 'mv -f "$RESTORE_TMP" "$ACTIVE_FRAGMENT"' in text
+    assert 'ops_compose "$ROLLBACK_PROJECT" start backend frontend' in text
+    assert "ops_install_transaction_traffic" in text
     assert 'caddy validate --config "$TEMP_CONFIG"' in text
-    assert 'caddy reload --config "$CADDY_CONFIG"' in text
-    assert 'verify_health_url "$PUBLIC_BASE_URL"' in text
+    assert 'caddy reload --config "$CADDY_CONFIG"' in common
+    assert "ops_verify_public_health" in text
 
 
 def test_smoke_test_requires_live_rag_fixture_and_covers_candidate_and_public_bases() -> None:
@@ -700,7 +1190,7 @@ def test_smoke_test_requires_live_rag_fixture_and_covers_candidate_and_public_ba
         "/api/ask",
         "/api/ask/stream",
         "/media/",
-        "event: done",
+        'events[-1] != "done"',
     ):
         assert contract in text
     assert "skip" not in text.lower()
@@ -721,10 +1211,50 @@ def test_smoke_test_uses_candidate_for_app_checks_and_public_host_for_media(
     assert "http://127.0.0.1/media/health" not in calls
 
 
+@pytest.mark.parametrize(
+    ("mutation", "diagnostic"),
+    [
+        (
+            lambda body: body.replace(
+                "content_type=application/javascript",
+                "content_type=text/html",
+            ),
+            "html fallback",
+        ),
+        (
+            lambda body: body.replace(
+                "event: done\\ndata: {\"answer\":\"ok\"}\\n\\n",
+                (
+                    "event: done\\ndata: {\"answer\":\"ok\"}\\n\\n"
+                    "event: sources\\ndata: {}\\n\\n"
+                ),
+            ),
+            "terminal event is not done",
+        ),
+        (
+            lambda body: body.replace(
+                '{"answer":"ok","media":[{"url":"/media/reverse1999-assets/fixture.webp"}]}',
+                '{"answer":"ok","media":[{"url":"https://unrelated.invalid/fixture.webp"}]}',
+            ),
+            "MEDIA_PUBLIC_BASE_URL",
+        ),
+    ],
+)
+def test_smoke_fails_closed_on_asset_sse_and_media_projection_errors(
+    tmp_path: Path,
+    mutation,
+    diagnostic: str,
+) -> None:
+    result = _run_linux_harness(tmp_path, mutation(_smoke_harness()))
+    assert result.returncode != 0
+    assert diagnostic.lower() in (result.stdout + result.stderr).lower()
+
+
 def test_cleanup_is_exactly_scoped_and_requires_release_confirmation() -> None:
     text = _read(BIN / "cleanup.sh")
-    assert 'CONFIRMATION="remove-${SLOT}-${RELEASE}"' in text
-    assert 'docker compose -p "$PROJECT"' in text
+    common = _read(OPS_COMMON)
+    assert 'CONFIRMATION="remove-${SLOT}-${REQUESTED_RELEASE}"' in text
+    assert 'docker compose \\' in common
     assert " down " in text
     assert "--volumes" not in text
     assert "1999wiki-infra" in text
@@ -758,3 +1288,244 @@ def test_cleanup_wrong_confirmation_issues_no_docker_command(tmp_path: Path) -> 
     assert result.returncode == 0, result.stderr
     assert "__STATUS=0" not in result.stdout
     assert result.stdout.partition("__CALLS__")[2].strip() == ""
+
+
+def test_strict_env_parser_rejects_placeholders_without_evaluating_them(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        printf '%s\\n' \
+            'BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0' \
+            'FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0' \
+            'BACKEND_PORT=18000' \
+            'FRONTEND_PORT=${AMBIENT_PORT}' >/tmp/release.env
+        set +e
+        AMBIENT_PORT=18080 python3 /repo/deploy/bin/ops_helper.py \
+            validate-env release /tmp/release.env --release sha-abcdef0 \
+            >/tmp/output 2>&1
+        status=$?
+        set -e
+        printf '__STATUS=%s\\n' "$status"
+        sed -n '1,20p' /tmp/output
+        """,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "__STATUS=0" not in result.stdout
+    assert "unresolved placeholder" in result.stdout
+    assert "18080" not in result.stdout
+
+
+def test_operations_lock_rejects_a_concurrent_mutator(tmp_path: Path) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        root=/tmp/state
+        mkdir "$root"
+        chmod 700 "$root"
+        DEPLOY_STATE_ROOT="$root" /bin/bash -c '
+            SCRIPT_DIR=/repo/deploy/bin
+            source /repo/deploy/bin/ops-common.sh
+            ops_acquire_lock
+            touch /tmp/lock-ready
+            sleep 2
+        ' &
+        holder=$!
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            [[ ! -e /tmp/lock-ready ]] || break
+            sleep 0.1
+        done
+        set +e
+        output="$(
+            DEPLOY_STATE_ROOT="$root" /bin/bash -c '
+                SCRIPT_DIR=/repo/deploy/bin
+                source /repo/deploy/bin/ops-common.sh
+                ops_acquire_lock
+            ' 2>&1
+        )"
+        status=$?
+        set -e
+        wait "$holder"
+        printf '%s\\n__STATUS=%s\\n' "$output" "$status"
+        """,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "__STATUS=0" not in result.stdout
+    assert "another production operation holds the global lock" in result.stdout
+
+
+def test_snapshot_freezes_identity_and_rejects_wrong_slot_or_ambient_port(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        root=/tmp/ops
+        mkdir -p "$root/state" "$root/source"
+        chmod 700 "$root/state"
+        cat >"$root/source/release.env" <<'EOF'
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        BACKEND_PORT=18000
+        FRONTEND_PORT=18080
+        EOF
+        cat >"$root/source/app.env" <<'EOF'
+        APP_ENV=production
+        MILVUS_URI=http://standalone:19530
+        MILVUS_DB_NAME=wiki
+        MILVUS_COLLECTION_NAME=collection
+        MINIO_ENDPOINT=minio:9000
+        MINIO_ACCESS_KEY=x
+        MINIO_SECRET_KEY=x
+        MINIO_BUCKET=assets
+        MEDIA_PUBLIC_BASE_URL=/media
+        MYSQL_HOST=mysql
+        MYSQL_PORT=3306
+        MYSQL_DATABASE=wiki
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        DEEPSEEK_API_KEY=x
+        SILICONFLOW_API_KEY=x
+        HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
+        EOF
+        chmod 600 "$root/source/release.env" "$root/source/app.env"
+        python3 /repo/deploy/bin/ops_helper.py snapshot \
+            "$root/state" sha-abcdef0 blue \
+            "$root/source/release.env" "$root/source/app.env" /repo \
+            >/tmp/snapshot
+        sed -i 's/FRONTEND_PORT=18080/FRONTEND_PORT=19999/' \
+            "$root/source/release.env"
+        BACKEND_PORT=29999 FRONTEND_PORT=29998 \
+            python3 /repo/deploy/bin/ops_helper.py load-snapshot \
+            "$root/state" blue \
+            "$root/state/snapshots/sha-abcdef0/blue/release.env" \
+            >/tmp/loaded
+        set +e
+        python3 /repo/deploy/bin/ops_helper.py load-snapshot \
+            "$root/state" green \
+            "$root/state/snapshots/sha-abcdef0/blue/release.env" \
+            >/tmp/wrong 2>&1
+        wrong_status=$?
+        set -e
+        printf '__LOADED__\\n'
+        sed -n '1,20p' /tmp/loaded
+        printf '__WRONG_STATUS=%s\\n' "$wrong_status"
+        sed -n '1,20p' /tmp/wrong
+        """,
+    )
+    assert result.returncode == 0, result.stderr
+    loaded = result.stdout.partition("__LOADED__")[2].partition("__WRONG_STATUS")[0]
+    assert "18000" in loaded
+    assert "18080" in loaded
+    assert "19999" not in loaded
+    assert "29998" not in loaded
+    assert "__WRONG_STATUS=0" not in result.stdout
+    assert "does not match" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("customize", "release", "slot", "diagnostic"),
+    [
+        ('rm -f "$root/deploy-state/active.env"', "sha-abcdef0", "green", "missing"),
+        (
+            'sed -i "/^ACTIVE_PROJECT=/d" "$root/deploy-state/active.env"',
+            "sha-abcdef0",
+            "green",
+            "missing or unexpected keys",
+        ),
+        (
+            'printf "reverse_proxy 127.0.0.1:18180\\n" >"$root/active.caddy"',
+            "sha-abcdef0",
+            "green",
+            "diverges",
+        ),
+        ("", "sha-1234567", "blue", "active"),
+    ],
+)
+def test_cleanup_fails_closed_on_unreconciled_or_active_targets(
+    tmp_path: Path,
+    customize: str,
+    release: str,
+    slot: str,
+    diagnostic: str,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _cleanup_harness(
+            f"remove-{slot}-{release}",
+            customize=customize,
+            release=release,
+            slot=slot,
+        ),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "__STATUS=0" not in result.stdout
+    assert diagnostic in result.stdout.lower()
+    assert result.stdout.partition("__CALLS__")[2].strip() == ""
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected_port", "state_marker"),
+    [
+        ("before-state-commit", "18080", "absent"),
+        ("after-state-commit", "18180", "ACTIVE_SLOT=green"),
+    ],
+)
+def test_journal_recovers_crashes_on_both_sides_of_state_commit(
+    tmp_path: Path,
+    phase: str,
+    expected_port: str,
+    state_marker: str,
+) -> None:
+    result = _run_linux_harness(tmp_path, _journal_recovery_harness(phase))
+    assert result.returncode == 0, result.stdout + result.stderr
+    fragment = result.stdout.partition("__FRAGMENT__")[2].partition("__STATE__")[0]
+    state = result.stdout.partition("__STATE__")[2].partition("__JOURNAL")[0]
+    assert f"127.0.0.1:{expected_port}" in fragment
+    assert state_marker in state
+    assert "__JOURNAL=absent" in result.stdout
+    assert "__TX_BACKUPS=0" in result.stdout
+    reloads = result.stdout.partition("__CALLS__")[2].count("caddy reload")
+    assert reloads == (2 if phase == "before-state-commit" else 1)
+
+
+def test_rollback_successfully_swaps_active_and_previous_state(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(tmp_path, _rollback_harness(False))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" in result.stdout
+    fragment = result.stdout.partition("__FRAGMENT__")[2].partition("__STATE__")[0]
+    state = result.stdout.partition("__STATE__")[2].partition("__JOURNAL")[0]
+    assert "127.0.0.1:18180" in fragment
+    assert "ACTIVE_SLOT=green" in state
+    assert "ACTIVE_RELEASE=sha-abcdef0" in state
+    assert "PREVIOUS_SLOT=blue" in state
+    assert "PREVIOUS_RELEASE=sha-1234567" in state
+    assert "__JOURNAL=absent" in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2]
+    assert " start backend frontend" in calls
+    assert " stop backend frontend" in calls
+    assert calls.count("caddy reload") == 1
+
+
+def test_rollback_reload_failure_restores_fragment_and_state(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(tmp_path, _rollback_harness(True))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" not in result.stdout
+    fragment = result.stdout.partition("__FRAGMENT__")[2].partition("__STATE__")[0]
+    state = result.stdout.partition("__STATE__")[2].partition("__JOURNAL")[0]
+    assert "127.0.0.1:18080" in fragment
+    assert "ACTIVE_SLOT=blue" in state
+    assert "ACTIVE_RELEASE=sha-1234567" in state
+    assert "PREVIOUS_SLOT=green" in state
+    assert "__JOURNAL=absent" in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2]
+    assert calls.count("caddy reload") == 2
+    assert " stop backend frontend" not in calls

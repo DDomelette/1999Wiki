@@ -1,27 +1,30 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+OPS_HELPER="${OPS_HELPER:-$SCRIPT_DIR/ops_helper.py}"
+
 die() {
     printf 'smoke-test: %s\n' "$*" >&2
     exit 1
 }
 
-[[ "$#" -eq 2 ]] || die "usage: ${0##*/} CANDIDATE_BASE_URL PUBLIC_BASE_URL"
+[[ "$#" -eq 3 ]] \
+    || die "usage: ${0##*/} CANDIDATE_BASE_URL PUBLIC_BASE_URL APP_ENV_FILE"
 CANDIDATE_BASE_URL="${1%/}"
 PUBLIC_BASE_URL="${2%/}"
+APP_ENV_FILE="$3"
 SMOKE_RAG_QUESTION="${SMOKE_RAG_QUESTION:-}"
 SMOKE_WIKI_PAGE_ID="${SMOKE_WIKI_PAGE_ID:-}"
-SMOKE_MEDIA_PUBLIC_BASE_URL="${SMOKE_MEDIA_PUBLIC_BASE_URL:-}"
 [[ "$CANDIDATE_BASE_URL" =~ ^http://127\.0\.0\.1:[0-9]+$ ]] \
     || die "CANDIDATE_BASE_URL must be an explicit loopback HTTP origin"
 [[ "$PUBLIC_BASE_URL" =~ ^https?://[^/]+$ ]] \
     || die "PUBLIC_BASE_URL must be an HTTP(S) origin"
 [[ -n "$SMOKE_RAG_QUESTION" ]] \
     || die "SMOKE_RAG_QUESTION is required; all RAG checks are mandatory"
-if [[ -n "$SMOKE_MEDIA_PUBLIC_BASE_URL" ]]; then
-    [[ "$SMOKE_MEDIA_PUBLIC_BASE_URL" =~ ^https://[^/]+(/.*)?$ ]] \
-        || die "SMOKE_MEDIA_PUBLIC_BASE_URL must be an HTTPS base"
-fi
+MEDIA_PUBLIC_BASE_URL="$(
+    python3 "$OPS_HELPER" emit-media-base "$APP_ENV_FILE"
+)" || die "APP_ENV_FILE is not valid"
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
@@ -32,21 +35,51 @@ trap cleanup EXIT
 fetch() {
     local url="$1"
     local output="$2"
-    local timeout="${3:-20}"
+    local headers="$3"
+    local timeout="${4:-20}"
     curl \
         --silent \
         --show-error \
         --fail \
+        --location \
         --connect-timeout 5 \
         --max-time "$timeout" \
+        --dump-header "$headers" \
         --output "$output" \
+        --write-out '%{http_code}\n%{content_type}\n' \
         "$url"
 }
 
-fetch "$CANDIDATE_BASE_URL/" "$TMP_DIR/index.html"
+assert_non_html_response() {
+    local metadata_file="$1"
+    local body_file="$2"
+    local label="$3"
+    python3 - "$metadata_file" "$body_file" "$label" <<'PY'
+import pathlib
+import sys
+
+metadata = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+if len(metadata) != 2 or not metadata[0].startswith("2"):
+    raise SystemExit(f"smoke-test: {sys.argv[3]} did not end in HTTP 2xx")
+content_type = metadata[1].lower()
+body = pathlib.Path(sys.argv[2]).read_bytes()
+prefix = body[:1024].lstrip().lower()
+if not body:
+    raise SystemExit(f"smoke-test: {sys.argv[3]} response is empty")
+if "text/html" in content_type or prefix.startswith((b"<!doctype html", b"<html")):
+    raise SystemExit(f"smoke-test: {sys.argv[3]} resolved to an HTML fallback")
+PY
+}
+
+fetch \
+    "$CANDIDATE_BASE_URL/" \
+    "$TMP_DIR/index.html" \
+    "$TMP_DIR/index.headers" \
+    >"$TMP_DIR/index.metadata"
 python3 - "$TMP_DIR/index.html" >"$TMP_DIR/asset-path" <<'PY'
 import html.parser
 import pathlib
+import re
 import sys
 
 
@@ -68,16 +101,28 @@ if '<div id="root"></div>' not in text:
     raise SystemExit("smoke-test: candidate is not the formal React shell")
 parser = Assets()
 parser.feed(text)
-paths = [path for path in parser.paths if path.startswith("/assets/") and ".." not in path]
+hashed = re.compile(r"^/assets/[^/?#]+-[A-Za-z0-9_-]{6,}\.(?:css|js)$")
+paths = [path for path in parser.paths if hashed.fullmatch(path)]
 if not paths:
-    raise SystemExit("smoke-test: formal React shell has no built asset")
+    raise SystemExit("smoke-test: formal React shell has no hashed built asset")
 print(paths[0])
 PY
 ASSET_PATH="$(<"$TMP_DIR/asset-path")"
-fetch "$CANDIDATE_BASE_URL$ASSET_PATH" "$TMP_DIR/formal-asset"
-[[ -s "$TMP_DIR/formal-asset" ]] || die "formal React asset response is empty"
+fetch \
+    "$CANDIDATE_BASE_URL$ASSET_PATH" \
+    "$TMP_DIR/formal-asset" \
+    "$TMP_DIR/formal-asset.headers" \
+    >"$TMP_DIR/formal-asset.metadata"
+assert_non_html_response \
+    "$TMP_DIR/formal-asset.metadata" \
+    "$TMP_DIR/formal-asset" \
+    "formal React asset"
 
-fetch "$CANDIDATE_BASE_URL/health" "$TMP_DIR/health.json"
+fetch \
+    "$CANDIDATE_BASE_URL/health" \
+    "$TMP_DIR/health.json" \
+    "$TMP_DIR/health.headers" \
+    >"$TMP_DIR/health.metadata"
 python3 - "$TMP_DIR/health.json" <<'PY'
 import json
 import pathlib
@@ -94,7 +139,11 @@ if any(payload.get(key) != value for key, value in required.items()):
     raise SystemExit("smoke-test: candidate health is not fully ready")
 PY
 
-fetch "$CANDIDATE_BASE_URL/api/wiki/health" "$TMP_DIR/wiki-health.json"
+fetch \
+    "$CANDIDATE_BASE_URL/api/wiki/health" \
+    "$TMP_DIR/wiki-health.json" \
+    "$TMP_DIR/wiki-health.headers" \
+    >"$TMP_DIR/wiki-health.metadata"
 python3 - "$TMP_DIR/wiki-health.json" <<'PY'
 import json
 import pathlib
@@ -105,7 +154,11 @@ if payload.get("ready") is not True or int(payload.get("pageCount", 0)) < 1:
     raise SystemExit("smoke-test: Wiki health is not ready")
 PY
 
-fetch "$CANDIDATE_BASE_URL/api/wiki/pages?limit=1" "$TMP_DIR/wiki-list.json"
+fetch \
+    "$CANDIDATE_BASE_URL/api/wiki/pages?limit=1" \
+    "$TMP_DIR/wiki-list.json" \
+    "$TMP_DIR/wiki-list.headers" \
+    >"$TMP_DIR/wiki-list.metadata"
 if [[ -z "$SMOKE_WIKI_PAGE_ID" ]]; then
     SMOKE_WIKI_PAGE_ID="$(
         python3 - "$TMP_DIR/wiki-list.json" <<'PY'
@@ -131,7 +184,9 @@ PY
 )"
 fetch \
     "$CANDIDATE_BASE_URL/api/wiki/pages/$ENCODED_PAGE_ID" \
-    "$TMP_DIR/wiki-detail.json"
+    "$TMP_DIR/wiki-detail.json" \
+    "$TMP_DIR/wiki-detail.headers" \
+    >"$TMP_DIR/wiki-detail.metadata"
 python3 - "$TMP_DIR/wiki-detail.json" "$SMOKE_WIKI_PAGE_ID" <<'PY'
 import json
 import pathlib
@@ -156,6 +211,7 @@ curl \
     --silent \
     --show-error \
     --fail \
+    --location \
     --connect-timeout 5 \
     --max-time 90 \
     --header 'Content-Type: application/json' \
@@ -164,13 +220,13 @@ curl \
     "$CANDIDATE_BASE_URL/api/ask"
 MEDIA_URL="$(
     python3 \
-        - "$TMP_DIR/ask-response.json" "$SMOKE_MEDIA_PUBLIC_BASE_URL" <<'PY'
+        - "$TMP_DIR/ask-response.json" "$MEDIA_PUBLIC_BASE_URL" <<'PY'
 import json
 import pathlib
 import sys
 
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-allowed_https_base = sys.argv[2].rstrip("/")
+media_base = sys.argv[2].rstrip("/")
 if not isinstance(payload.get("answer"), str) or not payload["answer"].strip():
     raise SystemExit("smoke-test: synchronous RAG response has no answer")
 
@@ -188,17 +244,16 @@ def urls(value):
 
 
 for candidate in urls(payload):
-    if candidate.startswith("/media/"):
+    if media_base == "/media" and candidate.startswith("/media/"):
         print(candidate)
         break
-    if allowed_https_base and (
-        candidate == allowed_https_base
-        or candidate.startswith(allowed_https_base + "/")
-    ):
+    if media_base.startswith("https://") and candidate.startswith(media_base + "/"):
         print(candidate)
         break
 else:
-    raise SystemExit("smoke-test: RAG response has no projected public media URL")
+    raise SystemExit(
+        "smoke-test: RAG response has no media URL under MEDIA_PUBLIC_BASE_URL"
+    )
 PY
 )"
 
@@ -206,6 +261,7 @@ curl \
     --silent \
     --show-error \
     --fail \
+    --location \
     --connect-timeout 5 \
     --max-time 90 \
     --header 'Content-Type: application/json' \
@@ -213,15 +269,47 @@ curl \
     --data-binary "@$TMP_DIR/ask-request.json" \
     --output "$TMP_DIR/ask-stream.txt" \
     "$CANDIDATE_BASE_URL/api/ask/stream"
-grep -Eq '^event:[[:space:]]*done[[:space:]]*$' "$TMP_DIR/ask-stream.txt" \
-    || die "RAG SSE response did not terminate with event: done"
+python3 - "$TMP_DIR/ask-stream.txt" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").replace("\r\n", "\n")
+events = []
+for block in text.split("\n\n"):
+    if not block.strip():
+        continue
+    names = [
+        line.partition(":")[2].strip()
+        for line in block.splitlines()
+        if line.startswith("event:")
+    ]
+    if len(names) != 1:
+        raise SystemExit("smoke-test: malformed RAG SSE event block")
+    events.append(names[0])
+if not events:
+    raise SystemExit("smoke-test: RAG SSE response has no events")
+if "error" in events:
+    raise SystemExit("smoke-test: RAG SSE response contains event: error")
+if events[-1] != "done" or events.count("done") != 1:
+    raise SystemExit(
+        f"smoke-test: terminal event is not done exactly once; got {events!r}"
+    )
+PY
 
 if [[ "$MEDIA_URL" == /media/* ]]; then
     MEDIA_RETRIEVAL_URL="$PUBLIC_BASE_URL$MEDIA_URL"
 else
     MEDIA_RETRIEVAL_URL="$MEDIA_URL"
 fi
-fetch "$MEDIA_RETRIEVAL_URL" "$TMP_DIR/media-object" 30
-[[ -s "$TMP_DIR/media-object" ]] || die "projected media object is empty"
+fetch \
+    "$MEDIA_RETRIEVAL_URL" \
+    "$TMP_DIR/media-object" \
+    "$TMP_DIR/media.headers" \
+    30 \
+    >"$TMP_DIR/media.metadata"
+assert_non_html_response \
+    "$TMP_DIR/media.metadata" \
+    "$TMP_DIR/media-object" \
+    "projected media object"
 
 printf 'smoke tests passed\n'

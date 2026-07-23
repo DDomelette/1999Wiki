@@ -2,238 +2,63 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd -P)"
-DEPLOY_ROOT="${DEPLOY_ROOT:-/srv/1999wiki}"
-STATE_DIR="${STATE_DIR:-$DEPLOY_ROOT/deploy-state}"
-APP_COMPOSE_FILE="${APP_COMPOSE_FILE:-$REPO_ROOT/deploy/compose.app.yml}"
-APP_ENV_FILE="${APP_ENV_FILE:-$DEPLOY_ROOT/protected/app.env}"
-CADDY_CONFIG="${CADDY_CONFIG:-/etc/caddy/Caddyfile}"
-CADDY_ENV_FILE="${CADDY_ENV_FILE:-$DEPLOY_ROOT/protected/caddy.env}"
-CADDY_IMPORT_PATH="${CADDY_IMPORT_PATH:-/etc/caddy/active-upstream.caddy}"
-ACTIVE_FRAGMENT="${ACTIVE_FRAGMENT:-/etc/caddy/active-upstream.caddy}"
-ACTIVE_STATE_FILE="${ACTIVE_STATE_FILE:-$STATE_DIR/active.env}"
-PRIOR_FRAGMENT="${PRIOR_FRAGMENT:-$STATE_DIR/previous-upstream.caddy}"
-PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://127.0.0.1}"
-VERIFY_ATTEMPTS="${VERIFY_ATTEMPTS:-6}"
-VERIFY_INTERVAL_SECONDS="${VERIFY_INTERVAL_SECONDS:-2}"
+OPS_CONTEXT=rollback
+source "$SCRIPT_DIR/ops-common.sh"
 
-die() {
-    printf 'rollback: %s\n' "$*" >&2
-    exit 1
-}
+[[ "$#" -eq 0 ]] || ops_die "usage: ${0##*/}"
+ops_acquire_lock
+ops_reconcile_journal
+ops_load_active_state
+ops_validate_active_consistency
+[[ "$HAS_PREVIOUS" == "1" ]] \
+    || ops_die "no complete previous deployment is recorded"
 
-[[ "$#" -eq 0 ]] || die "usage: ${0##*/}"
-for required_file in \
-    "$ACTIVE_STATE_FILE" \
-    "$PRIOR_FRAGMENT" \
-    "$ACTIVE_FRAGMENT" \
-    "$CADDY_CONFIG" \
-    "$CADDY_ENV_FILE" \
-    "$APP_COMPOSE_FILE" \
-    "$APP_ENV_FILE"; do
-    [[ -f "$required_file" ]] || die "required file is missing: $required_file"
-done
-[[ -d "$STATE_DIR" ]] || die "deployment state directory is missing"
+CURRENT_SLOT="$ACTIVE_SLOT"
+CURRENT_RELEASE="$ACTIVE_RELEASE"
+CURRENT_PROJECT="$ACTIVE_PROJECT"
+CURRENT_FRONTEND_PORT="$ACTIVE_FRONTEND_PORT"
+CURRENT_RELEASE_SNAPSHOT="$ACTIVE_RELEASE_SNAPSHOT"
+CURRENT_APP_SNAPSHOT="$ACTIVE_APP_SNAPSHOT"
+CURRENT_BACKEND_IMAGE="$ACTIVE_BACKEND_IMAGE"
+CURRENT_FRONTEND_IMAGE="$ACTIVE_FRONTEND_IMAGE"
 
-mapfile -t state_values < <(
-    python3 - "$ACTIVE_STATE_FILE" "$PRIOR_FRAGMENT" <<'PY'
-import re
-import sys
+ROLLBACK_SLOT="$PREVIOUS_SLOT"
+ROLLBACK_RELEASE="$PREVIOUS_RELEASE"
+ROLLBACK_PROJECT="$PREVIOUS_PROJECT"
+ROLLBACK_RELEASE_SNAPSHOT="$PREVIOUS_RELEASE_SNAPSHOT"
+ops_load_snapshot "$ROLLBACK_SLOT" "$ROLLBACK_RELEASE_SNAPSHOT"
+[[ "$RELEASE" == "$ROLLBACK_RELEASE" ]] \
+    || ops_die "recorded rollback release diverges from its snapshot"
+CANDIDATE_BASE_URL="http://127.0.0.1:$FRONTEND_PORT"
 
-wanted = (
-    "ACTIVE_SLOT",
-    "ACTIVE_RELEASE",
-    "ACTIVE_PROJECT",
-    "ACTIVE_FRONTEND_PORT",
-    "ACTIVE_RELEASE_ENV_FILE",
-    "PREVIOUS_SLOT",
-    "PREVIOUS_RELEASE",
-    "PREVIOUS_PROJECT",
-    "PREVIOUS_FRONTEND_PORT",
-    "PREVIOUS_RELEASE_ENV_FILE",
-    "PRIOR_FRAGMENT",
-)
-values = {}
-with open(sys.argv[1], encoding="utf-8") as stream:
-    for raw_line in stream:
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        key, separator, value = line.partition("=")
-        if not separator or key in values:
-            raise SystemExit("rollback: malformed active state")
-        values[key] = value
-if not all(values.get(key) for key in wanted):
-    raise SystemExit("rollback: no complete previous deployment is recorded")
-for prefix in ("ACTIVE", "PREVIOUS"):
-    slot = values[f"{prefix}_SLOT"]
-    release = values[f"{prefix}_RELEASE"]
-    project = values[f"{prefix}_PROJECT"]
-    port = values[f"{prefix}_FRONTEND_PORT"]
-    if slot not in {"blue", "green"} or project != "1999wiki-" + slot:
-        raise SystemExit(f"rollback: {prefix.lower()} slot state is invalid")
-    if not re.fullmatch(r"sha-[0-9a-f]{7}", release):
-        raise SystemExit(f"rollback: {prefix.lower()} release state is invalid")
-    if not port.isdecimal() or not 1024 <= int(port) <= 65535:
-        raise SystemExit(f"rollback: {prefix.lower()} port state is invalid")
-if values["ACTIVE_SLOT"] == values["PREVIOUS_SLOT"]:
-    raise SystemExit("rollback: active and previous slots must differ")
-if values["PRIOR_FRAGMENT"] != sys.argv[2]:
-    raise SystemExit("rollback: recorded prior fragment path is unexpected")
-for key in wanted:
-    print(values[key])
-PY
-)
-ACTIVE_SLOT="${state_values[0]}"
-ACTIVE_RELEASE="${state_values[1]}"
-ACTIVE_PROJECT="${state_values[2]}"
-ACTIVE_FRONTEND_PORT="${state_values[3]}"
-ACTIVE_RELEASE_ENV_FILE="${state_values[4]}"
-PREVIOUS_SLOT="${state_values[5]}"
-PREVIOUS_RELEASE="${state_values[6]}"
-PREVIOUS_PROJECT="${state_values[7]}"
-PREVIOUS_FRONTEND_PORT="${state_values[8]}"
-PREVIOUS_RELEASE_ENV_FILE="${state_values[9]}"
-RECORDED_PRIOR_FRAGMENT="${state_values[10]}"
-[[ "$RECORDED_PRIOR_FRAGMENT" == "$PRIOR_FRAGMENT" ]] \
-    || die "recorded prior fragment mismatch"
-[[ -f "$PREVIOUS_RELEASE_ENV_FILE" ]] || die "previous release metadata is missing"
-[[ -f "$ACTIVE_RELEASE_ENV_FILE" ]] || die "active release metadata is missing"
-[[ "$PREVIOUS_RELEASE_ENV_FILE" != *.example ]] \
-    || die "previous release metadata must not be a checked example"
+ops_compose "$ROLLBACK_PROJECT" start backend frontend
+ops_verify_project_identity "$ROLLBACK_PROJECT" "$CANDIDATE_BASE_URL" \
+    || ops_die "recorded previous project did not become healthy with validated images"
+"$SCRIPT_DIR/smoke-test.sh" \
+    "$CANDIDATE_BASE_URL" \
+    "$PUBLIC_BASE_URL" \
+    "$APP_ENV_FILE"
 
-mapfile -t caddy_values < <(
-    python3 - "$CADDY_ENV_FILE" <<'PY'
-import sys
-
-wanted = ("SITE_ADDRESS", "MINIO_PROXY_UPSTREAM")
-values = {}
-with open(sys.argv[1], encoding="utf-8") as stream:
-    for raw_line in stream:
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        key, separator, value = line.partition("=")
-        if separator and key in wanted:
-            if key in values or not value.strip():
-                raise SystemExit("rollback: invalid Caddy environment")
-            values[key] = value.strip()
-if set(values) != set(wanted):
-    raise SystemExit("rollback: incomplete Caddy environment")
-for key in wanted:
-    print(values[key])
-PY
-)
-SITE_ADDRESS="${caddy_values[0]}"
-MINIO_PROXY_UPSTREAM="${caddy_values[1]}"
-export SITE_ADDRESS MINIO_PROXY_UPSTREAM APP_ENV_FILE
-
-previous_compose() {
-    docker compose \
-        -p "$PREVIOUS_PROJECT" \
-        --env-file "$PREVIOUS_RELEASE_ENV_FILE" \
-        -f "$APP_COMPOSE_FILE" \
-        "$@"
-}
-
-active_compose() {
-    docker compose \
-        -p "$ACTIVE_PROJECT" \
-        --env-file "$ACTIVE_RELEASE_ENV_FILE" \
-        -f "$APP_COMPOSE_FILE" \
-        "$@"
-}
-
-verify_health_url() {
-    local base_url="$1"
-    local output="$2"
-    local attempt
-    for ((attempt = 1; attempt <= VERIFY_ATTEMPTS; attempt++)); do
-        if curl \
-            --silent \
-            --show-error \
-            --fail \
-            --connect-timeout 3 \
-            --max-time 10 \
-            --output "$output" \
-            "$base_url/health" \
-            && python3 - "$output" <<'PY'
-import json
-import pathlib
-import sys
-
-payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-expected = {
-    "status": "ok",
-    "vectorstore_loaded": True,
-    "provenance_status": "pass",
-    "llm_ready": True,
-}
-if any(payload.get(key) != value for key, value in expected.items()):
-    raise SystemExit(1)
-PY
-        then
-            return 0
-        fi
-        if (( attempt < VERIFY_ATTEMPTS )); then
-            sleep "$VERIFY_INTERVAL_SECONDS"
-        fi
-    done
-    return 1
-}
-
-CADDY_DIR="$(dirname -- "$ACTIVE_FRAGMENT")"
-RESTORE_TMP="$(mktemp "$CADDY_DIR/.active-upstream.rollback.XXXXXX")"
-TEMP_CONFIG="$(mktemp "$CADDY_DIR/.Caddyfile.rollback.XXXXXX")"
-CURRENT_FRAGMENT_TMP="$(mktemp "$STATE_DIR/.current-upstream.XXXXXX")"
-PRIOR_PERSIST_TMP="$(mktemp "$STATE_DIR/.previous-upstream.persist.XXXXXX")"
-STATE_TMP="$(mktemp "$STATE_DIR/.active-state.XXXXXX")"
-CANDIDATE_HEALTH_TMP="$(mktemp "$STATE_DIR/.rollback-candidate-health.XXXXXX")"
-PUBLIC_HEALTH_TMP="$(mktemp "$STATE_DIR/.rollback-public-health.XXXXXX")"
-FRAGMENT_REPLACED=false
-COMMITTED=false
-
-restore_current_fragment() {
-    local recovery_tmp
-    recovery_tmp="$(mktemp "$CADDY_DIR/.active-upstream.recovery.XXXXXX")"
-    cp -p "$CURRENT_FRAGMENT_TMP" "$recovery_tmp"
-    mv -f "$recovery_tmp" "$ACTIVE_FRAGMENT"
-    caddy reload --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null
-}
-
+umask 077
+ROLLBACK_FRAGMENT="$(mktemp "$DEPLOY_STATE_ROOT/.rollback-fragment.XXXXXX")"
+TEMP_CONFIG="$(mktemp "$DEPLOY_STATE_ROOT/.rollback-Caddyfile.XXXXXX")"
+STATE_CANDIDATE="$(mktemp "$DEPLOY_STATE_ROOT/.rollback-state.XXXXXX")"
+transaction_started=false
 cleanup() {
     local status=$?
     trap - EXIT
-    if (( status != 0 )) && [[ "$FRAGMENT_REPLACED" == "true" && "$COMMITTED" == "false" ]]; then
-        set +e
-        restore_current_fragment
-        local restore_status=$?
-        set -e
-        if (( restore_status != 0 )); then
-            printf 'rollback: CRITICAL: failed to restore the current Caddy fragment\n' >&2
-        fi
+    if (( status != 0 )) && [[ "$transaction_started" == "true" ]]; then
+        ops_recover_failed_transaction "$status" || true
     fi
-    rm -f -- \
-        "$RESTORE_TMP" \
-        "$TEMP_CONFIG" \
-        "$CURRENT_FRAGMENT_TMP" \
-        "$PRIOR_PERSIST_TMP" \
-        "$STATE_TMP" \
-        "$CANDIDATE_HEALTH_TMP" \
-        "$PUBLIC_HEALTH_TMP"
+    rm -f -- "$ROLLBACK_FRAGMENT" "$TEMP_CONFIG" "$STATE_CANDIDATE"
     exit "$status"
 }
 trap cleanup EXIT
 
-previous_compose start backend frontend
-verify_health_url \
-    "http://127.0.0.1:$PREVIOUS_FRONTEND_PORT" \
-    "$CANDIDATE_HEALTH_TMP" \
-    || die "recorded previous app did not become healthy"
-
-cp -p "$PRIOR_FRAGMENT" "$RESTORE_TMP"
+# Regenerate from strictly validated previous metadata; never trust stale text.
+printf 'reverse_proxy 127.0.0.1:%s\n' "$FRONTEND_PORT" >"$ROLLBACK_FRAGMENT"
 python3 \
-    - "$CADDY_CONFIG" "$TEMP_CONFIG" "$CADDY_IMPORT_PATH" "$RESTORE_TMP" <<'PY'
+    - "$CADDY_CONFIG" "$TEMP_CONFIG" "$CADDY_IMPORT_PATH" "$ROLLBACK_FRAGMENT" <<'PY'
 import pathlib
 import sys
 
@@ -247,36 +72,50 @@ pathlib.Path(target_path).write_text(
     encoding="utf-8",
 )
 PY
+ops_load_caddy_env
 caddy validate --config "$TEMP_CONFIG" --adapter caddyfile >/dev/null
 
-cp -p "$ACTIVE_FRAGMENT" "$CURRENT_FRAGMENT_TMP"
-mv -f "$RESTORE_TMP" "$ACTIVE_FRAGMENT"
-FRAGMENT_REPLACED=true
-caddy reload --config "$CADDY_CONFIG" --adapter caddyfile >/dev/null
-verify_health_url "$PUBLIC_BASE_URL" "$PUBLIC_HEALTH_TMP" \
-    || die "public health verification failed after rollback"
-
-cp -p "$CURRENT_FRAGMENT_TMP" "$PRIOR_PERSIST_TMP"
-mv -f "$PRIOR_PERSIST_TMP" "$PRIOR_FRAGMENT"
+ops_begin_transaction rollback
+transaction_started=true
 {
-    printf 'ACTIVE_SLOT=%s\n' "$PREVIOUS_SLOT"
-    printf 'ACTIVE_RELEASE=%s\n' "$PREVIOUS_RELEASE"
-    printf 'ACTIVE_PROJECT=%s\n' "$PREVIOUS_PROJECT"
-    printf 'ACTIVE_FRONTEND_PORT=%s\n' "$PREVIOUS_FRONTEND_PORT"
-    printf 'ACTIVE_RELEASE_ENV_FILE=%s\n' "$PREVIOUS_RELEASE_ENV_FILE"
-    printf 'PREVIOUS_SLOT=%s\n' "$ACTIVE_SLOT"
-    printf 'PREVIOUS_RELEASE=%s\n' "$ACTIVE_RELEASE"
-    printf 'PREVIOUS_PROJECT=%s\n' "$ACTIVE_PROJECT"
-    printf 'PREVIOUS_FRONTEND_PORT=%s\n' "$ACTIVE_FRONTEND_PORT"
-    printf 'PREVIOUS_RELEASE_ENV_FILE=%s\n' "$ACTIVE_RELEASE_ENV_FILE"
-    printf 'PRIOR_FRAGMENT=%s\n' "$PRIOR_FRAGMENT"
-} >"$STATE_TMP"
-chmod 600 "$STATE_TMP"
-mv -f "$STATE_TMP" "$ACTIVE_STATE_FILE"
-COMMITTED=true
-FRAGMENT_REPLACED=false
+    printf 'STATE_VERSION=2\n'
+    printf 'GENERATION=%s\n' "$TRANSACTION_GENERATION"
+    printf 'ACTIVE_SLOT=%s\n' "$ROLLBACK_SLOT"
+    printf 'ACTIVE_RELEASE=%s\n' "$ROLLBACK_RELEASE"
+    printf 'ACTIVE_PROJECT=%s\n' "$ROLLBACK_PROJECT"
+    printf 'ACTIVE_FRONTEND_PORT=%s\n' "$FRONTEND_PORT"
+    printf 'ACTIVE_RELEASE_SNAPSHOT=%s\n' "$RELEASE_SNAPSHOT"
+    printf 'ACTIVE_APP_SNAPSHOT=%s\n' "$APP_ENV_FILE"
+    printf 'ACTIVE_BACKEND_IMAGE=%s\n' "$BACKEND_IMAGE"
+    printf 'ACTIVE_FRONTEND_IMAGE=%s\n' "$FRONTEND_IMAGE"
+    printf 'HAS_PREVIOUS=1\n'
+    printf 'PREVIOUS_SLOT=%s\n' "$CURRENT_SLOT"
+    printf 'PREVIOUS_RELEASE=%s\n' "$CURRENT_RELEASE"
+    printf 'PREVIOUS_PROJECT=%s\n' "$CURRENT_PROJECT"
+    printf 'PREVIOUS_FRONTEND_PORT=%s\n' "$CURRENT_FRONTEND_PORT"
+    printf 'PREVIOUS_RELEASE_SNAPSHOT=%s\n' "$CURRENT_RELEASE_SNAPSHOT"
+    printf 'PREVIOUS_APP_SNAPSHOT=%s\n' "$CURRENT_APP_SNAPSHOT"
+    printf 'PREVIOUS_BACKEND_IMAGE=%s\n' "$CURRENT_BACKEND_IMAGE"
+    printf 'PREVIOUS_FRONTEND_IMAGE=%s\n' "$CURRENT_FRONTEND_IMAGE"
+    printf 'PREVIOUS_FRAGMENT_BACKUP=%s\n' "$TRANSACTION_OLD_FRAGMENT"
+} | ops_helper atomic-stdin \
+    "$STATE_CANDIDATE" \
+    600 \
+    "$OPS_STATE_UID" \
+    "$OPS_STATE_GID"
+ops_helper validate-state "$STATE_CANDIDATE" "$DEPLOY_STATE_ROOT"
 
-if ! active_compose stop backend frontend; then
+ops_install_transaction_traffic "$ROLLBACK_FRAGMENT"
+ops_verify_public_health \
+    || ops_die "public health verification failed after rollback"
+ops_test_crash_before_state_commit
+ops_commit_transaction_state "$STATE_CANDIDATE"
+transaction_started=false
+
+if ! (
+    ops_load_snapshot "$CURRENT_SLOT" "$CURRENT_RELEASE_SNAPSHOT"
+    ops_compose "$CURRENT_PROJECT" stop backend frontend
+); then
     printf 'rollback: warning: the replaced app slot could not be stopped\n' >&2
 fi
-printf 'rolled back to %s at %s\n' "$PREVIOUS_SLOT" "$PREVIOUS_RELEASE"
+printf 'rolled back to %s at %s\n' "$ROLLBACK_SLOT" "$ROLLBACK_RELEASE"

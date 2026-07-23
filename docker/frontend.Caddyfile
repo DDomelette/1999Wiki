@@ -2,7 +2,13 @@
 	handle /health {
 		reverse_proxy backend:8000
 	}
-	handle /api/* {
+	handle /api/wiki/* {
+		reverse_proxy backend:8000
+	}
+	handle /api/media/* {
+		reverse_proxy backend:8000
+	}
+	handle_path /api/* {
 		reverse_proxy backend:8000
 	}
 	handle {
