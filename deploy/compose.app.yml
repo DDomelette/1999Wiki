@@ -1,0 +1,63 @@
+# Instantiate this file with a distinct Compose project name for each slot.
+# The project-scoped default network keeps blue and green service DNS isolated.
+services:
+  backend:
+    image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE}
+    restart: unless-stopped
+    env_file:
+      - ${APP_ENV_FILE:-./env/app.env.example}
+    volumes:
+      - /srv/1999wiki/rag-artifacts:/runtime/rag/huiji:ro
+    ports:
+      - "127.0.0.1:${BACKEND_PORT}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - default
+      - infra
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?Set FRONTEND_IMAGE}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --spider
+        - http://127.0.0.1:8080/health
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - default
+
+networks:
+  default: {}
+  infra:
+    external: true
+    name: 1999wiki-infra
