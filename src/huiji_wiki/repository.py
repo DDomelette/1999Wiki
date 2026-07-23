@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from config.config import Config
+from src.assets.public_url import project_media_row
 from src.huiji_wiki.models import (
     WikiCategory,
     WikiLinkSpan,
@@ -317,9 +318,21 @@ class MySQLWikiRepository:
                         """,
                         (page_id,),
                     )
+                projected_rows = (
+                    project_media_row(
+                        item,
+                        base_url=self.cfg.assets.public_base_url,
+                        bucket_name=self.cfg.assets.bucket_name,
+                    )
+                    for item in cur.fetchall()
+                )
                 media_links = [
                     payload
-                    for payload in (WikiMediaLink.from_json(item).to_api() for item in cur.fetchall())
+                    for payload in (
+                        WikiMediaLink.from_json(item).to_api()
+                        for item in projected_rows
+                        if item is not None
+                    )
                     if payload
                 ]
                 cur.execute(
@@ -438,9 +451,10 @@ class MySQLWikiRepository:
                 artifact_schema = self._installed_artifact_schema(cur)
                 if artifact_schema == "evb.media-asset/v3":
                     sql = (
-                        "SELECT b.page_id, r.url, b.media_role FROM wiki_media_bindings b "
+                        "SELECT b.page_id, r.object_key, r.url, b.media_role "
+                        "FROM wiki_media_bindings b "
                         "JOIN wiki_media_resources r ON r.resource_id = b.resource_id "
-                        "WHERE b.page_id IN (" + placeholders + ") AND r.url <> '' "
+                        "WHERE b.page_id IN (" + placeholders + ") AND r.object_key <> '' "
                         "AND (LOWER(r.asset_type) IN "
                         "('image','portrait','skill','skin','psychube','poster','item') "
                         "OR LOWER(r.mime) LIKE 'image/%%') "
@@ -451,9 +465,10 @@ class MySQLWikiRepository:
                     )
                 else:
                     sql = (
-                        "SELECT page_id, url, media_role FROM wiki_media_links WHERE page_id IN ("
+                        "SELECT page_id, object_key, url, media_role "
+                        "FROM wiki_media_links WHERE page_id IN ("
                         + placeholders
-                        + ") AND url <> '' "
+                        + ") AND object_key <> '' "
                         + "AND (LOWER(asset_type) IN ('image','portrait','skill','skin','psychube','poster','item') "
                         + "OR LOWER(mime) LIKE 'image/%%') "
                         + "ORDER BY page_id ASC, "
@@ -467,7 +482,12 @@ class MySQLWikiRepository:
             return result
         for row in rows:
             page_id = str(row.get("page_id", ""))
-            url = str(row.get("url", ""))
+            projected = project_media_row(
+                row,
+                base_url=self.cfg.assets.public_base_url,
+                bucket_name=self.cfg.assets.bucket_name,
+            )
+            url = str(projected.get("url", "")) if projected is not None else ""
             if page_id not in result and is_public_media_url(url):
                 result[page_id] = url
         return result

@@ -68,7 +68,7 @@ def test_voice_pagination_contracts_are_available():
     assert issubclass(module.VoiceCursorBuildMismatch, ValueError)
 
 
-def test_groups_playable_http_audio_by_child_with_ordered_real_variants():
+def test_groups_playable_public_audio_by_child_with_ordered_real_variants():
     child_id = "entity-a/voice:0002"
     rows = [
         _voice_row("fr", child_id, "fr", sort_order=4),
@@ -97,7 +97,20 @@ def test_groups_playable_http_audio_by_child_with_ordered_real_variants():
     assert entity_a.title == "中文台词"
     assert [variant["language"] for variant in entity_a.variants] == ["zh", "en", "fr"]
     assert [variant["media_id"] for variant in entity_a.variants] == ["zh-mp3", "en", "fr"]
-    assert all(variant["url"].startswith(("http://", "https://")) for variant in entity_a.variants)
+    assert all(variant["url"].startswith(("http://", "https://", "/media/")) for variant in entity_a.variants)
+
+
+def test_grouping_accepts_projected_same_origin_voice_urls():
+    row = _voice_row(
+        "same-origin",
+        "entity-a/voice:0001",
+        "zh",
+        url="/media/reverse1999-assets/reverse1999/voice/zh_line.mp3",
+    )
+
+    groups = voice_pagination.build_voice_line_groups([row], {})
+
+    assert groups[0].variants[0]["url"] == row["url"]
 
 
 def test_reused_artifact_media_ids_keep_every_playable_line_and_remain_visible():
@@ -206,7 +219,6 @@ def test_grouping_rejects_generic_and_encoded_local_path_markers(unsafe_url):
 def test_grouping_keeps_valid_http_object_keys_without_local_markers():
     url = (
         "https://media.example/reverse1999/voice/folder..name/zh_line.mp3"
-        "?redirect=https%3A%2F%2Fcdn.example%2Fvoice%2Fzh_line.mp3"
     )
     row = _voice_row("safe", "entity-a/voice:0001", "zh", url=url)
 

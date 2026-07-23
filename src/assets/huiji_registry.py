@@ -8,6 +8,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from src.assets.public_url import project_media_row
 from src.assets.voice_pagination import (
     MAX_CURSOR_STATES,
     InvalidVoiceCursor,
@@ -273,15 +274,25 @@ def _normalize_compat_media_row(
 def _normalize_media_records(
     rows: list[dict[str, Any]],
     capability: str,
+    *,
+    base_url: str,
+    bucket_name: str,
 ) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     seen: dict[str, dict[str, Any]] = {}
     for source in rows:
-        row = (
-            validate_media_v3_row(dict(source))
-            if capability == "v3"
-            else _normalize_compat_media_row(source, capability)
+        projected = project_media_row(
+            source,
+            base_url=base_url,
+            bucket_name=bucket_name,
         )
+        if projected is None:
+            continue
+        if capability == "v3":
+            row = validate_media_v3_row(dict(source))
+            row["url"] = projected["url"]
+        else:
+            row = _normalize_compat_media_row(projected, capability)
         binding_id = str(row.get("binding_id") or "")
         if not binding_id:
             raise ValueError("media binding identity is empty")
@@ -331,6 +342,8 @@ class HuijiMediaRegistry:
         self._records = _normalize_media_records(
             raw_records,
             self.artifact_snapshot.capability,
+            base_url=str(cfg.assets.public_base_url),
+            bucket_name=str(cfg.assets.bucket_name),
         )
         self._voice_transcripts = self._load_voice_transcripts(
             self.artifact_snapshot.child_blocks

@@ -5,11 +5,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlsplit
 
 import yaml
 from dotenv import load_dotenv
 
+from src.assets.public_url import normalize_public_media_base
 from src.huijiwiki.project_paths import resolve_project_local_path
 
 
@@ -189,35 +189,6 @@ def _env_string_with_legacy_fallback(
     return fallback
 
 
-def _validated_media_public_base_url(value: str) -> str:
-    candidate = str(value).strip()
-    if not candidate or "\\" in candidate or any(ord(char) < 32 for char in candidate):
-        raise ValueError("MEDIA_PUBLIC_BASE_URL must be a safe path or HTTP(S) URL")
-    if candidate.startswith("//"):
-        raise ValueError("MEDIA_PUBLIC_BASE_URL must be a same-origin path or HTTP(S) URL")
-    try:
-        parsed = urlsplit(candidate)
-        _port = parsed.port
-    except ValueError as error:
-        raise ValueError("MEDIA_PUBLIC_BASE_URL must be a safe path or HTTP(S) URL") from error
-    if parsed.query or parsed.fragment:
-        raise ValueError("MEDIA_PUBLIC_BASE_URL must not contain query or fragment")
-    if any(segment in {".", ".."} for segment in unquote(parsed.path).split("/")):
-        raise ValueError("MEDIA_PUBLIC_BASE_URL must not contain traversal segments")
-    if parsed.scheme:
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("MEDIA_PUBLIC_BASE_URL must use HTTP or HTTPS")
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("MEDIA_PUBLIC_BASE_URL must not contain credentials")
-    elif (
-        parsed.netloc
-        or not parsed.path.startswith("/")
-        or parsed.path.startswith("//")
-    ):
-        raise ValueError("MEDIA_PUBLIC_BASE_URL must be a same-origin path or HTTP(S) URL")
-    return candidate
-
-
 def _runtime_absolute_path_override(name: str) -> Path | None:
     value = os.getenv(name)
     if value is None:
@@ -300,7 +271,7 @@ def get_config() -> Config:
         assets=AssetStorageCfg(
             provider=assets_raw["provider"],
             endpoint=os.getenv("MINIO_ENDPOINT", assets_raw["endpoint"]),
-            public_base_url=_validated_media_public_base_url(
+            public_base_url=normalize_public_media_base(
                 os.getenv("MEDIA_PUBLIC_BASE_URL", assets_raw["public_base_url"])
             ),
             bucket_name=os.getenv("MINIO_BUCKET", assets_raw["bucket_name"]),

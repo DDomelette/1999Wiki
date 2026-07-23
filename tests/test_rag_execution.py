@@ -121,6 +121,10 @@ class _TransientAnswerLLM(_LLMSpy):
 def _chain(tmp_path, answers):
     cfg = SimpleNamespace(
         llm=SimpleNamespace(api_key=""),
+        assets=SimpleNamespace(
+            public_base_url="/media",
+            bucket_name="reverse1999-assets",
+        ),
         huiji=SimpleNamespace(
             enabled=True,
             source_mode="huiji_crawler",

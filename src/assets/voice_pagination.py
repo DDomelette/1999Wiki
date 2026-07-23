@@ -10,15 +10,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 from typing import Any, Iterable, Mapping
-from urllib.parse import unquote, urlsplit
 
+from src.assets.public_url import is_safe_public_media_url
 from src.huiji_rag.media import preferred_format_score
 
 
 DEFAULT_VOICE_PAGE_SIZE = 8
 MAX_VOICE_PAGE_SIZE = 20
 MAX_CURSOR_STATES = 4096
-MAX_URL_DECODE_DEPTH = 8
 
 _LANGUAGE_PREFIXES = {
     "zh": ("zh", "cn", "ch"),
@@ -39,10 +38,6 @@ _LANGUAGE_LABELS = {
     "kr": "(韩)",
 }
 _AUDIO_EXTENSIONS = {".mp3", ".ogg", ".wav", ".m4a", ".aac", ".flac"}
-_WINDOWS_DRIVE_PATH_RE = re.compile(r"(?<![a-z0-9])[a-z]:[\\/]", re.IGNORECASE)
-_FILE_SCHEME_RE = re.compile(r"(?<![a-z0-9])file:", re.IGNORECASE)
-_FORWARD_UNC_RE = re.compile(r"(?<!:)//")
-_TRAVERSAL_SEGMENT_RE = re.compile(r"(?:^|[/=?#&])\.\.(?:/|$)")
 _TYPED_ENTITY_SCOPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*:(.+)$")
 
 
@@ -109,35 +104,8 @@ class _VoiceGroupEntry:
 
 
 def is_safe_browser_http_url(value: Any) -> bool:
-    """Accept browser HTTP URLs only when their decoded payload has no local path marker."""
-    url = str(value or "").strip()
-    try:
-        parsed = urlsplit(url)
-    except ValueError:
-        return False
-    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc:
-        return False
-    payload = parsed.netloc + parsed.path
-    if parsed.query:
-        payload += "?" + parsed.query
-    if parsed.fragment:
-        payload += "#" + parsed.fragment
-    for _attempt in range(MAX_URL_DECODE_DEPTH):
-        decoded = unquote(payload)
-        if decoded == payload:
-            break
-        payload = decoded
-    else:
-        return False
-    lowered = payload.casefold()
-    normalized = lowered.replace("\\", "/")
-    return (
-        _FILE_SCHEME_RE.search(lowered) is None
-        and _WINDOWS_DRIVE_PATH_RE.search(lowered) is None
-        and "\\" not in lowered
-        and _FORWARD_UNC_RE.search(lowered) is None
-        and _TRAVERSAL_SEGMENT_RE.search(normalized) is None
-    )
+    """Compatibility predicate for safe browser-facing public media URLs."""
+    return is_safe_public_media_url(str(value or ""))
 
 
 def derive_entity_scope(

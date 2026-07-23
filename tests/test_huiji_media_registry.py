@@ -10,8 +10,22 @@ from src.huiji_rag.build.contracts import (
     canonical_jsonl_bytes,
     ordered_media_v3_row,
 )
-from src.huiji_rag.io import write_jsonl
+from src.huiji_rag.io import write_jsonl as _write_jsonl
 from src.huiji_rag.runtime_artifacts import RuntimeArtifactSnapshot
+
+
+def write_jsonl(path, rows):
+    materialized = []
+    for source in rows:
+        row = dict(source)
+        if path.name == "media_assets.jsonl" and "object_key" not in row:
+            suffix = Path(str(row.get("filename") or "")).suffix or ".bin"
+            row["object_key"] = (
+                f"reverse1999/{row.get('asset_type') or 'media'}/"
+                f"{row.get('media_id') or len(materialized)}{suffix}"
+            )
+        materialized.append(row)
+    _write_jsonl(path, materialized)
 
 
 def _cfg(tmp_path):
@@ -21,8 +35,81 @@ def _cfg(tmp_path):
             raw_root=tmp_path / "raw",
             processed_root=tmp_path / "processed",
             build_version="build",
-        )
+        ),
+        assets=SimpleNamespace(
+            public_base_url="/media",
+            bucket_name="reverse1999-assets",
+        ),
     )
+
+
+def test_registry_projects_stored_url_from_object_key_before_indexing(tmp_path):
+    processed = tmp_path / "processed" / "build"
+    write_jsonl(
+        processed / "media_assets.jsonl",
+        [{
+            "media_id": "projected",
+            "entity_id": "owner-a",
+            "entity_name": "Shared Name",
+            "child_id": "scope:owner-a/profile:0000",
+            "parent_id": "scope:owner-a/profile",
+            "asset_type": "image",
+            "filename": "角色 图.webp",
+            "title": "projected",
+            "mime": "image/webp",
+            "object_key": "reverse1999/portrait/角色 图.webp",
+            "url": "http://127.0.0.1:9002/reverse1999-assets/stale.webp",
+            "is_available": True,
+            "is_common": False,
+            "attach_policy": "auto",
+        }],
+    )
+    registry = HuijiMediaRegistry(_cfg(tmp_path))
+
+    bundle = registry.find_bundle_for_retrieval(
+        _plan(entity="Shared Name", media_intent="image", entity_id="owner-a"),
+        [{
+            "entity_type": "character",
+            "entity_id": "owner-a",
+            "entity_name": "Shared Name",
+            "child_id": "scope:owner-a/profile:0000",
+            "parent_id": "scope:owner-a/profile",
+        }],
+    )
+
+    assert bundle.items[0]["url"] == (
+        "/media/reverse1999-assets/"
+        "reverse1999/portrait/%E8%A7%92%E8%89%B2%20%E5%9B%BE.webp"
+    )
+    assert "127.0.0.1:9002" not in str(bundle)
+
+
+def test_registry_omits_rows_without_safe_object_keys(tmp_path):
+    processed = tmp_path / "processed" / "build"
+    common = {
+        "entity_name": "Shared Name",
+        "child_id": "scope:owner-a/profile:0000",
+        "parent_id": "scope:owner-a/profile",
+        "asset_type": "image",
+        "filename": "unsafe.webp",
+        "title": "unsafe",
+        "mime": "image/webp",
+        "url": "https://stored.example/unsafe.webp",
+        "is_available": True,
+        "is_common": False,
+        "attach_policy": "auto",
+    }
+    write_jsonl(
+        processed / "media_assets.jsonl",
+        [
+            {**common, "media_id": "missing", "object_key": ""},
+            {**common, "media_id": "unsafe", "object_key": "../private.webp"},
+        ],
+    )
+
+    registry = HuijiMediaRegistry(_cfg(tmp_path))
+
+    assert registry._records == []
 
 
 def _plan(
@@ -264,6 +351,7 @@ def test_media_registry_only_returns_assets_bound_to_final_sources_and_http_urls
                 "filename": "local-path.png",
                 "title": "本地路径泄露",
                 "mime": "image/png",
+                "object_key": r"reverse1999\image\local-path.png",
                 "url": "D:\\assets\\local-path.png",
                 "is_available": True,
                 "is_common": False,
@@ -278,6 +366,7 @@ def test_media_registry_only_returns_assets_bound_to_final_sources_and_http_urls
                 "filename": "embedded-local-path.png",
                 "title": "嵌入本地路径",
                 "mime": "image/png",
+                "object_key": "../embedded-local-path.png",
                 "url": "https://media.example/image.png?source=d:\\assets\\private.png",
                 "is_available": True,
                 "is_common": False,
@@ -296,11 +385,11 @@ def test_media_registry_only_returns_assets_bound_to_final_sources_and_http_urls
     assert [item["media_id"] for item in media] == ["correct"]
     assert media[0]["child_id"] == "char:3041/profile:0000"
     assert media[0]["parent_id"] == "char:3041/profile"
-    assert all(item["url"].startswith(("http://", "https://")) for item in media)
+    assert all(item["url"].startswith("/media/") for item in media)
     assert all("D:\\" not in str(item) and "C:\\" not in str(item) and "file://" not in str(item) for item in media)
 
 
-def test_registry_rejects_generic_decoded_local_markers_but_keeps_valid_object_keys(tmp_path):
+def test_registry_rejects_unsafe_object_keys_regardless_of_stored_urls(tmp_path):
     processed = tmp_path / "processed" / "build"
 
     def encode_rounds(value, rounds):
@@ -341,6 +430,7 @@ def test_registry_rejects_generic_decoded_local_markers_but_keeps_valid_object_k
             "filename": f"unsafe-{index}.webp",
             "title": "unsafe",
             "mime": "image/webp",
+            "object_key": f"../unsafe-{index}.webp",
             "url": url,
             "is_available": True,
             "is_common": False,
@@ -362,6 +452,7 @@ def test_registry_rejects_generic_decoded_local_markers_but_keeps_valid_object_k
             "filename": "safe.webp",
             "title": "safe",
             "mime": "image/webp",
+            "object_key": "reverse1999/image/folder..name/image.webp",
             "url": safe_url,
             "is_available": True,
             "is_common": False,
@@ -377,7 +468,9 @@ def test_registry_rejects_generic_decoded_local_markers_but_keeps_valid_object_k
     )
 
     assert [item["media_id"] for item in media] == ["safe"]
-    assert media[0]["url"] == safe_url
+    assert media[0]["url"] == (
+        "/media/reverse1999-assets/reverse1999/image/folder..name/image.webp"
+    )
 
 
 def test_media_registry_gates_voice_until_voice_intent(tmp_path):

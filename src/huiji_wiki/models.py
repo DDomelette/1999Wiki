@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from src.assets.public_url import is_safe_public_media_url
+
 
 SAFE_MEDIA_FIELD_ORDER = (
     "bindingId",
@@ -80,7 +82,7 @@ def _camel(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def is_public_media_url(url: str) -> bool:
-    return url.startswith(("http://", "https://"))
+    return is_safe_public_media_url(url)
 
 
 def _first_value(row: dict[str, Any], *keys: str) -> Any:

@@ -21,6 +21,7 @@ from src.huiji_wiki.repository import (
 def test_public_media_url_guard_accepts_only_http_urls():
     assert is_public_media_url("http://127.0.0.1:9002/reverse1999-assets/reverse1999/image/a.webp")
     assert is_public_media_url("https://cdn.example/reverse1999/image/a.webp")
+    assert is_public_media_url("/media/reverse1999-assets/reverse1999/image/a.webp")
     assert not is_public_media_url("")
     assert not is_public_media_url("D:\\assets\\a.webp")
     assert not is_public_media_url("C:\\assets\\a.webp")
@@ -184,7 +185,13 @@ class RecordingConnection:
 
 
 def _repo_with_cursor(cursor: RecordingCursor) -> MySQLWikiRepository:
-    cfg = SimpleNamespace(mysql=SimpleNamespace())
+    cfg = SimpleNamespace(
+        mysql=SimpleNamespace(),
+        assets=SimpleNamespace(
+            public_base_url="/media",
+            bucket_name="reverse1999-assets",
+        ),
+    )
     repo = MySQLWikiRepository(cfg)
     repo._connect = lambda: RecordingConnection(cursor)  # type: ignore[method-assign]
     return repo
@@ -413,10 +420,12 @@ def test_crawler_only_thumbnail_prefers_canonical_roster_avatar_in_one_query():
     cursor = RecordingCursor(
         all_rows=[[{
             "page_id": "char:3003",
+            "object_key": "reverse1999/portrait/aa/avatar.webp",
             "url": "http://127.0.0.1:9002/reverse1999-assets/reverse1999/portrait/aa/avatar.webp",
             "media_role": "roster_avatar",
         }, {
             "page_id": "char:3003",
+            "object_key": "reverse1999/portrait/bb/stage.webp",
             "url": "http://127.0.0.1:9002/reverse1999-assets/reverse1999/portrait/bb/stage.webp",
             "media_role": "stage_live2d",
         }]],
@@ -430,8 +439,11 @@ def test_crawler_only_thumbnail_prefers_canonical_roster_avatar_in_one_query():
     assert "wiki_page_supplements" not in sql
     assert "roster_avatar" in sql
     assert "LOWER(asset_type) IN" in sql
+    assert "object_key" in sql
     assert params == ("char:3003",)
-    assert result["char:3003"].endswith("/avatar.webp")
+    assert result["char:3003"] == (
+        "/media/reverse1999-assets/reverse1999/portrait/aa/avatar.webp"
+    )
 
 
 def test_crawler_only_thumbnail_query_escapes_percent_for_pymysql_parameter_formatting():
@@ -487,6 +499,10 @@ def test_crawler_only_page_detail_never_queries_or_merges_supplements():
 
     assert detail["content"]["crawlerProjectionVersion"] == 1
     assert detail["mediaLinks"][0]["role"] == "roster_avatar"
+    assert detail["mediaLinks"][0]["url"] == (
+        "/media/reverse1999-assets/reverse1999/portrait/aa/a.webp"
+    )
+    assert "127.0.0.1:9002" not in str(detail)
     assert all("wiki_page_supplements" not in sql for sql, _ in cursor.calls)
     assert "supplement" not in str(detail).casefold()
 
@@ -511,6 +527,7 @@ def test_v3_page_detail_reads_resource_binding_join_without_collapsing_media_id(
         "section_key": "profile",
         "media_role": "stage_portrait",
         "display_order": 1,
+        "object_key": "reverse1999/portrait/shared.webp",
         "url": "https://cdn.example/shared.webp",
         "asset_type": "portrait",
         "mime": "image/webp",
@@ -539,3 +556,39 @@ def test_v3_page_detail_reads_resource_binding_join_without_collapsing_media_id(
     assert detail["mediaLinks"][0]["mediaId"] == detail["mediaLinks"][1]["mediaId"]
     assert detail["mediaLinks"][0]["bindingId"] != detail["mediaLinks"][1]["bindingId"]
     assert any("wiki_media_bindings" in sql for sql, _ in cursor.calls)
+
+
+def test_page_detail_omits_media_with_missing_or_unsafe_object_keys():
+    page_row = _page_row("char:3003")
+    cursor = RecordingCursor(
+        one_rows=[page_row, {"artifact_schema_version": ""}],
+        all_rows=[[
+            {
+                "page_id": "char:3003",
+                "section_key": "profile",
+                "media_id": "missing-key",
+                "media_role": "portrait",
+                "display_order": 1,
+                "object_key": "",
+                "url": "https://stored.example/missing.webp",
+                "asset_type": "portrait",
+                "mime": "image/webp",
+            },
+            {
+                "page_id": "char:3003",
+                "section_key": "profile",
+                "media_id": "unsafe-key",
+                "media_role": "portrait",
+                "display_order": 2,
+                "object_key": "../private.webp",
+                "url": "https://stored.example/unsafe.webp",
+                "asset_type": "portrait",
+                "mime": "image/webp",
+            },
+        ], [], []],
+    )
+    repo = _repo_with_cursor(cursor)
+
+    detail = repo.get_page_detail("char:3003")
+
+    assert detail["mediaLinks"] == []
