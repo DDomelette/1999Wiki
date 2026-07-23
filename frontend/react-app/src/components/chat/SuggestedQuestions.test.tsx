@@ -7,12 +7,32 @@ import {
 } from './SuggestedQuestions'
 
 describe('suggested question pool', () => {
-  it('keeps a small curated pool covering the supported discovery topics', () => {
+  it('keeps a small curated pool limited to answerable character questions', () => {
+    const answerableCharacterNames = [
+      '十四行诗',
+      '槲寄生',
+      '苏芙比',
+      '未锈铠',
+      '星锑',
+      '百夫长',
+      '玛蒂尔达',
+      '牙仙',
+    ]
+
     expect(SUGGESTED_QUESTION_POOL).toHaveLength(12)
+    expect(
+      SUGGESTED_QUESTION_POOL.filter((question) => question.startsWith('介绍一下')),
+    ).toHaveLength(8)
+
+    for (const question of SUGGESTED_QUESTION_POOL) {
+      expect(
+        answerableCharacterNames.some((characterName) => question.includes(characterName)),
+      ).toBe(true)
+    }
 
     const questions = SUGGESTED_QUESTION_POOL.join(' ')
-    for (const topic of ['十四行诗', '心相', '剧情', '世界观', '阵营', '日历']) {
-      expect(questions).toContain(topic)
+    for (const unsupportedTopic of ['世界观', '暴雨', '基金会', '阵营', '心相', '日历']) {
+      expect(questions).not.toContain(unsupportedTopic)
     }
   })
 })
