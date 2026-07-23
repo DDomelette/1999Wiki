@@ -1,0 +1,9 @@
+{$SITE_ADDRESS} {
+	handle_path /media/* {
+		reverse_proxy {$MINIO_PROXY_UPSTREAM}
+	}
+
+	handle {
+		import /etc/caddy/active-upstream.caddy
+	}
+}
