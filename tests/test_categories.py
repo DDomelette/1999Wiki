@@ -110,6 +110,87 @@ def test_categories_doc_count_works_when_count_where_unsupported(client):
     assert calendar["doc_count"] == 506
 
 
+class _MilvusIterator:
+    def __init__(self, batches):
+        self._batches = iter(batches)
+        self.closed = False
+
+    def next(self):
+        value = next(self._batches)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    def close(self):
+        self.closed = True
+
+
+class _MilvusClient:
+    def __init__(self, iterator):
+        self.iterator = iterator
+        self.iterator_calls = []
+        self.query_called = False
+
+    def query_iterator(self, **kwargs):
+        self.iterator_calls.append(kwargs)
+        return self.iterator
+
+    def query(self, **_kwargs):
+        self.query_called = True
+        raise AssertionError("legacy query() must not be used for Milvus category counts")
+
+
+class _MilvusVectorstore:
+    collection_name = "wiki_chunks"
+
+    def __init__(self, client):
+        self.client = client
+
+
+def test_milvus_category_count_iterates_all_batches_and_escapes_filter():
+    from backend import main as main_mod
+
+    iterator = _MilvusIterator([[{"id": "1"}, {"id": "2"}], [{"id": "3"}], []])
+    client = _MilvusClient(iterator)
+    category = 'path\\part"quoted'
+
+    assert main_mod._count_by_category(_MilvusVectorstore(client), category) == 3
+    assert client.iterator_calls == [{
+        "collection_name": "wiki_chunks",
+        "batch_size": 1000,
+        "limit": -1,
+        "filter": 'category == "path\\\\part\\"quoted"',
+        "output_fields": ["id"],
+    }]
+    assert client.query_called is False
+    assert iterator.closed is True
+
+
+def test_milvus_category_count_closes_iterator_after_empty_first_batch():
+    from backend import main as main_mod
+
+    iterator = _MilvusIterator([[]])
+    client = _MilvusClient(iterator)
+
+    assert main_mod._count_by_category(_MilvusVectorstore(client), "人物") == 0
+    assert client.query_called is False
+    assert iterator.closed is True
+
+
+def test_milvus_category_count_logs_and_propagates_iterator_errors(caplog):
+    from backend import main as main_mod
+
+    iterator = _MilvusIterator([RuntimeError("Milvus is unavailable")])
+    client = _MilvusClient(iterator)
+
+    with pytest.raises(RuntimeError, match="Milvus is unavailable"):
+        main_mod._count_by_category(_MilvusVectorstore(client), "人物")
+
+    assert client.query_called is False
+    assert iterator.closed is True
+    assert "人物" in caplog.text
+
+
 def test_category_docs_snippet_strips_obsidian_display_markup(monkeypatch):
     """展示用 snippet 不应把 Dataview/图片嵌入/HTML 标签直接给前端。"""
     from langchain_core.documents import Document

@@ -1,6 +1,7 @@
 """FastAPI backend for health, RAG ask, category metadata, and static HTML."""
 from __future__ import annotations
 
+import logging
 import re
 import sys
 from datetime import datetime, timezone
@@ -56,6 +57,7 @@ from src.utils.text_cleaner import clean_markdown
 
 cfg = get_config()
 install_uvicorn_access_log_filter()
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="1999Search RAG", version="1.0.0")
 
@@ -280,20 +282,30 @@ async def voice_page(cursor: str) -> VoicePanelPage:
 def _count_by_category(vs: Any, category: str) -> int:
     if _is_milvus_vectorstore(vs):
         try:
-            rows = vs.client.query(
+            iterator = vs.client.query_iterator(
                 collection_name=vs.collection_name,
+                batch_size=1000,
+                limit=-1,
                 filter=_milvus_string_expr("category", category),
                 output_fields=["id"],
-                limit=100000,
             )
-            return len(rows)
+            try:
+                count = 0
+                while True:
+                    batch = iterator.next()
+                    if not batch:
+                        return count
+                    count += len(batch)
+            finally:
+                iterator.close()
         except Exception:
-            return 0
+            logger.error("Milvus category count failed for category=%r", category)
+            raise
     try:
         return vs._collection.count(where={"category": category})
     except TypeError:
         try:
-            res = vs._collection.get(where={"category": category}, include=[], limit=100000)
+            res = vs._collection.get(where={"category": category}, include=[], limit=100_000)
             return len(res.get("ids", []))
         except Exception:
             return 0
