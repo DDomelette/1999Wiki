@@ -7,3 +7,6 @@ start.bat -text
 # GitHub rejects ordinary Git blobs larger than 100 MiB. The retained homepage
 # video is a required frontend asset, so store MP4 payloads through Git LFS.
 *.mp4 filter=lfs diff=lfs merge=lfs -text
+
+*.bat text eol=crlf
+*.cmd text eol=crlf

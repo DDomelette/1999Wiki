@@ -87,7 +87,14 @@ class VoicePaginationUnavailable(RuntimeError):
 
 
 class RAGChain:
-    def __init__(self, cfg: Config, retriever: Retriever) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        retriever: Retriever,
+        *,
+        entity_lexicon: EntityLexicon | None = None,
+        asset_registry: HuijiMediaRegistry | None = None,
+    ) -> None:
         require_huiji_runtime_source(cfg)
         self._cfg = cfg
         self._retriever = retriever
@@ -96,10 +103,19 @@ class RAGChain:
             temperature=float(getattr(cfg.llm, "temperature", 0.3)),
         ) if cfg.llm.api_key else None
         artifact_snapshot = getattr(retriever, "artifact_snapshot", None)
-        entity_lexicon = EntityLexicon.from_huiji(cfg, artifact_snapshot)
-        self._query_planner = QueryPlanner(self._planner_llm, entity_lexicon=entity_lexicon)
+        resolved_lexicon = entity_lexicon or EntityLexicon.from_huiji(
+            cfg,
+            artifact_snapshot,
+        )
+        self._query_planner = QueryPlanner(
+            self._planner_llm,
+            entity_lexicon=resolved_lexicon,
+        )
         self._prompt = get_rag_prompt()
-        self._asset_registry = HuijiMediaRegistry(cfg, artifact_snapshot=artifact_snapshot)
+        self._asset_registry = asset_registry or HuijiMediaRegistry(
+            cfg,
+            artifact_snapshot=artifact_snapshot,
+        )
         self._execution_service = RAGExecutionService(self)
 
     def _build_llm(self, *, temperature: float) -> ChatOpenAI:

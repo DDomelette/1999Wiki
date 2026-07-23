@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from src.rag.chain import RAGChain
 from src.rag.conversation import ConversationMemoryStore
+from src.rag.entity_lexicon import EntityLexicon
 from src.rag.retriever import RetrievalExecutionError
 
 
@@ -54,6 +55,28 @@ class _ProbeLLM:
         raise AssertionError("retrieval failure must not invoke the answer model")
 
 
+class _ProbeMediaRegistry:
+    def find_for_retrieval(
+        self,
+        plan: object,
+        sources: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        del plan, sources
+        return []
+
+    def find_bundle_for_retrieval(
+        self,
+        plan: object,
+        sources: list[dict[str, Any]],
+    ) -> SimpleNamespace:
+        del plan, sources
+        return SimpleNamespace(items=(), panels=())
+
+    def get_voice_page(self, cursor: str) -> dict[str, object]:
+        del cursor
+        return {"next_cursor": None, "lines": []}
+
+
 def _parse_sse(text: str) -> dict[str, Mapping[str, Any]]:
     events: dict[str, Mapping[str, Any]] = {}
     for block in text.split("\n\n"):
@@ -95,7 +118,12 @@ def run_isolated_route_failure_probe() -> dict[str, Any]:
     retriever = _FailingRetriever()
     llm = _ProbeLLM()
     cfg = replace(main_module.cfg, llm=replace(main_module.cfg.llm, api_key=""))
-    chain = RAGChain(cfg, retriever)
+    chain = RAGChain(
+        cfg,
+        retriever,
+        entity_lexicon=EntityLexicon(()),
+        asset_registry=_ProbeMediaRegistry(),
+    )
     chain._query_planner = _ProbePlanner()
     chain._llm = llm
 
