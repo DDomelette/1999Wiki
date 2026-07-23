@@ -2,8 +2,6 @@ export type WikiLocation =
   | { kind: 'character-selection' }
   | { kind: 'detail'; route: string; resolverHint?: string }
 
-export type WikiRouteBase = '/wiki' | '/wiki-preview'
-
 export interface WikiSelectionHistoryState {
   category: string
   query: string
@@ -19,7 +17,8 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-export function parseWikiLocation(pathname: string, basePath: WikiRouteBase = '/wiki'): WikiLocation {
+export function parseWikiLocation(pathname: string): WikiLocation {
+  const basePath = '/wiki'
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
   if (normalized === basePath || normalized === `${basePath}/character`) {
     return { kind: 'character-selection' }
@@ -33,16 +32,6 @@ export function parseWikiLocation(pathname: string, basePath: WikiRouteBase = '/
     }
   }
   return { kind: 'detail', route: normalized }
-}
-
-export function toCanonicalWikiRoute(route: string, basePath: WikiRouteBase = '/wiki'): string {
-  if (basePath !== '/wiki-preview') return route
-  return route.replace(/^\/wiki-preview(?=\/|$)/, '/wiki')
-}
-
-export function toVisibleWikiRoute(route: string, basePath: WikiRouteBase = '/wiki'): string {
-  if (basePath !== '/wiki-preview') return route
-  return route.replace(/^\/wiki(?=\/|$)/, '/wiki-preview')
 }
 
 export function replaceWikiLocation(route: string, state: unknown = window.history.state): void {

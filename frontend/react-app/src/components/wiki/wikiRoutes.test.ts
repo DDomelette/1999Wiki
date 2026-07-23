@@ -4,8 +4,6 @@ import {
   pushWikiDetail,
   readWikiSelectionState,
   replaceWikiLocation,
-  toCanonicalWikiRoute,
-  toVisibleWikiRoute,
   type WikiSelectionHistoryState,
 } from './wikiRoutes'
 
@@ -31,16 +29,6 @@ describe('wiki routes', () => {
     })
     expect(parseWikiLocation('/wiki/char/3003')).toEqual({ kind: 'detail', route: '/wiki/char/3003' })
     expect(parseWikiLocation('/wiki/story/42')).toEqual({ kind: 'detail', route: '/wiki/story/42' })
-  })
-
-  it('maps preview routes to API-owned canonical routes without changing the suffix', () => {
-    expect(parseWikiLocation('/wiki-preview/character', '/wiki-preview')).toEqual({ kind: 'character-selection' })
-    expect(parseWikiLocation('/wiki-preview/char/3003', '/wiki-preview')).toEqual({
-      kind: 'detail',
-      route: '/wiki-preview/char/3003',
-    })
-    expect(toCanonicalWikiRoute('/wiki-preview/char/3003', '/wiki-preview')).toBe('/wiki/char/3003')
-    expect(toVisibleWikiRoute('/wiki/character/3003', '/wiki-preview')).toBe('/wiki-preview/character/3003')
   })
 
   it('stores selection state while preserving the API-owned detail route', () => {

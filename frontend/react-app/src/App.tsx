@@ -24,11 +24,8 @@ export default function App() {
   if (import.meta.env.DEV && pathname === '/__motion-preview') {
     return <MotionPreview />
   }
-  if (pathname.startsWith('/wiki-preview')) {
-    return <WikiShell variant="kimi-preview" />
-  }
   if (pathname.startsWith('/wiki')) {
-    return <WikiShell variant="current" />
+    return <WikiShell />
   }
 
   return <MainApp />

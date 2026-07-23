@@ -20,35 +20,6 @@ describe('/wiki route', () => {
     expect(container.querySelector('.snap-container')).not.toBeInTheDocument()
   })
 
-  it('mounts the isolated Kimi preview shell without entering the three-screen app', async () => {
-    vi.stubGlobal('fetch', vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          ready: true,
-          pageCount: 0,
-          categoryCount: 0,
-          mediaLinkCount: 0,
-          linkSpanCount: 0,
-          aliasCount: 0,
-          sourceMode: 'mysql',
-          buildVersion: 'dev',
-          artifactSchemaVersion: '1',
-          manifestSha256Prefix: 'test',
-          stale: false,
-          error: '',
-        }),
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ categories: [] }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [], nextCursor: null }) }))
-    window.history.pushState({}, '', '/wiki-preview/character')
-
-    const { container } = render(<App />)
-
-    await waitFor(() => expect(screen.getByTestId('wiki-shell')).toHaveAttribute('data-wiki-variant', 'kimi-preview'))
-    expect(container.querySelector('.snap-container')).not.toBeInTheDocument()
-  })
-
   it('responds to popstate instead of freezing the route from the first render', async () => {
     vi.stubGlobal('IntersectionObserver', class {
       observe() {}

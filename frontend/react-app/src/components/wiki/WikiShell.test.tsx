@@ -11,7 +11,6 @@ vi.mock('../../api/wiki', async (importOriginal) => {
     fetchWikiPages: vi.fn(),
     fetchWikiPage: vi.fn(),
     fetchWikiPageByRoute: vi.fn(),
-    fetchWikiHealth: vi.fn(),
     resolveWikiRoute: vi.fn(),
   }
 })
@@ -66,20 +65,6 @@ describe('WikiShell', () => {
     vi.mocked(wikiApi.fetchWikiPages).mockResolvedValue({ items: [listItem], nextCursor: null })
     vi.mocked(wikiApi.fetchWikiPage).mockResolvedValue(detail)
     vi.mocked(wikiApi.fetchWikiPageByRoute).mockResolvedValue(detail)
-    vi.mocked(wikiApi.fetchWikiHealth).mockResolvedValue({
-      ready: true,
-      pageCount: 132,
-      categoryCount: 6,
-      mediaLinkCount: 1,
-      linkSpanCount: 0,
-      aliasCount: 0,
-      sourceMode: 'mysql',
-      buildVersion: 'dev',
-      artifactSchemaVersion: '1',
-      manifestSha256Prefix: 'abc123',
-      stale: false,
-      error: '',
-    })
     vi.mocked(wikiApi.resolveWikiRoute).mockResolvedValue({ route: null, query: '' })
   })
 
@@ -93,100 +78,6 @@ describe('WikiShell', () => {
     expect(screen.queryByTestId('wiki-category-hot-zone')).not.toBeInTheDocument()
     expect(screen.getByTestId('wiki-page-index')).toBeInTheDocument()
     expect(screen.queryByTestId('wiki-reader')).not.toBeInTheDocument()
-  })
-
-  it('mounts the Kimi selection tree only on the isolated preview route', async () => {
-    window.history.replaceState({}, '', '/wiki-preview/character')
-
-    render(<WikiShell variant="kimi-preview" />)
-
-    expect(await screen.findByTestId('wiki-character-selection-preview')).toBeInTheDocument()
-    expect(screen.queryByTestId('wiki-character-selection')).not.toBeInTheDocument()
-    expect(screen.getByTestId('kimi-character-roster')).toBeInTheDocument()
-    expect(screen.getByTestId('wiki-shell')).toHaveAttribute('data-wiki-variant', 'kimi-preview')
-  })
-
-  it('shows crawler snapshot diagnostics only in the Kimi preview without blocking the page', async () => {
-    window.history.replaceState({}, '', '/wiki-preview/character')
-    vi.mocked(wikiApi.fetchWikiHealth).mockResolvedValue({
-      ready: true,
-      pageCount: 132,
-      categoryCount: 6,
-      mediaLinkCount: 1,
-      linkSpanCount: 0,
-      aliasCount: 0,
-      sourceMode: 'mysql',
-      buildVersion: 'dev',
-      artifactSchemaVersion: '1',
-      manifestSha256Prefix: 'abc123',
-      stale: true,
-      error: '',
-    })
-
-    render(<WikiShell variant="kimi-preview" />)
-
-    expect(await screen.findByText(/WIKI SNAPSHOT STALE/i)).toBeInTheDocument()
-    expect(screen.getByTestId('wiki-character-selection-preview')).toBeInTheDocument()
-  })
-
-  it('does not request preview health from the formal Wiki route', async () => {
-    render(<WikiShell />)
-
-    await screen.findByTestId('wiki-character-selection')
-    expect(wikiApi.fetchWikiHealth).not.toHaveBeenCalled()
-  })
-
-  it('keeps preview content available when health fails and exposes a health-only retry', async () => {
-    window.history.replaceState({}, '', '/wiki-preview/character')
-    vi.mocked(wikiApi.fetchWikiHealth).mockRejectedValue(new wikiApi.WikiApiError(503, '/api/wiki/health'))
-
-    render(<WikiShell variant="kimi-preview" />)
-
-    expect(await screen.findByText('WIKI HEALTH UNAVAILABLE')).toBeInTheDocument()
-    expect(screen.getByTestId('wiki-character-selection-preview')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '重试 Wiki 健康检查' }))
-    await waitFor(() => expect(wikiApi.fetchWikiHealth).toHaveBeenCalledTimes(2))
-  })
-
-  it('separates category discovery failure from list data and allows category-only retry', async () => {
-    window.history.replaceState({}, '', '/wiki-preview/character')
-    vi.mocked(wikiApi.fetchWikiCategories).mockRejectedValue(new wikiApi.WikiApiError(503, '/api/wiki/categories'))
-
-    render(<WikiShell variant="kimi-preview" />)
-
-    expect(await screen.findByText('分类入口暂不可用：HTTP 503')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '重试 Wiki 分类' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '爱兹拉' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '重试 Wiki 分类' }))
-    await waitFor(() => expect(wikiApi.fetchWikiCategories).toHaveBeenCalledTimes(2))
-  })
-
-  it('distinguishes a selected-character preview failure from a list failure and allows retry', async () => {
-    window.history.replaceState({}, '', '/wiki-preview/character')
-    vi.mocked(wikiApi.fetchWikiPage).mockRejectedValue(new wikiApi.WikiApiError(503, '/api/wiki/pages/char:3074'))
-
-    render(<WikiShell variant="kimi-preview" />)
-
-    expect(await screen.findByText('角色预览暂不可用：HTTP 503')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '重试角色预览' })).toBeInTheDocument()
-    expect(screen.queryByText(/条目列表暂不可用/)).not.toBeInTheDocument()
-  })
-
-  it('distinguishes a missing detail from a temporarily unavailable detail service', async () => {
-    window.history.replaceState({}, '', '/wiki-preview/char/3074')
-    vi.mocked(wikiApi.fetchWikiPageByRoute).mockRejectedValue(new wikiApi.WikiApiError(404, '/api/wiki/pages/by-route'))
-    vi.mocked(wikiApi.resolveWikiRoute).mockResolvedValue({ route: null, query: '3074' })
-
-    const missing = render(<WikiShell variant="kimi-preview" />)
-    expect(await screen.findByText('未找到对应 Wiki 档案（HTTP 404）')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '返回角色索引' })).toBeInTheDocument()
-    missing.unmount()
-
-    window.history.replaceState({}, '', '/wiki-preview/char/3074')
-    vi.mocked(wikiApi.fetchWikiPageByRoute).mockRejectedValue(new wikiApi.WikiApiError(503, '/api/wiki/pages/by-route'))
-    render(<WikiShell variant="kimi-preview" />)
-    expect(await screen.findByText('Wiki 详情服务暂不可用（HTTP 503）')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '重试 Wiki 详情' })).toBeInTheDocument()
   })
 
   it('keeps the official global background visible under the wiki surface', async () => {
@@ -231,26 +122,6 @@ describe('WikiShell', () => {
     expect(screen.getByRole('heading', { name: '传承' })).toBeInTheDocument()
     expect(screen.getByText('LV.5')).toBeInTheDocument()
     expect(screen.getByText('角色摘要')).toBeInTheDocument()
-  })
-
-  it('requests the canonical API route while preserving a preview detail URL', async () => {
-    window.history.replaceState({}, '', '/wiki-preview/char/3074')
-
-    render(<WikiShell variant="kimi-preview" />)
-
-    await waitFor(() => expect(wikiApi.fetchWikiPageByRoute).toHaveBeenCalledWith('/wiki/char/3074'))
-    expect(window.location.pathname).toBe('/wiki-preview/char/3074')
-    expect(screen.getByTestId('wiki-shell')).toHaveAttribute('data-wiki-variant', 'kimi-preview')
-  })
-
-  it('mounts only the Kimi dossier tree on a preview detail route', async () => {
-    window.history.replaceState({}, '', '/wiki-preview/char/3074')
-
-    render(<WikiShell variant="kimi-preview" />)
-
-    expect(await screen.findByTestId('kimi-desktop-character-dossier')).toBeInTheDocument()
-    expect(screen.queryByTestId('desktop-character-dossier')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('wiki-character-detail')).not.toBeInTheDocument()
   })
 
   it('mounts the mobile dossier tree and keeps voice records as its only nested scroll owner', async () => {

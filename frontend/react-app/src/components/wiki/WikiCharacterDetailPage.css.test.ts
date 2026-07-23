@@ -3,7 +3,6 @@ import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const detailCss = readFileSync(new URL('./WikiCharacterDetailPage.css', import.meta.url), 'utf8')
-const previewCss = readFileSync(new URL('../wiki-preview/KimiWikiPreview.css', import.meta.url), 'utf8')
 const indexHtml = readFileSync(new URL('../../../index.html', import.meta.url), 'utf8')
 const main = readFileSync(new URL('../../main.tsx', import.meta.url), 'utf8')
 const fontsUrl = new URL('../../styles/fonts.css', import.meta.url)
@@ -68,6 +67,5 @@ describe('Stitch character dossier visual contract', () => {
     ]) {
       expect(existsSync(new URL(path, publicUrl)), `missing public/${path}`).toBe(true)
     }
-    expect(previewCss).not.toContain('/images/wiki/natural-paper.png')
   })
 })
