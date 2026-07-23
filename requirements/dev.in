@@ -1,7 +1,10 @@
 -r runtime.in
-pytest
-pytest-asyncio
-httpx
+httpx==0.28.1
+packaging==26.2
 pip==25.2
 pip-tools==7.5.1
-requests
+psutil==7.2.2
+pytest==9.1.1
+pytest-asyncio==1.4.0
+requests==2.34.2
+ruamel.yaml==0.17.21
