@@ -1,0 +1,62 @@
+# Repository and local task metadata
+.git/
+.worktrees/
+.superpowers/
+.idea/
+.vscode/
+
+# Secrets, credentials, and browser state
+.env
+.env.*
+**/.env
+**/.env.*
+**/*credentials*.json
+**/*cookies*.json
+**/browser_profile/
+**/edge_profile/
+**/*.pem
+**/*.key
+
+# Persistent and generated runtime payloads
+data/
+vectorstore/
+workspace/
+infra/
+eval/
+backups/
+logs/
+*.log
+*.bak
+*.backup
+recovery-*.txt
+
+# Development dependencies, caches, tests, and local builds
+**/node_modules/
+**/dist/
+tests/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.vitest/
+**/*.test.*
+**/*.spec.*
+**/test-results/
+**/playwright-report/
+
+# Crawler/evaluation source and distributable payloads are separate artifacts
+src/huiji_crawler_packaging/
+src/huiji_crawler_tool/
+src/rag_eval/
+crawl_huiji_res1999.*
+download_huiji_resources.*
+verify_huiji_res1999.*
+
+# Documentation and host-only helpers are not application image inputs
+docs/
+bootstrap/
+packaging/
+scripts/
+start.bat
+start.ps1
+requirements.txt

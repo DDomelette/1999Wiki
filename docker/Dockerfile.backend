@@ -1,0 +1,43 @@
+FROM python:3.11.15-slim-bookworm AS deps
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+RUN python -m venv /opt/venv
+COPY requirements/runtime.lock.txt /tmp/runtime.lock.txt
+RUN /opt/venv/bin/python -m pip install --no-cache-dir -r /tmp/runtime.lock.txt
+
+FROM python:3.11.15-slim-bookworm AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8000
+WORKDIR /app
+COPY --from=deps /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+COPY backend ./backend
+COPY config/config.py config/settings.yaml ./config/
+COPY config/provenance ./config/provenance
+COPY src/__init__.py ./src/
+COPY src/rag ./src/rag
+COPY src/assets ./src/assets
+COPY src/utils ./src/utils
+COPY src/huiji_wiki/__init__.py src/huiji_wiki/models.py \
+     src/huiji_wiki/repository.py ./src/huiji_wiki/
+COPY src/huijiwiki/__init__.py src/huijiwiki/errors.py src/huijiwiki/models.py \
+     src/huijiwiki/project_paths.py ./src/huijiwiki/
+COPY src/huiji_rag/__init__.py src/huiji_rag/active_pointer.py \
+     src/huiji_rag/io.py src/huiji_rag/media.py src/huiji_rag/models.py \
+     src/huiji_rag/normalizer.py src/huiji_rag/provenance.py \
+     src/huiji_rag/runtime_artifacts.py src/huiji_rag/source.py \
+     ./src/huiji_rag/
+COPY src/huiji_rag/build/contracts.py ./src/huiji_rag/build/
+
+RUN addgroup --system app && adduser --system --ingroup app app \
+    && chown -R app:app /app
+USER app
+RUN python -c "import backend.main"
+
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
