@@ -165,6 +165,18 @@ def _env_string(name: str, fallback: str) -> str:
     return os.environ[name] if name in os.environ else fallback
 
 
+def _env_port(name: str, fallback: int) -> int:
+    if name not in os.environ:
+        return fallback
+    try:
+        port = int(os.environ[name])
+    except ValueError:
+        raise ValueError(f"{name} must be an integer between 1 and 65535") from None
+    if not 1 <= port <= 65535:
+        raise ValueError(f"{name} must be an integer between 1 and 65535")
+    return port
+
+
 def _env_string_with_legacy_fallback(
     name: str,
     legacy_name: str,
@@ -307,7 +319,7 @@ def get_config() -> Config:
         ),
         mysql=MysqlCfg(
             host=_env_string("MYSQL_HOST", str(mysql_raw.get("host", "127.0.0.1"))),
-            port=int(os.environ.get("MYSQL_PORT") or mysql_raw.get("port", 3306)),
+            port=_env_port("MYSQL_PORT", int(mysql_raw.get("port", 3306))),
             database=_env_string(
                 "MYSQL_DATABASE",
                 str(mysql_raw.get("database", "reverse1999_wiki")),

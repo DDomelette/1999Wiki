@@ -139,6 +139,33 @@ def test_empty_mysql_environment_values_override_yaml_defaults(monkeypatch):
     assert cfg.mysql.password == ""
 
 
+def test_mysql_port_uses_yaml_default_when_environment_is_absent(monkeypatch):
+    monkeypatch.delenv("MYSQL_PORT", raising=False)
+
+    cfg = get_config()
+
+    assert cfg.mysql.port == _settings_payload()["mysql"]["port"]
+
+
+def test_mysql_port_uses_valid_environment_override(monkeypatch):
+    monkeypatch.setenv("MYSQL_PORT", "3307")
+
+    cfg = get_config()
+
+    assert cfg.mysql.port == 3307
+
+
+@pytest.mark.parametrize("value", ["", "   ", "not-a-port", "0", "65536"])
+def test_mysql_port_rejects_invalid_present_environment_values(monkeypatch, value):
+    monkeypatch.setenv("MYSQL_PORT", value)
+
+    with pytest.raises(ValueError, match="MYSQL_PORT") as error:
+        get_config()
+
+    if value:
+        assert value not in str(error.value)
+
+
 def test_api_keys_empty_when_env_unset(monkeypatch):
     reset_config_for_test()
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
