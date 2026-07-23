@@ -32,9 +32,13 @@ def _decoded_layers(value: str) -> tuple[str, ...]:
 
 
 def _validate_component(value: str, *, label: str) -> str:
-    candidate = str(value).strip()
+    candidate = str(value)
     if not candidate:
         raise ValueError(f"{label} must not be empty")
+    if _contains_unsafe_unicode(candidate):
+        raise ValueError(f"{label} contains unsafe characters")
+    if candidate != candidate.strip():
+        raise ValueError(f"{label} must not contain edge whitespace")
     for decoded in _decoded_layers(candidate):
         if "\\" in decoded or _contains_unsafe_unicode(decoded):
             raise ValueError(f"{label} contains unsafe characters")
@@ -59,16 +63,19 @@ def _validate_http_authority(parsed: Any) -> None:
         raise ValueError("HTTP(S) URL authority is malformed") from error
     if not hostname:
         raise ValueError("HTTP(S) URL hostname must not be empty")
+    validation_hostname = hostname[:-1] if hostname.endswith(".") else hostname
+    if not validation_hostname:
+        raise ValueError("HTTP(S) URL hostname must not be empty")
 
     try:
-        ipaddress.ip_address(hostname)
+        ipaddress.ip_address(validation_hostname)
         return
     except ValueError:
-        if ":" in hostname:
+        if ":" in validation_hostname:
             raise ValueError("HTTP(S) URL IPv6 hostname is malformed") from None
 
     try:
-        ascii_hostname = hostname.encode("idna").decode("ascii")
+        ascii_hostname = validation_hostname.encode("idna").decode("ascii")
     except UnicodeError as error:
         raise ValueError("HTTP(S) URL hostname is not valid IDNA") from error
     labels = ascii_hostname.split(".")
@@ -83,6 +90,16 @@ def _validate_http_authority(parsed: Any) -> None:
         or len(ascii_hostname.encode("ascii")) > 253
     ):
         raise ValueError("HTTP(S) URL hostname is malformed")
+    for label in labels:
+        if not label.casefold().startswith("xn--"):
+            continue
+        try:
+            decoded_label = label.encode("ascii").decode("idna")
+            canonical_label = decoded_label.encode("idna").decode("ascii")
+        except UnicodeError as error:
+            raise ValueError("HTTP(S) URL hostname has an invalid A-label") from error
+        if canonical_label.casefold() != label.casefold():
+            raise ValueError("HTTP(S) URL hostname has a non-canonical A-label")
     if len(labels) > 1 and all(label.isdigit() for label in labels):
         raise ValueError("HTTP(S) URL IPv4 hostname is malformed")
 
@@ -187,7 +204,7 @@ def project_media_row(
     base_url: str,
     bucket_name: str,
 ) -> dict[str, Any] | None:
-    object_key = str(row.get("object_key") or "").strip()
+    object_key = str(row.get("object_key") or "")
     if not object_key:
         return None
     try:

@@ -66,6 +66,32 @@ def test_normalize_public_media_base_accepts_valid_idna_ip_and_localhost(base_ur
 @pytest.mark.parametrize(
     "base_url",
     [
+        "https://xn--fsqu00a.xn--0zwm56d/base",
+        "https://example.com./base",
+    ],
+)
+def test_normalize_public_media_base_accepts_valid_alabel_and_root_dot(base_url):
+    assert normalize_public_media_base(base_url) == base_url
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://xn--a.com/base",
+        "https://xn--abc.com/base",
+        "https://example..com./base",
+    ],
+)
+def test_normalize_public_media_base_rejects_malformed_alabels_and_empty_labels(
+    base_url,
+):
+    with pytest.raises(ValueError):
+        normalize_public_media_base(base_url)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
         "https://:443/base",
         "https://exa mple.com/base",
         "https://example..com/base",
@@ -105,6 +131,29 @@ def test_projector_rejects_malformed_http_authorities(base_url):
 def test_build_public_media_url_rejects_unsafe_object_keys(object_key):
     with pytest.raises(ValueError):
         build_public_media_url("/media", "reverse1999-assets", object_key)
+
+
+@pytest.mark.parametrize(
+    "edge",
+    [" ", "\x1f", "\x85", "\u200b"],
+)
+@pytest.mark.parametrize("side", ["leading", "trailing"])
+def test_projector_rejects_component_edges_without_changing_identity(edge, side):
+    decorate = (
+        (lambda value: edge + value)
+        if side == "leading"
+        else (lambda value: value + edge)
+    )
+    key = decorate("portrait/file.webp")
+    bucket = decorate("reverse1999-assets")
+    base = decorate("/media")
+
+    with pytest.raises(ValueError):
+        build_public_media_url("/media", "reverse1999-assets", key)
+    with pytest.raises(ValueError):
+        build_public_media_url("/media", bucket, "portrait/file.webp")
+    with pytest.raises(ValueError):
+        build_public_media_url(base, "reverse1999-assets", "portrait/file.webp")
 
 
 @pytest.mark.parametrize(
@@ -213,6 +262,33 @@ def test_project_media_row_omits_all_unicode_control_categories(unsafe_character
 
 
 @pytest.mark.parametrize(
+    "object_key",
+    [
+        " portrait/file.webp",
+        "portrait/file.webp ",
+        "\x1fportrait/file.webp",
+        "portrait/file.webp\x1f",
+        "\x85portrait/file.webp",
+        "portrait/file.webp\x85",
+        "\u200bportrait/file.webp",
+        "portrait/file.webp\u200b",
+    ],
+)
+def test_project_media_row_omits_edge_whitespace_without_trimming_key(object_key):
+    source = {
+        "object_key": object_key,
+        "url": "https://stored.example/stale.webp",
+    }
+
+    assert project_media_row(
+        source,
+        base_url="/media",
+        bucket_name="reverse1999-assets",
+    ) is None
+    assert source["object_key"] == object_key
+
+
+@pytest.mark.parametrize(
     "value",
     [
         "/media/bucket/key.webp",
@@ -221,6 +297,8 @@ def test_project_media_row_omits_all_unicode_control_categories(unsafe_character
         "https://media.example.com/bucket/key.webp",
         "https://例子.测试/bucket/key.webp",
         "https://[2001:db8::1]:9443/bucket/key.webp",
+        "https://xn--fsqu00a.xn--0zwm56d/bucket/key.webp",
+        "https://example.com./bucket/key.webp",
     ],
 )
 def test_safe_public_media_url_accepts_same_origin_paths_and_http_urls(value):
@@ -249,6 +327,9 @@ def test_safe_public_media_url_accepts_same_origin_paths_and_http_urls(value):
         "https://exa mple.com/key.webp",
         "https://example..com/key.webp",
         "https://example.com:invalid/key.webp",
+        "https://xn--a.com/key.webp",
+        "https://xn--abc.com/key.webp",
+        "https://example..com./key.webp",
     ],
 )
 def test_safe_public_media_url_rejects_unsafe_values(value):
