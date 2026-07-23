@@ -72,6 +72,29 @@ def test_env_overrides_api_keys(monkeypatch):
     assert cfg.embedding.api_key == "sk-embed-test"
 
 
+def test_runtime_service_environment_overrides(monkeypatch):
+    monkeypatch.setenv("MILVUS_URI", "http://standalone:19530")
+    monkeypatch.setenv("MILVUS_DB_NAME", "reverse1999_rag")
+    monkeypatch.setenv("MILVUS_COLLECTION_NAME", "prod_collection")
+    monkeypatch.setenv("MINIO_ENDPOINT", "minio:9000")
+    monkeypatch.setenv("MINIO_SECURE", "false")
+    monkeypatch.setenv("MINIO_BUCKET", "reverse1999-assets")
+    monkeypatch.setenv("MEDIA_PUBLIC_BASE_URL", "/media")
+    monkeypatch.setenv("HUIJI_PROCESSED_ROOT", "/runtime/rag/huiji")
+    reset_config_for_test()
+
+    cfg = get_config()
+
+    assert cfg.vectorstore.uri == "http://standalone:19530"
+    assert cfg.vectorstore.db_name == "reverse1999_rag"
+    assert cfg.vectorstore.collection_name == "prod_collection"
+    assert cfg.assets.endpoint == "minio:9000"
+    assert cfg.assets.secure is False
+    assert cfg.assets.bucket_name == "reverse1999-assets"
+    assert cfg.assets.public_base_url == "/media"
+    assert cfg.huiji.processed_root == Path("/runtime/rag/huiji")
+
+
 def test_api_keys_empty_when_env_unset(monkeypatch):
     reset_config_for_test()
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)

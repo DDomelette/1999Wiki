@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 from dotenv import load_dotenv
@@ -148,6 +149,45 @@ def _normalize_llm_thinking(value: object) -> str:
     return mode
 
 
+def _env_bool(name: str, fallback: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return fallback
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
+
+
+def _validated_media_public_base_url(value: str) -> str:
+    candidate = str(value).strip()
+    if not candidate or "\\" in candidate or any(ord(char) < 32 for char in candidate):
+        raise ValueError("MEDIA_PUBLIC_BASE_URL must be a safe path or HTTP(S) URL")
+    try:
+        parsed = urlsplit(candidate)
+        _port = parsed.port
+    except ValueError as error:
+        raise ValueError("MEDIA_PUBLIC_BASE_URL must be a safe path or HTTP(S) URL") from error
+    if parsed.query or parsed.fragment:
+        raise ValueError("MEDIA_PUBLIC_BASE_URL must not contain query or fragment")
+    if any(segment in {".", ".."} for segment in parsed.path.split("/")):
+        raise ValueError("MEDIA_PUBLIC_BASE_URL must not contain traversal segments")
+    if parsed.scheme:
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("MEDIA_PUBLIC_BASE_URL must use HTTP or HTTPS")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("MEDIA_PUBLIC_BASE_URL must not contain credentials")
+    elif (
+        parsed.netloc
+        or not parsed.path.startswith("/")
+        or parsed.path.startswith("//")
+    ):
+        raise ValueError("MEDIA_PUBLIC_BASE_URL must be a same-origin path or HTTP(S) URL")
+    return candidate
+
+
 def get_config() -> Config:
     """Load settings once and let environment variables override API keys."""
     global _config
@@ -178,6 +218,7 @@ def get_config() -> Config:
         project_root=project_root,
         label="HUIJI_CONFIG_PATH" if credential_env else "huiji.credential_file",
     )
+    processed_root_env = os.getenv("HUIJI_PROCESSED_ROOT")
 
     cfg = Config(
         embedding=EmbeddingCfg(
@@ -206,16 +247,21 @@ def get_config() -> Config:
         ),
         vectorstore=VectorstoreCfg(
             provider=vectorstore_raw["provider"],
-            uri=vectorstore_raw["uri"],
-            db_name=vectorstore_raw["db_name"],
-            collection_name=vectorstore_raw["collection_name"],
+            uri=os.getenv("MILVUS_URI", vectorstore_raw["uri"]),
+            db_name=os.getenv("MILVUS_DB_NAME", vectorstore_raw["db_name"]),
+            collection_name=os.getenv(
+                "MILVUS_COLLECTION_NAME",
+                vectorstore_raw["collection_name"],
+            ),
         ),
         assets=AssetStorageCfg(
             provider=assets_raw["provider"],
-            endpoint=assets_raw["endpoint"],
-            public_base_url=assets_raw["public_base_url"],
-            bucket_name=assets_raw["bucket_name"],
-            secure=bool(assets_raw.get("secure", False)),
+            endpoint=os.getenv("MINIO_ENDPOINT", assets_raw["endpoint"]),
+            public_base_url=_validated_media_public_base_url(
+                os.getenv("MEDIA_PUBLIC_BASE_URL", assets_raw["public_base_url"])
+            ),
+            bucket_name=os.getenv("MINIO_BUCKET", assets_raw["bucket_name"]),
+            secure=_env_bool("MINIO_SECURE", bool(assets_raw.get("secure", False))),
             object_prefix=assets_raw.get("object_prefix", "reverse1999"),
             access_key=(
                 os.environ.get("MINIO_ACCESS_KEY")
@@ -250,10 +296,14 @@ def get_config() -> Config:
                 project_root=project_root,
                 label="huiji.raw_root",
             ),
-            processed_root=resolve_project_local_path(
-                huiji_raw.get("processed_root", "data/processed/huiji"),
-                project_root=project_root,
-                label="huiji.processed_root",
+            processed_root=(
+                Path(processed_root_env).expanduser()
+                if processed_root_env is not None
+                else resolve_project_local_path(
+                    huiji_raw.get("processed_root", "data/processed/huiji"),
+                    project_root=project_root,
+                    label="huiji.processed_root",
+                )
             ),
             credential_file=credential_file,
             build_version=str(huiji_raw.get("build_version", "dev")),

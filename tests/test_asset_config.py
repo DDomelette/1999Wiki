@@ -1,5 +1,7 @@
 from config.config import get_config, reset_config_for_test
 
+import pytest
+
 
 def test_asset_storage_config_uses_yaml_and_env(monkeypatch):
     monkeypatch.setenv("MINIO_ACCESS_KEY", "test-user")
@@ -39,3 +41,23 @@ def test_asset_storage_config_accepts_minio_root_credentials(monkeypatch):
 
     assert cfg.assets.access_key == "root-user"
     assert cfg.assets.secret_key == "root-password"
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("MINIO_SECURE", "perhaps"),
+        ("MEDIA_PUBLIC_BASE_URL", "ftp://media.example.com"),
+        ("MEDIA_PUBLIC_BASE_URL", "/media/../secret"),
+        ("MEDIA_PUBLIC_BASE_URL", "https://user:pass@example.com/media"),
+        ("MEDIA_PUBLIC_BASE_URL", "/media?token=value"),
+    ],
+)
+def test_runtime_asset_environment_rejects_unsafe_values(monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+    reset_config_for_test()
+
+    with pytest.raises(ValueError, match=name) as error:
+        get_config()
+
+    assert value not in str(error.value)
