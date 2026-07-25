@@ -22,7 +22,7 @@ services:
           data = json.load(
               urllib.request.urlopen(
                   'http://127.0.0.1:8000/health/ready',
-                  timeout=3,
+                  timeout=30,
               )
           )
           if not (
@@ -33,7 +33,7 @@ services:
                   'backend readiness failed'
               )
       interval: 30s
-      timeout: 5s
+      timeout: 35s
       retries: 3
       start_period: 30s
     logging:
@@ -57,13 +57,13 @@ services:
       test:
         - CMD-SHELL
         - >-
-          static="$$(wget -q -T 3 -O - http://127.0.0.1:8080/)" &&
+          static="$$(wget -q -T 5 -O - http://127.0.0.1:8080/)" &&
           printf '%s' "$$static" | grep -Fq '<div id="root"></div>' &&
-          readiness="$$(wget -q -T 3 -O - http://127.0.0.1:8080/health/ready)" &&
+          readiness="$$(wget -q -T 30 -O - http://127.0.0.1:8080/health/ready)" &&
           printf '%s' "$$readiness" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' &&
           printf '%s' "$$readiness" | grep -Eq '"failing_subsystems"[[:space:]]*:[[:space:]]*\[\]'
       interval: 30s
-      timeout: 5s
+      timeout: 35s
       retries: 3
       start_period: 30s
     logging:

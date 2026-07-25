@@ -246,7 +246,8 @@ def test_backend_healthcheck_enforces_full_production_readiness() -> None:
     command = healthcheck["test"][3]
     compile(command, "<backend-compose-healthcheck>", "exec")
     assert "json.load" in command
-    assert "timeout=3" in command
+    assert "timeout=30" in command
+    assert healthcheck["timeout"] == "35s"
     assert "http://127.0.0.1:8000/health/ready" in command
     for variable in APP_SECRET_KEYS:
         assert variable not in command
@@ -269,8 +270,9 @@ def test_frontend_healthcheck_enforces_static_and_proxied_backend_readiness() ->
     healthcheck = _compose(APP_COMPOSE)["services"]["frontend"]["healthcheck"]
     assert healthcheck["test"][0] == "CMD-SHELL"
     command = healthcheck["test"][1]
-    assert "wget -q -T 3 -O - http://127.0.0.1:8080/)" in command
-    assert "wget -q -T 3 -O - http://127.0.0.1:8080/health/ready)" in command
+    assert "wget -q -T 5 -O - http://127.0.0.1:8080/)" in command
+    assert "wget -q -T 30 -O - http://127.0.0.1:8080/health/ready)" in command
+    assert healthcheck["timeout"] == "35s"
     assert '<div id="root"></div>' in command
     assert """grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'""" in command
     assert (

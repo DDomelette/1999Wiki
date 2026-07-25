@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+import threading
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterator
@@ -272,6 +275,19 @@ def test_production_readiness_rejects_missing_or_loopback_milvus_configuration(
     _assert_only_failure(response, "milvus")
 
 
+@pytest.mark.parametrize("uri", ["http://[", "http://[::1"])
+def test_production_readiness_rejects_malformed_milvus_uri_without_500_or_secrets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    uri: str,
+) -> None:
+    _closure_fixture(tmp_path)
+    with _production_client(monkeypatch, tmp_path) as client:
+        main_mod.cfg.vectorstore.uri = uri
+        response = client.get("/health/ready")
+    _assert_only_failure(response, "milvus")
+
+
 @pytest.mark.parametrize("credential", ["access_key", "secret_key"])
 def test_production_readiness_rejects_missing_minio_credentials(
     tmp_path: Path,
@@ -384,6 +400,190 @@ def test_production_readiness_passes_all_explicit_gates(
     }
 
 
+def test_production_readiness_full_verification_runs_once_at_startup_then_uses_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _closure_fixture(tmp_path)
+    original_run = subprocess.run
+    verifier_calls = 0
+
+    def counting_run(*args, **kwargs):
+        nonlocal verifier_calls
+        verifier_calls += 1
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(main_mod.subprocess, "run", counting_run)
+    with _production_client(monkeypatch, tmp_path) as client:
+        assert verifier_calls == 1
+        assert client.get("/health/ready").status_code == 200
+        assert client.get("/health/ready").status_code == 200
+    assert verifier_calls == 1
+
+
+def test_production_readiness_tamper_reverification_is_fail_closed_and_cached(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closure = _closure_fixture(tmp_path)
+    original_run = subprocess.run
+    verifier_calls = 0
+
+    def counting_run(*args, **kwargs):
+        nonlocal verifier_calls
+        verifier_calls += 1
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(main_mod.subprocess, "run", counting_run)
+    with _production_client(monkeypatch, tmp_path) as client:
+        assert verifier_calls == 1
+        closure[-1].write_bytes(closure[-1].read_bytes() + b"tampered")
+        first = client.get("/health/ready")
+        second = client.get("/health/ready")
+    _assert_only_failure(first, "rag_artifacts")
+    _assert_only_failure(second, "rag_artifacts")
+    assert verifier_calls == 2
+
+
+def test_production_readiness_invalidates_negative_cache_after_downstream_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closure = _closure_fixture(tmp_path)
+    target = closure[-1]
+    original = target.read_bytes()
+    target.unlink()
+    original_run = subprocess.run
+    verifier_calls = 0
+
+    def counting_run(*args, **kwargs):
+        nonlocal verifier_calls
+        verifier_calls += 1
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(main_mod.subprocess, "run", counting_run)
+    with _production_client(monkeypatch, tmp_path) as client:
+        assert verifier_calls == 1
+        _assert_only_failure(client.get("/health/ready"), "rag_artifacts")
+        assert verifier_calls == 1
+        target.write_bytes(original)
+        assert client.get("/health/ready").status_code == 200
+    assert verifier_calls == 2
+
+
+def test_production_readiness_retries_transient_verifier_failure_after_cooldown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _closure_fixture(tmp_path)
+    original_run = subprocess.run
+    verifier_calls = 0
+    monotonic = [0.0]
+
+    def transient_then_success(*args, **kwargs):
+        nonlocal verifier_calls
+        verifier_calls += 1
+        if verifier_calls == 1:
+            raise subprocess.TimeoutExpired(args[0], timeout=15)
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(main_mod, "_rag_monotonic", lambda: monotonic[0], raising=False)
+    monkeypatch.setattr(main_mod.subprocess, "run", transient_then_success)
+    with _production_client(monkeypatch, tmp_path) as client:
+        _assert_only_failure(client.get("/health/ready"), "rag_artifacts")
+        assert verifier_calls == 1
+        monotonic[0] = 61.0
+        assert client.get("/health/ready").status_code == 200
+    assert verifier_calls == 2
+
+
+def test_production_readiness_rejects_mutation_between_verification_and_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closure = _closure_fixture(tmp_path)
+    metadata = subprocess.run(
+        [
+            sys.executable,
+            str(VERIFIER),
+            "--root",
+            str(tmp_path),
+            "--metadata-json",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert metadata.returncode == 0, metadata.stdout + metadata.stderr
+    mutated = False
+
+    def racing_success(*args, **kwargs):
+        nonlocal mutated
+        if not mutated:
+            closure[-1].write_bytes(closure[-1].read_bytes() + b"tampered")
+            mutated = True
+        return metadata
+
+    monkeypatch.setattr(main_mod.subprocess, "run", racing_success)
+    with _production_client(monkeypatch, tmp_path) as client:
+        response = client.get("/health/ready")
+    _assert_only_failure(response, "rag_artifacts")
+
+
+def test_production_readiness_coalesces_concurrent_tamper_reverification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closure = _closure_fixture(tmp_path)
+    with _production_client(monkeypatch, tmp_path):
+        closure[-1].write_bytes(closure[-1].read_bytes() + b"tampered")
+        entered = threading.Event()
+        duplicate_entered = threading.Event()
+        release = threading.Event()
+        calls = 0
+        calls_lock = threading.Lock()
+
+        def blocking_failure(*args, **kwargs):
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+                if calls > 1:
+                    duplicate_entered.set()
+            entered.set()
+            release.wait(timeout=2)
+            return SimpleNamespace(returncode=1)
+
+        monkeypatch.setattr(main_mod.subprocess, "run", blocking_failure)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(main_mod._verify_rag_artifacts)
+            assert entered.wait(timeout=1)
+            second = pool.submit(main_mod._verify_rag_artifacts)
+            assert not duplicate_entered.wait(timeout=0.2)
+            release.set()
+            assert first.result(timeout=1) is False
+            assert second.result(timeout=1) is False
+        assert calls == 1
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Windows symlink creation requires host-specific privilege",
+)
+def test_production_readiness_rejects_symlinked_configured_root_before_resolve(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    actual_root = tmp_path / "actual"
+    _closure_fixture(actual_root)
+    linked_root = tmp_path / "linked"
+    linked_root.symlink_to(actual_root, target_is_directory=True)
+    with _production_client(monkeypatch, linked_root) as client:
+        response = client.get("/health/ready")
+    _assert_only_failure(response, "rag_artifacts")
+
+
 def test_minio_readiness_probe_has_bounded_connect_and_read_timeouts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -450,6 +650,207 @@ def test_closure_verifier_rejects_manifest_path_escape(
     result = _run_verifier(tmp_path)
     assert result.returncode != 0
     assert "escape" in (result.stdout + result.stderr).lower()
+
+
+def test_closure_verifier_allows_unselected_build_output_without_hashing_it(
+    tmp_path: Path,
+) -> None:
+    closure = _closure_fixture(tmp_path)
+    build_manifest_path = closure[1]
+    extra = build_manifest_path.parent / "extra.json"
+    build_manifest = json.loads(build_manifest_path.read_text(encoding="utf-8"))
+    build_manifest["artifacts"].append(
+        {
+            "relative_path": extra.relative_to(build_manifest_path.parent).as_posix(),
+            "sha256": "0" * 64,
+            "size": 15,
+        }
+    )
+    _write_json(build_manifest_path, build_manifest)
+
+    collection_path = closure[2]
+    collection = json.loads(collection_path.read_text(encoding="utf-8"))
+    collection["build_manifest"]["sha256"] = _sha256(build_manifest_path)
+    collection["build_manifest"]["size"] = build_manifest_path.stat().st_size
+    _write_json(collection_path, collection)
+
+    pointer_path = closure[0]
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    pointer["build_manifest_sha256"] = _sha256(build_manifest_path)
+    pointer["collection_manifest_sha256"] = _sha256(collection_path)
+    _write_json(pointer_path, pointer)
+
+    result = _run_verifier(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    expected_bytes = sum(path.stat().st_size for path in closure)
+    assert result.stdout.strip() == (
+        f"verified 11 files totaling {expected_bytes} bytes"
+    )
+
+
+def test_closure_verifier_rejects_canonical_duplicate_build_paths(
+    tmp_path: Path,
+) -> None:
+    closure = _closure_fixture(tmp_path)
+    build_manifest_path = closure[1]
+    build_manifest = json.loads(build_manifest_path.read_text(encoding="utf-8"))
+    duplicate = dict(build_manifest["artifacts"][0])
+    build_manifest["artifacts"].append(duplicate)
+    _write_json(build_manifest_path, build_manifest)
+
+    collection_path = closure[2]
+    collection = json.loads(collection_path.read_text(encoding="utf-8"))
+    collection["build_manifest"]["sha256"] = _sha256(build_manifest_path)
+    collection["build_manifest"]["size"] = build_manifest_path.stat().st_size
+    _write_json(collection_path, collection)
+
+    pointer_path = closure[0]
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    pointer["build_manifest_sha256"] = _sha256(build_manifest_path)
+    pointer["collection_manifest_sha256"] = _sha256(collection_path)
+    _write_json(pointer_path, pointer)
+
+    result = _run_verifier(tmp_path)
+    assert result.returncode != 0
+    assert "duplicate canonical" in (result.stdout + result.stderr).lower()
+
+
+def test_closure_verifier_rejects_raw_duplicate_alias_in_build_manifest(
+    tmp_path: Path,
+) -> None:
+    closure = _closure_fixture(tmp_path)
+    build_manifest_path = closure[1]
+    build_manifest = json.loads(build_manifest_path.read_text(encoding="utf-8"))
+    alias = dict(build_manifest["artifacts"][0])
+    alias["relative_path"] = f"./{alias['relative_path']}"
+    build_manifest["artifacts"].append(alias)
+    _write_json(build_manifest_path, build_manifest)
+
+    collection_path = closure[2]
+    collection = json.loads(collection_path.read_text(encoding="utf-8"))
+    collection["build_manifest"]["sha256"] = _sha256(build_manifest_path)
+    collection["build_manifest"]["size"] = build_manifest_path.stat().st_size
+    _write_json(collection_path, collection)
+
+    pointer_path = closure[0]
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    pointer["build_manifest_sha256"] = _sha256(build_manifest_path)
+    pointer["collection_manifest_sha256"] = _sha256(collection_path)
+    _write_json(pointer_path, pointer)
+
+    result = _run_verifier(tmp_path)
+    assert result.returncode != 0
+    assert "canonical" in (result.stdout + result.stderr).lower()
+
+
+def test_closure_verifier_rejects_non_string_sha_in_unselected_build_entry(
+    tmp_path: Path,
+) -> None:
+    closure = _closure_fixture(tmp_path)
+    build_manifest_path = closure[1]
+    build_manifest = json.loads(build_manifest_path.read_text(encoding="utf-8"))
+    build_manifest["artifacts"].append(
+        {
+            "relative_path": "diagnostic/not-mounted.json",
+            "sha256": int("1" * 64),
+            "size": 1,
+        }
+    )
+    _write_json(build_manifest_path, build_manifest)
+
+    collection_path = closure[2]
+    collection = json.loads(collection_path.read_text(encoding="utf-8"))
+    collection["build_manifest"]["sha256"] = _sha256(build_manifest_path)
+    collection["build_manifest"]["size"] = build_manifest_path.stat().st_size
+    _write_json(collection_path, collection)
+
+    pointer_path = closure[0]
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    pointer["build_manifest_sha256"] = _sha256(build_manifest_path)
+    pointer["collection_manifest_sha256"] = _sha256(collection_path)
+    _write_json(pointer_path, pointer)
+
+    result = _run_verifier(tmp_path)
+    assert result.returncode != 0
+    assert "sha-256 is invalid" in (result.stdout + result.stderr).lower()
+
+
+def test_closure_verifier_metadata_fingerprint_includes_directory_components(
+    tmp_path: Path,
+) -> None:
+    _closure_fixture(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VERIFIER),
+            "--root",
+            str(tmp_path),
+            "--metadata-json",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    fingerprint_paths = {entry[0] for entry in payload["fingerprint"]}
+    assert "." in fingerprint_paths
+    assert "fixture-build" in fingerprint_paths
+    assert "fixture-build/runtime" in fingerprint_paths
+    assert "activation/transactions/fixture-activation" in fingerprint_paths
+
+
+def test_closure_verifier_observation_race_uses_transient_exit_code(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "verify_rag_closure_test_module",
+        VERIFIER,
+    )
+    assert spec is not None and spec.loader is not None
+    verifier_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier_module)
+
+    def raise_observation_race(_root):
+        raise verifier_module.TransientVerificationError(
+            "artifact changed during verification"
+        )
+
+    monkeypatch.setattr(
+        verifier_module,
+        "_verified_closure",
+        raise_observation_race,
+    )
+    assert verifier_module.main(["--root", str(tmp_path)]) == 75
+
+
+@pytest.mark.parametrize(
+    "aliased_path",
+    [
+        "data/processed/huiji/fixture-build/./parent_blocks.jsonl",
+        "data/processed/huiji/fixture-build//parent_blocks.jsonl",
+    ],
+)
+def test_closure_verifier_rejects_raw_path_normalization_aliases(
+    tmp_path: Path,
+    aliased_path: str,
+) -> None:
+    closure = _closure_fixture(tmp_path)
+    collection_path = closure[2]
+    collection = json.loads(collection_path.read_text(encoding="utf-8"))
+    collection["artifacts"]["parent_blocks"]["relative_path"] = aliased_path
+    _write_json(collection_path, collection)
+    pointer_path = closure[0]
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    pointer["collection_manifest_sha256"] = _sha256(collection_path)
+    _write_json(pointer_path, pointer)
+
+    result = _run_verifier(tmp_path)
+    assert result.returncode != 0
+    assert "canonical" in (result.stdout + result.stderr).lower()
 
 
 @pytest.mark.skipif(

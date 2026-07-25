@@ -1,11 +1,15 @@
 """FastAPI backend for health, RAG ask, category metadata, and static HTML."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
+import stat
 import subprocess
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from ipaddress import ip_address
 from pathlib import Path
@@ -177,6 +181,19 @@ _READINESS_SUBSYSTEMS = (
     "minio",
     "mysql",
 )
+_RAG_VERIFIER_TIMEOUT_SECONDS = 15
+_RAG_TRANSIENT_RETRY_SECONDS = 60.0
+_RAG_CACHE_LOCK = threading.Lock()
+_rag_cache: dict[str, Any] = {
+    "initialized": False,
+    "root": None,
+    "paths": (),
+    "fingerprint": (),
+    "fingerprint_kind": "tree",
+    "failure_kind": "",
+    "retry_after": 0.0,
+    "ready": False,
+}
 
 
 def _production_mode() -> bool:
@@ -209,8 +226,11 @@ def _configuration_ready() -> bool:
 def _milvus_configuration_ready() -> bool:
     vectorstore = getattr(cfg, "vectorstore", None)
     uri = str(getattr(vectorstore, "uri", "") or "").strip()
-    parsed = urlparse(uri)
-    hostname = parsed.hostname
+    try:
+        parsed = urlparse(uri)
+        hostname = parsed.hostname
+    except ValueError:
+        return False
     if parsed.scheme not in {"http", "https"} or not hostname:
         return False
     normalized_host = hostname.rstrip(".").lower()
@@ -257,24 +277,279 @@ def _mysql_configuration_ready() -> bool:
     )
 
 
-def _verify_rag_artifacts() -> bool:
+def _rag_artifact_root() -> Path:
+    return Path(
+        os.path.abspath(
+            getattr(getattr(cfg, "huiji", None), "processed_root", "")
+        )
+    )
+
+
+def _rag_monotonic() -> float:
+    return time.monotonic()
+
+
+def _rag_stat_entry(
+    info: os.stat_result,
+    relative: str,
+    kind: str,
+) -> tuple[object, ...]:
+    return (
+        relative,
+        kind,
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _rag_closure_fingerprint(
+    root: Path,
+    relative_paths: tuple[str, ...],
+) -> tuple[tuple[object, ...], ...]:
+    components: dict[str, tuple[object, ...]] = {}
+    root_info = root.lstat()
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        raise ValueError("invalid RAG root")
+    components["."] = _rag_stat_entry(root_info, ".", "directory")
+    for relative in relative_paths:
+        current = root
+        parts = relative.split("/")
+        for index, part in enumerate(parts):
+            current = current / part
+            key = current.relative_to(root).as_posix()
+            info = current.lstat()
+            is_leaf = index == len(parts) - 1
+            kind = "file" if is_leaf else "directory"
+            if stat.S_ISLNK(info.st_mode):
+                raise ValueError("symlinked RAG closure")
+            if (
+                is_leaf and not stat.S_ISREG(info.st_mode)
+            ) or (
+                not is_leaf and not stat.S_ISDIR(info.st_mode)
+            ):
+                raise ValueError("invalid RAG closure component")
+            entry = _rag_stat_entry(info, key, kind)
+            previous = components.get(key)
+            if previous is not None and previous != entry:
+                raise ValueError("unstable RAG closure")
+            components[key] = entry
+    return tuple(components[key] for key in sorted(components))
+
+
+def _rag_tree_fingerprint(root: Path) -> tuple[tuple[object, ...], ...]:
+    try:
+        root_info = root.lstat()
+    except OSError:
+        return ((".", "missing"),)
+    if stat.S_ISLNK(root_info.st_mode):
+        return (_rag_stat_entry(root_info, ".", "symlink"),)
+    if not stat.S_ISDIR(root_info.st_mode):
+        return (_rag_stat_entry(root_info, ".", "invalid"),)
+
+    entries: dict[str, tuple[object, ...]] = {
+        ".": _rag_stat_entry(root_info, ".", "directory")
+    }
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            children = sorted(directory.iterdir(), key=lambda path: path.name)
+        except OSError:
+            key = directory.relative_to(root).as_posix() or "."
+            entries[f"{key}/<unreadable>"] = (f"{key}/<unreadable>", "error")
+            continue
+        for child in children:
+            key = child.relative_to(root).as_posix()
+            try:
+                info = child.lstat()
+            except OSError:
+                entries[key] = (key, "missing")
+                continue
+            if stat.S_ISLNK(info.st_mode):
+                kind = "symlink"
+            elif stat.S_ISDIR(info.st_mode):
+                kind = "directory"
+                pending.append(child)
+            elif stat.S_ISREG(info.st_mode):
+                kind = "file"
+            else:
+                kind = "invalid"
+            entries[key] = _rag_stat_entry(info, key, kind)
+    return tuple(entries[key] for key in sorted(entries))
+
+
+def _verified_metadata(
+    stdout: str,
+) -> tuple[tuple[str, ...], tuple[tuple[object, ...], ...]]:
+    try:
+        payload = json.loads(stdout)
+        files = payload["files"]
+        count = payload["count"]
+        raw_fingerprint = payload["fingerprint"]
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ValueError("invalid verifier metadata") from error
+    if (
+        type(count) is not int
+        or count != 11
+        or not isinstance(files, list)
+        or len(files) != count
+    ):
+        raise ValueError("invalid verifier metadata")
+    validated: list[str] = []
+    for value in files:
+        if (
+            not isinstance(value, str)
+            or "\\" in value
+            or value.startswith("/")
+            or any(part in {"", ".", ".."} for part in value.split("/"))
+        ):
+            raise ValueError("invalid verifier metadata")
+        validated.append(value)
+    if len(set(validated)) != len(validated):
+        raise ValueError("invalid verifier metadata")
+    if not isinstance(raw_fingerprint, list):
+        raise ValueError("invalid verifier metadata")
+    fingerprint: list[tuple[object, ...]] = []
+    seen_fingerprint_paths: set[str] = set()
+    for raw_entry in raw_fingerprint:
+        if not isinstance(raw_entry, list) or len(raw_entry) != 8:
+            raise ValueError("invalid verifier metadata")
+        relative, kind, *values = raw_entry
+        if (
+            not isinstance(relative, str)
+            or relative in seen_fingerprint_paths
+            or (
+                relative != "."
+                and (
+                    "\\" in relative
+                    or relative.startswith("/")
+                    or any(
+                        part in {"", ".", ".."}
+                        for part in relative.split("/")
+                    )
+                )
+            )
+            or kind not in {"directory", "file"}
+            or any(type(value) is not int for value in values)
+        ):
+            raise ValueError("invalid verifier metadata")
+        seen_fingerprint_paths.add(relative)
+        fingerprint.append(tuple(raw_entry))
+    return tuple(sorted(validated)), tuple(
+        sorted(fingerprint, key=lambda entry: str(entry[0]))
+    )
+
+
+def _run_full_rag_verification(
+    processed_root: Path,
+) -> tuple[
+    str,
+    tuple[str, ...],
+    tuple[tuple[object, ...], ...],
+]:
     project_root = Path(
         getattr(getattr(cfg, "paths", None), "project_root", Path.cwd())
     )
     verifier = project_root / "deploy" / "bin" / "verify-rag-closure.py"
-    processed_root = Path(getattr(getattr(cfg, "huiji", None), "processed_root", ""))
     try:
         result = subprocess.run(
-            [sys.executable, str(verifier), "--root", str(processed_root)],
+            [
+                sys.executable,
+                str(verifier),
+                "--root",
+                str(processed_root),
+                "--metadata-json",
+            ],
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            timeout=15,
+            text=True,
+            timeout=_RAG_VERIFIER_TIMEOUT_SECONDS,
             check=False,
         )
     except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0
+        return "transient", (), ()
+    if result.returncode != 0:
+        return ("invalid" if result.returncode == 1 else "transient"), (), ()
+    try:
+        relative_paths, verified_fingerprint = _verified_metadata(result.stdout)
+        current_fingerprint = _rag_closure_fingerprint(
+            processed_root,
+            relative_paths,
+        )
+        if current_fingerprint != verified_fingerprint:
+            return "transient", relative_paths, ()
+        return "ready", relative_paths, verified_fingerprint
+    except (OSError, ValueError):
+        return "transient", (), ()
+
+
+def _verify_rag_artifacts(*, force: bool = False) -> bool:
+    processed_root = _rag_artifact_root()
+    with _RAG_CACHE_LOCK:
+        same_root = _rag_cache["root"] == processed_root
+        cached_paths = _rag_cache["paths"] if same_root else ()
+        try:
+            current_fingerprint = (
+                _rag_closure_fingerprint(processed_root, cached_paths)
+                if _rag_cache["fingerprint_kind"] == "closure"
+                else _rag_tree_fingerprint(processed_root)
+            )
+        except (OSError, ValueError):
+            current_fingerprint = ()
+        if (
+            not force
+            and _rag_cache["initialized"]
+            and same_root
+            and current_fingerprint == _rag_cache["fingerprint"]
+            and not (
+                _rag_cache["failure_kind"] == "transient"
+                and _rag_monotonic() >= _rag_cache["retry_after"]
+            )
+        ):
+            return bool(_rag_cache["ready"])
+
+        verification_status, verified_paths, verified_fingerprint = (
+            _run_full_rag_verification(processed_root)
+        )
+        ready = verification_status == "ready"
+        if ready:
+            cached_paths = verified_paths
+            fingerprint = verified_fingerprint
+            fingerprint_kind = "closure"
+            failure_kind = ""
+            retry_after = 0.0
+        else:
+            cached_paths = ()
+            first_failure_fingerprint = _rag_tree_fingerprint(processed_root)
+            second_failure_fingerprint = _rag_tree_fingerprint(processed_root)
+            fingerprint = (
+                second_failure_fingerprint
+                if first_failure_fingerprint == second_failure_fingerprint
+                else ()
+            )
+            fingerprint_kind = "tree"
+            failure_kind = verification_status
+            retry_after = (
+                _rag_monotonic() + _RAG_TRANSIENT_RETRY_SECONDS
+                if verification_status == "transient"
+                else 0.0
+            )
+        _rag_cache.update(
+            initialized=True,
+            root=processed_root,
+            paths=cached_paths,
+            fingerprint=fingerprint,
+            fingerprint_kind=fingerprint_kind,
+            failure_kind=failure_kind,
+            retry_after=retry_after,
+            ready=ready,
+        )
+        return ready
 
 
 def _probe_milvus() -> bool:
@@ -380,6 +655,8 @@ def _readiness_response() -> ReadinessResponse:
 
 @app.on_event("startup")
 async def _startup() -> None:
+    if _production_mode():
+        _verify_rag_artifacts(force=True)
     _ensure_loaded()
 
 
