@@ -1,0 +1,97 @@
+name: Publish immutable application images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          ref: ${{ github.sha }}
+      - name: Pull LFS objects
+        run: git lfs pull
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python test dependencies
+        run: python -m pip install -r requirements/dev.lock.txt
+      - name: Run Python tests
+        run: python -m pytest -q
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          ref: ${{ github.sha }}
+      - name: Pull LFS objects
+        run: git lfs pull
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        working-directory: frontend/react-app
+        run: npm ci
+      - name: Run frontend tests
+        working-directory: frontend/react-app
+        run: npm test
+      - name: Build frontend
+        working-directory: frontend/react-app
+        run: npm run build
+
+  publish:
+    needs: [python-tests, frontend-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          ref: ${{ github.sha }}
+      - name: Pull LFS objects
+        run: git lfs pull
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: tag
+        shell: bash
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          echo "tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
+      - id: backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          push: true
+          tags: ghcr.io/ddomelette/1999wiki-backend:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - id: frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: true
+          tags: ghcr.io/ddomelette/1999wiki-frontend:${{ steps.tag.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - id: summary
+        name: Write published image digests
+        shell: bash
+        run: |
+          {
+            echo "## Published images"
+            echo "- Backend: ghcr.io/ddomelette/1999wiki-backend@${{ steps.backend.outputs.digest }}"
+            echo "- Frontend: ghcr.io/ddomelette/1999wiki-frontend@${{ steps.frontend.outputs.digest }}"
+          } >> "$GITHUB_STEP_SUMMARY"

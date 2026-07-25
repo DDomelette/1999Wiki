@@ -1,13 +1,31 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from types import TracebackType
 from typing import BinaryIO
 
-import msvcrt
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 from .errors import RuntimeLockConflict
+
+
+def _lock(handle: BinaryIO) -> None:
+    if sys.platform == "win32":
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock(handle: BinaryIO) -> None:
+    if sys.platform == "win32":
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 class RuntimeLock:
@@ -27,7 +45,7 @@ class RuntimeLock:
                 handle.flush()
                 os.fsync(handle.fileno())
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            _lock(handle)
         except OSError as exc:
             handle.close()
             raise RuntimeLockConflict(
@@ -48,6 +66,6 @@ class RuntimeLock:
             return
         try:
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            _unlock(handle)
         finally:
             handle.close()

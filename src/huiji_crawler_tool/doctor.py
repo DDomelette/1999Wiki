@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import msvcrt
+import sys
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
@@ -20,6 +20,11 @@ from .discovery import (
     discover_python_candidates,
     inspect_dependencies,
 )
+
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
 
 
 @dataclass(frozen=True)
@@ -42,11 +47,17 @@ def probe_runtime_lock(path: Path) -> RuntimeLockStatus:
                 return RuntimeLockStatus(available=False, status="invalid_empty_lock")
             handle.seek(0)
             try:
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                if sys.platform == "win32":
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 return RuntimeLockStatus(available=False, status="held")
             handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            if sys.platform == "win32":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     except OSError:
         return RuntimeLockStatus(available=False, status="unreadable")
     return RuntimeLockStatus(available=True, status="available")

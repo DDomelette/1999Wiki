@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -47,6 +48,10 @@ def test_python_ast_finds_runtime_path_but_ignores_regex_comments_and_docstrings
     assert report["matches"][0]["line"] == 7
 
 
+@pytest.mark.skipif(
+    shutil.which("powershell.exe") is None and shutil.which("powershell") is None,
+    reason="PowerShell AST parsing is available only where PowerShell is installed",
+)
 def test_powershell_parser_finds_string_paths_with_line_and_column(tmp_path: Path) -> None:
     root = tmp_path / "tool"
     source = root / "launch.ps1"

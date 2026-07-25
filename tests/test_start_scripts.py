@@ -1,6 +1,8 @@
 from pathlib import Path
+import shutil
 import subprocess
 
+import pytest
 import yaml
 
 
@@ -105,6 +107,10 @@ def test_powershell_recognizes_cancellation_across_startup_phases():
     assert "PipelineStoppedException" in ps1
 
 
+@pytest.mark.skipif(
+    shutil.which("powershell.exe") is None and shutil.which("powershell") is None,
+    reason="process cleanup integration test requires PowerShell",
+)
 def test_cleanup_skips_an_exited_process_even_if_its_pid_now_points_to_a_live_process():
     script_path = str(ROOT / "start.ps1").replace("'", "''")
     command = rf"""
