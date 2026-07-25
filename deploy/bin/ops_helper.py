@@ -14,7 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 
 KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*")
@@ -343,10 +343,39 @@ def validate_lock_descriptor(
         path_info.st_ino,
     ):
         fail("inherited operations lock descriptor does not match canonical inode")
+    root_descriptor = os.open(
+        state_root,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    probe_descriptor = -1
     try:
+        probe_descriptor = os.open(
+            "operations.lock",
+            os.O_RDWR
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=root_descriptor,
+        )
+        probe_info = os.fstat(probe_descriptor)
+        if (probe_info.st_dev, probe_info.st_ino) != (
+            path_info.st_dev,
+            path_info.st_ino,
+        ):
+            fail("operations lock changed during verification")
+        try:
+            fcntl.flock(probe_descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass
+        else:
+            fcntl.flock(probe_descriptor, fcntl.LOCK_UN)
+            fail("inherited operations lock descriptor does not own the global lock")
         fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         fail("inherited operations lock descriptor does not own the global lock")
+    finally:
+        if probe_descriptor >= 0:
+            os.close(probe_descriptor)
+        os.close(root_descriptor)
 
 
 def lock_exec(
@@ -405,6 +434,29 @@ def lock_exec(
         os.close(root_descriptor)
 
 
+def decoded_url_path_segments(path: str, label: str) -> tuple[str, ...]:
+    decoded = path
+    for _ in range(len(path) + 1):
+        next_value = unquote(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    segments = tuple(decoded.split("/"))
+    if any(segment in {".", ".."} for segment in segments):
+        fail(f"{label} contains a dot segment")
+    return segments
+
+
+def validate_media_path(base_path: str, candidate_path: str, label: str) -> None:
+    base_segments = decoded_url_path_segments(base_path.rstrip("/"), "media base")
+    candidate_segments = decoded_url_path_segments(candidate_path, label)
+    if (
+        len(candidate_segments) <= len(base_segments)
+        or candidate_segments[: len(base_segments)] != base_segments
+    ):
+        fail(f"{label} is outside MEDIA_PUBLIC_BASE_URL")
+
+
 def validate_media_url(app_path: Path, public_base: str, returned_url: str) -> str:
     media_base = validate_app(app_path)["MEDIA_PUBLIC_BASE_URL"]
     public = urlsplit(public_base)
@@ -414,8 +466,10 @@ def validate_media_url(app_path: Path, public_base: str, returned_url: str) -> s
         fail("PUBLIC_BASE_URL must not contain a path, query, or fragment")
     public_origin = (public.scheme.lower(), public.hostname, public.port)
     if media_base == "/media":
-        if not returned_url.startswith("/media/"):
-            fail("relative media URL is outside MEDIA_PUBLIC_BASE_URL")
+        returned = urlsplit(returned_url)
+        if returned.scheme or returned.netloc:
+            fail("relative media URL must not contain an origin")
+        validate_media_path("/media", returned.path, "relative media URL")
         return urljoin(public_base.rstrip("/") + "/", returned_url.lstrip("/"))
 
     configured = urlsplit(media_base)
@@ -426,13 +480,12 @@ def validate_media_url(app_path: Path, public_base: str, returned_url: str) -> s
     )
     if configured_origin != public_origin:
         fail("absolute MEDIA_PUBLIC_BASE_URL origin differs from PUBLIC_BASE_URL")
+    decoded_url_path_segments(configured.path, "media base")
     returned = urlsplit(returned_url)
     returned_origin = (returned.scheme.lower(), returned.hostname, returned.port)
     if returned_origin != public_origin:
         fail("returned media URL origin differs from PUBLIC_BASE_URL")
-    normalized_base = media_base.rstrip("/")
-    if not returned_url.startswith(normalized_base + "/"):
-        fail("returned media URL is outside MEDIA_PUBLIC_BASE_URL")
+    validate_media_path(configured.path, returned.path, "returned media URL")
     return returned_url
 
 
@@ -496,8 +549,22 @@ def normalized_env(values: dict[str, str], order: Iterable[str] | None = None) -
     return ("".join(f"{key}={values[key]}\n" for key in keys)).encode("utf-8")
 
 
+def snapshot_file_exists(path: Path) -> bool:
+    reject_symlink_components(path.parent)
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(info.st_mode):
+        fail(f"snapshot file is a forbidden symlink: {path}")
+    if not stat.S_ISREG(info.st_mode):
+        fail(f"snapshot path is not a regular file: {path}")
+    validate_owner_mode(path, exact_mode=0o600)
+    return True
+
+
 def ensure_snapshot_file(path: Path, payload: bytes) -> None:
-    if path.exists():
+    if snapshot_file_exists(path):
         validate_owner_mode(path, exact_mode=0o600)
         if path.read_bytes() != payload:
             fail(f"immutable snapshot already exists with different content: {path}")
@@ -544,6 +611,8 @@ def snapshot(
             fail(f"snapshot directory owner/mode is unsafe: {current}")
     release_snapshot = current / "release.env"
     app_snapshot = current / "app.env"
+    snapshot_file_exists(release_snapshot)
+    snapshot_file_exists(app_snapshot)
     ensure_snapshot_file(
         release_snapshot,
         normalized_env(release_values, RELEASE_KEYS),

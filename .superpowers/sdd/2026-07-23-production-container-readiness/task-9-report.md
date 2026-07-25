@@ -165,3 +165,94 @@ Task 9 delivery and is intentionally excluded from staging.
   not block Task 9 control-plane safety.
 - The full Python suite emits existing FastAPI/Starlette deprecation warnings;
   they are outside the Task 9 deployment-script scope.
+
+## Fix round 3 addendum
+
+The scoped re-review of `ecafd64` identified three remaining proof gaps. This
+addendum supersedes the round-2 lock, final-file symlink, and media-path claims
+where they conflict with the evidence below.
+
+### Changes
+
+- Lock verification no longer creates the evidence it is meant to check. It
+  opens an independent no-follow probe descriptor and requires a nonblocking
+  shared lock on that descriptor to conflict, proving an exclusive lock
+  already existed. It then requires nonblocking exclusive acquisition on
+  inherited fd 9 to succeed, which is idempotent only for the owning open-file
+  description. This rejects both uncontended forged canonical descriptors and
+  forged descriptors while another process owns the lock.
+- Snapshot creation uses `lstat`-based final-file inspection. It rejects
+  `release.env` and `app.env` symlinks or non-regular files, and preflights both
+  destinations before writing either immutable snapshot. The operation leaves
+  outside symlink targets unchanged and creates no sibling snapshot file.
+- Media containment percent-decodes paths to stability, rejects literal or
+  encoded `.`/`..` segments, and compares decoded path segments rather than
+  raw URL prefixes. Validation happens before relative URL joining and before
+  any media retrieval. The same rule covers configured absolute media bases
+  and returned relative or absolute media URLs.
+
+Round 3 changes only:
+
+- `deploy/bin/ops_helper.py`
+- `tests/test_deploy_scripts.py`
+- this report
+
+No live Docker Compose project, Caddy process, DNS record, server, or production
+state was touched.
+
+### Exact RED/GREEN evidence
+
+RED command:
+
+```powershell
+$env:PYTHONPATH='.'
+pytest -q tests/test_deploy_scripts.py -k "uncontended_separately_opened or final_file_symlinks or dot_segment_escapes" -vv
+```
+
+RED result:
+
+```text
+7 failed, 69 deselected in 6.03s
+```
+
+All failures matched the intended gaps: the uncontended forged fd returned
+status 0; both final symlinks were followed and one sibling snapshot was
+written; all four relative/absolute literal/encoded dot-segment URLs returned
+status 0.
+
+GREEN command:
+
+```powershell
+$env:PYTHONPATH='.'
+pytest -q tests/test_deploy_scripts.py -k "uncontended_separately_opened or final_file_symlinks or dot_segment_escapes" -vv
+```
+
+GREEN result:
+
+```text
+7 passed, 69 deselected in 5.59s
+```
+
+Affected regression command:
+
+```powershell
+$env:PYTHONPATH='.'
+pytest -q tests/test_deploy_scripts.py -k "secure_lock or operations_lock or snapshot or media_validator or smoke_test_uses_candidate"
+```
+
+Affected regression result:
+
+```text
+16 passed, 60 deselected in 16.04s
+```
+
+### Round 3 completion evidence
+
+| Gate | Result |
+| --- | --- |
+| Complete Task 9 focused suite | `76 passed, 1 existing dependency warning in 78.65s` |
+| Full Python suite | `1668 passed, 2 skipped, 3 existing deprecation warnings in 108.68s` |
+| Python helper compile | `conda run -n 1999wiki python -m py_compile deploy/bin/ops_helper.py` passed |
+| Bash syntax | Linux `bash -n` passed for all six entry scripts and `ops-common.sh` |
+| ShellCheck | `koalaman/shellcheck:v0.10.0` passed for all six entry scripts and `ops-common.sh` |
+| Diff hygiene | `git diff --check` passed |

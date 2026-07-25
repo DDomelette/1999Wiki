@@ -2055,6 +2055,36 @@ def test_secure_lock_rejects_spoofed_separately_opened_fd_under_contention(
     assert "lock" in result.stdout.lower()
 
 
+def test_secure_lock_rejects_uncontended_separately_opened_canonical_fd(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        mkdir /tmp/state
+        chmod 700 /tmp/state
+        : >/tmp/state/operations.lock
+        chmod 600 /tmp/state/operations.lock
+        set +e
+        output="$(
+            /bin/bash -c '
+                exec 9<>/tmp/state/operations.lock
+                OPS_LOCK_HELD=1 OPS_LOCK_FD=9 \
+                    python3 /repo/deploy/bin/ops_helper.py verify-lock \
+                    /tmp/state /tmp/state/operations.lock 9
+            ' 2>&1
+        )"
+        status=$?
+        set -e
+        printf '%s\\n__STATUS=%s\\n' "$output" "$status"
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" not in result.stdout
+    assert "does not own" in result.stdout.lower()
+
+
 def test_snapshot_symlink_redirect_is_rejected_without_outside_write(
     tmp_path: Path,
 ) -> None:
@@ -2111,6 +2141,75 @@ def test_snapshot_symlink_redirect_is_rejected_without_outside_write(
     assert "__STATUS=0" not in result.stdout
     assert "symlink" in result.stdout.lower()
     assert "__OUTSIDE_WRITE=false" in result.stdout
+
+
+@pytest.mark.parametrize("target_name", ["release.env", "app.env"])
+def test_snapshot_rejects_final_file_symlinks_before_any_write(
+    tmp_path: Path,
+    target_name: str,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        f"""\
+        set -Eeuo pipefail
+        snapshot_dir=/tmp/state/snapshots/sha-abcdef0/blue
+        mkdir -p "$snapshot_dir" /tmp/outside /tmp/source
+        chmod 700 /tmp/state /tmp/state/snapshots \
+            /tmp/state/snapshots/sha-abcdef0 "$snapshot_dir" /tmp/outside
+        cat >/tmp/source/release.env <<'EOF'
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        BACKEND_PORT=18000
+        FRONTEND_PORT=18080
+        EOF
+        cat >/tmp/source/app.env <<'EOF'
+        APP_ENV=production
+        MILVUS_URI=http://standalone:19530
+        MILVUS_DB_NAME=wiki
+        MILVUS_COLLECTION_NAME=collection
+        MINIO_ENDPOINT=minio:9000
+        MINIO_ACCESS_KEY=x
+        MINIO_SECRET_KEY=x
+        MINIO_BUCKET=assets
+        MEDIA_PUBLIC_BASE_URL=/media
+        MYSQL_HOST=mysql
+        MYSQL_PORT=3306
+        MYSQL_DATABASE=wiki
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        DEEPSEEK_API_KEY=x
+        SILICONFLOW_API_KEY=x
+        HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
+        EOF
+        chmod 600 /tmp/source/release.env /tmp/source/app.env
+        cp "/tmp/source/{target_name}" "/tmp/outside/{target_name}"
+        chmod 600 "/tmp/outside/{target_name}"
+        ln -s "/tmp/outside/{target_name}" "$snapshot_dir/{target_name}"
+        set +e
+        output="$(
+            python3 /repo/deploy/bin/ops_helper.py snapshot \
+                /tmp/state sha-abcdef0 blue \
+                /tmp/source/release.env /tmp/source/app.env /repo 2>&1
+        )"
+        status=$?
+        set -e
+        printf '%s\\n__STATUS=%s\\n' "$output" "$status"
+        if cmp -s "/tmp/source/{target_name}" "/tmp/outside/{target_name}"; then
+            printf '__OUTSIDE_UNCHANGED=true\\n'
+        else
+            printf '__OUTSIDE_UNCHANGED=false\\n'
+        fi
+        regular_files="$(
+            find "$snapshot_dir" -maxdepth 1 -type f -print | wc -l
+        )"
+        printf '__REGULAR_FILES=%s\\n' "$regular_files"
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" not in result.stdout
+    assert "symlink" in result.stdout.lower()
+    assert "__OUTSIDE_UNCHANGED=true" in result.stdout
+    assert "__REGULAR_FILES=0" in result.stdout
 
 
 def test_strict_app_schema_rejects_bare_secret_placeholder_and_extra_key(
@@ -2185,6 +2284,57 @@ def test_media_validator_rejects_absolute_origin_unrelated_to_public_base(
     )
     assert result.returncode != 0
     assert "origin" in (result.stdout + result.stderr).lower()
+
+
+@pytest.mark.parametrize(
+    ("media_base", "returned_url"),
+    [
+        ("/media", "/media/../health"),
+        ("/media", "/media/%2e%2e/health"),
+        (
+            "https://wiki.example/media",
+            "https://wiki.example/media/../health",
+        ),
+        (
+            "https://wiki.example/media",
+            "https://wiki.example/media/%2E%2E/health",
+        ),
+    ],
+)
+def test_media_validator_rejects_literal_and_encoded_dot_segment_escapes(
+    tmp_path: Path,
+    media_base: str,
+    returned_url: str,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        f"""\
+        set -Eeuo pipefail
+        cat >/tmp/app.env <<'EOF'
+        APP_ENV=production
+        MILVUS_URI=http://standalone:19530
+        MILVUS_DB_NAME=wiki
+        MILVUS_COLLECTION_NAME=collection
+        MINIO_ENDPOINT=minio:9000
+        MINIO_ACCESS_KEY=x
+        MINIO_SECRET_KEY=x
+        MINIO_BUCKET=assets
+        MEDIA_PUBLIC_BASE_URL={media_base}
+        MYSQL_HOST=mysql
+        MYSQL_PORT=3306
+        MYSQL_DATABASE=wiki
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        DEEPSEEK_API_KEY=x
+        SILICONFLOW_API_KEY=x
+        HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
+        EOF
+        python3 /repo/deploy/bin/ops_helper.py validate-media-url \
+            /tmp/app.env https://wiki.example {returned_url}
+        """,
+    )
+    assert result.returncode != 0
+    assert "dot segment" in (result.stdout + result.stderr).lower()
 
 
 def test_state_schema_and_cleanup_expose_retirement_protocol() -> None:
