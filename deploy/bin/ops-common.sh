@@ -15,6 +15,7 @@ CADDY_IMPORT_PATH="${CADDY_IMPORT_PATH:-/etc/caddy/active-upstream.caddy}"
 ACTIVE_FRAGMENT="${ACTIVE_FRAGMENT:-/etc/caddy/active-upstream.caddy}"
 ACTIVE_STATE_FILE="${ACTIVE_STATE_FILE:-$DEPLOY_STATE_ROOT/active.env}"
 OPS_JOURNAL_FILE="${OPS_JOURNAL_FILE:-$DEPLOY_STATE_ROOT/transaction.env}"
+OPS_RETIREMENT_FILE="${OPS_RETIREMENT_FILE:-$DEPLOY_STATE_ROOT/retirement.env}"
 OPS_LOCK_FILE="${OPS_LOCK_FILE:-$DEPLOY_STATE_ROOT/operations.lock}"
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://127.0.0.1}"
 CADDY_SERVICE_UID="${CADDY_SERVICE_UID:-}"
@@ -46,24 +47,33 @@ ops_validate_state_root() {
 }
 
 ops_acquire_lock() {
-    ops_require_commands flock python3 stat
+    local script_path="${1:-}"
+    if (($#)); then
+        shift
+    fi
+    ops_require_commands python3 stat
     ops_validate_state_root
-    if [[ "${OPS_LOCK_HELD:-0}" == "1" ]]; then
-        [[ "${OPS_LOCK_FD:-}" == "9" ]] \
+    if [[ -n "${OPS_LOCK_FD:-}" ]]; then
+        [[ "$OPS_LOCK_FD" == "9" ]] \
             || ops_die "inherited operations lock descriptor is invalid"
-        [[ -e "/proc/$$/fd/9" ]] \
-            || ops_die "inherited operations lock descriptor is closed"
-        local inherited_target
-        inherited_target="$(readlink -f "/proc/$$/fd/9")"
-        [[ "$inherited_target" == "$(readlink -f "$OPS_LOCK_FILE")" ]] \
-            || ops_die "inherited operations lock does not match state root"
+        ops_helper verify-lock \
+            "$DEPLOY_STATE_ROOT" \
+            "$OPS_LOCK_FILE" \
+            "$OPS_LOCK_FD"
+        OPS_LOCK_HELD=1
+        export OPS_LOCK_HELD OPS_LOCK_FD OPS_LOCK_FILE
         return 0
     fi
-    exec 9>"$OPS_LOCK_FILE"
-    flock -n 9 || ops_die "another production operation holds the global lock"
-    OPS_LOCK_HELD=1
-    OPS_LOCK_FD=9
-    export OPS_LOCK_HELD OPS_LOCK_FD OPS_LOCK_FILE
+    [[ -n "$script_path" ]] \
+        || ops_die "secure lock acquisition requires the mutating script path"
+    exec python3 "$OPS_HELPER" lock-exec \
+        "$DEPLOY_STATE_ROOT" \
+        "$OPS_LOCK_FILE" \
+        9 \
+        -- \
+        /bin/bash \
+        "$script_path" \
+        "$@"
 }
 
 ops_load_caddy_env() {
@@ -267,7 +277,7 @@ ops_load_active_state() {
     ACTIVE_APP_SNAPSHOT="${OPS_STATE_VALUES[7]}"
     ACTIVE_BACKEND_IMAGE="${OPS_STATE_VALUES[8]}"
     ACTIVE_FRONTEND_IMAGE="${OPS_STATE_VALUES[9]}"
-    HAS_PREVIOUS="${OPS_STATE_VALUES[10]}"
+    PREVIOUS_AVAILABLE="${OPS_STATE_VALUES[10]}"
     PREVIOUS_SLOT="${OPS_STATE_VALUES[11]}"
     PREVIOUS_RELEASE="${OPS_STATE_VALUES[12]}"
     PREVIOUS_PROJECT="${OPS_STATE_VALUES[13]}"
@@ -288,7 +298,7 @@ ops_load_active_state() {
         ACTIVE_APP_SNAPSHOT \
         ACTIVE_BACKEND_IMAGE \
         ACTIVE_FRONTEND_IMAGE \
-        HAS_PREVIOUS \
+        PREVIOUS_AVAILABLE \
         PREVIOUS_SLOT \
         PREVIOUS_RELEASE \
         PREVIOUS_PROJECT \
@@ -307,6 +317,224 @@ ops_validate_active_consistency() {
         "$DEPLOY_STATE_ROOT"
 }
 
+ops_write_retirement() {
+    local generation="$1"
+    {
+        printf 'RETIREMENT_VERSION=1\n'
+        printf 'GENERATION=%s\n' "$generation"
+        printf 'PHASE=prepared\n'
+        printf 'ACTIVE_GENERATION=%s\n' "$ACTIVE_GENERATION"
+        printf 'SLOT=%s\n' "$PREVIOUS_SLOT"
+        printf 'RELEASE=%s\n' "$PREVIOUS_RELEASE"
+        printf 'PROJECT=%s\n' "$PREVIOUS_PROJECT"
+        printf 'RELEASE_SNAPSHOT=%s\n' "$PREVIOUS_RELEASE_SNAPSHOT"
+        printf 'APP_SNAPSHOT=%s\n' "$PREVIOUS_APP_SNAPSHOT"
+        printf 'BACKEND_IMAGE=%s\n' "$PREVIOUS_BACKEND_IMAGE"
+        printf 'FRONTEND_IMAGE=%s\n' "$PREVIOUS_FRONTEND_IMAGE"
+        printf 'FRAGMENT_BACKUP=%s\n' "$PREVIOUS_FRAGMENT_BACKUP"
+    } | ops_helper atomic-stdin \
+        "$OPS_RETIREMENT_FILE" \
+        600 \
+        "$OPS_STATE_UID" \
+        "$OPS_STATE_GID"
+    ops_helper validate-retirement \
+        "$OPS_RETIREMENT_FILE" \
+        "$DEPLOY_STATE_ROOT"
+}
+
+ops_load_retirement() {
+    mapfile -t OPS_RETIREMENT_VALUES < <(
+        ops_helper validate-retirement \
+            "$OPS_RETIREMENT_FILE" \
+            "$DEPLOY_STATE_ROOT" \
+            --emit
+    )
+    [[ "${#OPS_RETIREMENT_VALUES[@]}" -eq 12 ]] \
+        || ops_die "retirement journal is incomplete"
+    RETIREMENT_GENERATION="${OPS_RETIREMENT_VALUES[1]}"
+    RETIREMENT_PHASE="${OPS_RETIREMENT_VALUES[2]}"
+    RETIREMENT_ACTIVE_GENERATION="${OPS_RETIREMENT_VALUES[3]}"
+    RETIREMENT_SLOT="${OPS_RETIREMENT_VALUES[4]}"
+    RETIREMENT_RELEASE="${OPS_RETIREMENT_VALUES[5]}"
+    RETIREMENT_PROJECT="${OPS_RETIREMENT_VALUES[6]}"
+    RETIREMENT_RELEASE_SNAPSHOT="${OPS_RETIREMENT_VALUES[7]}"
+    RETIREMENT_APP_SNAPSHOT="${OPS_RETIREMENT_VALUES[8]}"
+    RETIREMENT_BACKEND_IMAGE="${OPS_RETIREMENT_VALUES[9]}"
+    RETIREMENT_FRONTEND_IMAGE="${OPS_RETIREMENT_VALUES[10]}"
+    RETIREMENT_FRAGMENT_BACKUP="${OPS_RETIREMENT_VALUES[11]}"
+}
+
+ops_retirement_matches_previous() {
+    [[ \
+        "$PREVIOUS_AVAILABLE" == "1" \
+        && "$ACTIVE_GENERATION" == "$RETIREMENT_ACTIVE_GENERATION" \
+        && "$PREVIOUS_SLOT" == "$RETIREMENT_SLOT" \
+        && "$PREVIOUS_RELEASE" == "$RETIREMENT_RELEASE" \
+        && "$PREVIOUS_PROJECT" == "$RETIREMENT_PROJECT" \
+        && "$PREVIOUS_RELEASE_SNAPSHOT" == "$RETIREMENT_RELEASE_SNAPSHOT" \
+        && "$PREVIOUS_APP_SNAPSHOT" == "$RETIREMENT_APP_SNAPSHOT" \
+        && "$PREVIOUS_BACKEND_IMAGE" == "$RETIREMENT_BACKEND_IMAGE" \
+        && "$PREVIOUS_FRONTEND_IMAGE" == "$RETIREMENT_FRONTEND_IMAGE" \
+        && "$PREVIOUS_FRAGMENT_BACKUP" == "$RETIREMENT_FRAGMENT_BACKUP" \
+    ]]
+}
+
+ops_exact_image_present() {
+    local image="$1"
+    local output
+    output="$(
+        docker image ls \
+            --format '{{.Repository}}:{{.Tag}}' \
+            "$image"
+    )" || return 2
+    if [[ -z "$output" ]]; then
+        return 1
+    fi
+    [[ "$output" == "$image" ]] \
+        || ops_die "retirement image query returned an unexpected reference"
+}
+
+ops_remove_retirement_resources() {
+    ops_load_snapshot "$RETIREMENT_SLOT" "$RETIREMENT_RELEASE_SNAPSHOT"
+    [[ \
+        "$RELEASE" == "$RETIREMENT_RELEASE" \
+        && "$APP_ENV_FILE" == "$RETIREMENT_APP_SNAPSHOT" \
+        && "$BACKEND_IMAGE" == "$RETIREMENT_BACKEND_IMAGE" \
+        && "$FRONTEND_IMAGE" == "$RETIREMENT_FRONTEND_IMAGE" \
+    ]] || ops_die "retirement snapshot no longer matches the journal"
+    ops_compose "$RETIREMENT_PROJECT" down --remove-orphans
+    local image
+    local present_status
+    for image in "$RETIREMENT_BACKEND_IMAGE" "$RETIREMENT_FRONTEND_IMAGE"; do
+        set +e
+        ops_exact_image_present "$image"
+        present_status=$?
+        set -e
+        if (( present_status == 0 )); then
+            docker image rm "$image"
+        elif (( present_status != 1 )); then
+            ops_die "could not reconcile retirement image presence"
+        fi
+    done
+}
+
+ops_verify_retirement_resources_absent() {
+    ops_load_snapshot "$RETIREMENT_SLOT" "$RETIREMENT_RELEASE_SNAPSHOT"
+    [[ -z "$(ops_compose "$RETIREMENT_PROJECT" ps -a -q)" ]] \
+        || ops_die "retirement project still has containers after removal phase"
+    local image
+    local present_status
+    for image in "$RETIREMENT_BACKEND_IMAGE" "$RETIREMENT_FRONTEND_IMAGE"; do
+        set +e
+        ops_exact_image_present "$image"
+        present_status=$?
+        set -e
+        if (( present_status == 0 )); then
+            ops_die "retirement image reappeared after removal phase"
+        elif (( present_status != 1 )); then
+            ops_die "could not verify retired image absence"
+        fi
+    done
+}
+
+ops_commit_retired_state() {
+    local state_candidate
+    state_candidate="$(mktemp "$DEPLOY_STATE_ROOT/.retired-state.XXXXXX")"
+    {
+        printf 'STATE_VERSION=3\n'
+        printf 'GENERATION=%s\n' "$RETIREMENT_GENERATION"
+        printf 'ACTIVE_SLOT=%s\n' "$ACTIVE_SLOT"
+        printf 'ACTIVE_RELEASE=%s\n' "$ACTIVE_RELEASE"
+        printf 'ACTIVE_PROJECT=%s\n' "$ACTIVE_PROJECT"
+        printf 'ACTIVE_FRONTEND_PORT=%s\n' "$ACTIVE_FRONTEND_PORT"
+        printf 'ACTIVE_RELEASE_SNAPSHOT=%s\n' "$ACTIVE_RELEASE_SNAPSHOT"
+        printf 'ACTIVE_APP_SNAPSHOT=%s\n' "$ACTIVE_APP_SNAPSHOT"
+        printf 'ACTIVE_BACKEND_IMAGE=%s\n' "$ACTIVE_BACKEND_IMAGE"
+        printf 'ACTIVE_FRONTEND_IMAGE=%s\n' "$ACTIVE_FRONTEND_IMAGE"
+        printf 'PREVIOUS_AVAILABLE=0\n'
+        printf 'PREVIOUS_SLOT=\n'
+        printf 'PREVIOUS_RELEASE=\n'
+        printf 'PREVIOUS_PROJECT=\n'
+        printf 'PREVIOUS_FRONTEND_PORT=\n'
+        printf 'PREVIOUS_RELEASE_SNAPSHOT=\n'
+        printf 'PREVIOUS_APP_SNAPSHOT=\n'
+        printf 'PREVIOUS_BACKEND_IMAGE=\n'
+        printf 'PREVIOUS_FRONTEND_IMAGE=\n'
+        printf 'PREVIOUS_FRAGMENT_BACKUP=\n'
+    } | ops_helper atomic-stdin \
+        "$state_candidate" \
+        600 \
+        "$OPS_STATE_UID" \
+        "$OPS_STATE_GID"
+    ops_helper validate-state "$state_candidate" "$DEPLOY_STATE_ROOT"
+    ops_helper atomic-copy \
+        "$state_candidate" \
+        "$ACTIVE_STATE_FILE" \
+        --mode 600 \
+        --uid "$OPS_STATE_UID" \
+        --gid "$OPS_STATE_GID"
+    rm -f -- "$state_candidate"
+}
+
+ops_reconcile_retirement() {
+    [[ -e "$OPS_RETIREMENT_FILE" ]] || return 0
+    ops_load_retirement
+    ops_load_active_state
+    ops_validate_active_consistency
+
+    if [[ "$RETIREMENT_PHASE" == "state_committed" ]] \
+        || [[ \
+            "$ACTIVE_GENERATION" == "$RETIREMENT_GENERATION" \
+            && "$PREVIOUS_AVAILABLE" == "0" \
+        ]]; then
+        [[ \
+            "$ACTIVE_GENERATION" == "$RETIREMENT_GENERATION" \
+            && "$PREVIOUS_AVAILABLE" == "0" \
+        ]] || ops_die "retirement committed phase diverges from active state"
+        if ! ops_helper durable-unlink "$OPS_RETIREMENT_FILE"; then
+            return 1
+        fi
+        ops_helper durable-unlink "$RETIREMENT_FRAGMENT_BACKUP" \
+            || printf '%s: warning: retired fragment backup remains\n' "$OPS_CONTEXT" >&2
+        return 0
+    fi
+
+    ops_retirement_matches_previous \
+        || ops_die "retirement journal diverges from the recorded previous target"
+    if [[ "$RETIREMENT_PHASE" == "prepared" ]]; then
+        ops_remove_retirement_resources
+        ops_helper mark-retirement \
+            "$OPS_RETIREMENT_FILE" \
+            "$DEPLOY_STATE_ROOT" \
+            resources_removed
+        RETIREMENT_PHASE=resources_removed
+        if [[ "${OPS_TEST_RETIREMENT_CRASH_PHASE:-}" == "after-resources-removed" ]]; then
+            kill -KILL "$$"
+        fi
+    fi
+    if [[ "$RETIREMENT_PHASE" == "resources_removed" ]]; then
+        ops_verify_retirement_resources_absent
+        ops_commit_retired_state
+        ops_helper mark-retirement \
+            "$OPS_RETIREMENT_FILE" \
+            "$DEPLOY_STATE_ROOT" \
+            state_committed
+        if [[ "${OPS_TEST_RETIREMENT_CRASH_PHASE:-}" == "after-state-commit" ]]; then
+            kill -KILL "$$"
+        fi
+        if ! ops_helper durable-unlink "$OPS_RETIREMENT_FILE"; then
+            return 1
+        fi
+        ops_helper durable-unlink "$RETIREMENT_FRAGMENT_BACKUP" \
+            || printf '%s: warning: retired fragment backup remains\n' "$OPS_CONTEXT" >&2
+    fi
+}
+
+ops_reconcile_operations() {
+    ops_reconcile_journal
+    ops_reconcile_retirement
+}
+
 ops_write_journal() {
     local generation="$1"
     local operation="$2"
@@ -320,6 +548,9 @@ ops_write_journal() {
         printf 'OPERATION=%s\n' "$operation"
         printf 'PHASE=%s\n' "$phase"
         printf 'OLD_FRAGMENT_BACKUP=%s\n' "$old_fragment"
+        printf 'OLD_FRAGMENT_UID=%s\n' "$FRAGMENT_UID"
+        printf 'OLD_FRAGMENT_GID=%s\n' "$FRAGMENT_GID"
+        printf 'OLD_FRAGMENT_MODE=%s\n' "$FRAGMENT_MODE"
         printf 'OLD_STATE_PRESENT=%s\n' "$old_state_present"
         printf 'OLD_STATE_BACKUP=%s\n' "$old_state"
         printf 'NEW_STATE_GENERATION=%s\n' "$generation"
@@ -381,13 +612,13 @@ ops_load_journal() {
             "$DEPLOY_STATE_ROOT" \
             --emit
     )
-    [[ "${#OPS_JOURNAL_VALUES[@]}" -eq 8 ]] \
+    [[ "${#OPS_JOURNAL_VALUES[@]}" -eq 11 ]] \
         || ops_die "transaction journal is incomplete"
     JOURNAL_GENERATION="${OPS_JOURNAL_VALUES[1]}"
     JOURNAL_PHASE="${OPS_JOURNAL_VALUES[3]}"
     JOURNAL_OLD_FRAGMENT="${OPS_JOURNAL_VALUES[4]}"
-    JOURNAL_OLD_STATE_PRESENT="${OPS_JOURNAL_VALUES[5]}"
-    JOURNAL_OLD_STATE="${OPS_JOURNAL_VALUES[6]}"
+    JOURNAL_OLD_STATE_PRESENT="${OPS_JOURNAL_VALUES[8]}"
+    JOURNAL_OLD_STATE="${OPS_JOURNAL_VALUES[9]}"
 }
 
 ops_reconcile_journal() {
@@ -399,16 +630,24 @@ ops_reconcile_journal() {
         [[ "$ACTIVE_GENERATION" == "$JOURNAL_GENERATION" ]] \
             || ops_die "committed journal diverges from active state generation"
         ops_validate_active_consistency
-        if [[ "$HAS_PREVIOUS" == "1" ]]; then
+        if [[ "$PREVIOUS_AVAILABLE" == "1" ]]; then
             [[ "$PREVIOUS_FRAGMENT_BACKUP" == "$JOURNAL_OLD_FRAGMENT" ]] \
                 || ops_die "committed journal fragment is not the rollback backup"
-        else
-            ops_helper durable-unlink "$JOURNAL_OLD_FRAGMENT"
         fi
-        ops_helper durable-unlink "$OPS_JOURNAL_FILE"
-        [[ -z "$JOURNAL_OLD_STATE" ]] \
-            || ops_helper durable-unlink "$JOURNAL_OLD_STATE"
-        return 0
+        if ! ops_helper durable-unlink "$OPS_JOURNAL_FILE"; then
+            return 1
+        fi
+        local cleanup_pending=0
+        if [[ -n "$JOURNAL_OLD_STATE" ]] \
+            && ! ops_helper durable-unlink "$JOURNAL_OLD_STATE"; then
+            cleanup_pending=1
+        fi
+        if [[ "$PREVIOUS_AVAILABLE" == "0" ]]; then
+            if ! ops_helper durable-unlink "$JOURNAL_OLD_FRAGMENT"; then
+                cleanup_pending=1
+            fi
+        fi
+        return "$cleanup_pending"
     fi
 
     ops_helper atomic-copy \
@@ -426,10 +665,19 @@ ops_reconcile_journal() {
     ops_caddy_reload
     if [[ "$JOURNAL_OLD_STATE_PRESENT" == "1" ]]; then
         ops_validate_active_consistency
-        ops_helper durable-unlink "$JOURNAL_OLD_STATE"
     fi
-    ops_helper durable-unlink "$OPS_JOURNAL_FILE"
-    ops_helper durable-unlink "$JOURNAL_OLD_FRAGMENT"
+    if ! ops_helper durable-unlink "$OPS_JOURNAL_FILE"; then
+        return 1
+    fi
+    local cleanup_pending=0
+    if [[ "$JOURNAL_OLD_STATE_PRESENT" == "1" ]] \
+        && ! ops_helper durable-unlink "$JOURNAL_OLD_STATE"; then
+        cleanup_pending=1
+    fi
+    if ! ops_helper durable-unlink "$JOURNAL_OLD_FRAGMENT"; then
+        cleanup_pending=1
+    fi
+    return "$cleanup_pending"
 }
 
 ops_install_transaction_traffic() {
@@ -454,9 +702,66 @@ ops_commit_transaction_state() {
     if [[ "${OPS_TEST_CRASH_PHASE:-}" == "after-state-commit" ]]; then
         kill -KILL "$$"
     fi
-    ops_helper durable-unlink "$OPS_JOURNAL_FILE"
-    [[ -z "$TRANSACTION_OLD_STATE" ]] \
-        || ops_helper durable-unlink "$TRANSACTION_OLD_STATE"
+}
+
+ops_finalize_committed_transaction() {
+    if ! ops_reconcile_journal; then
+        printf '%s: warning: committed transaction housekeeping remains pending\n' \
+            "$OPS_CONTEXT" >&2
+        return 1
+    fi
+    return 0
+}
+
+ops_candidate_is_committed() (
+    local expected_slot="$1"
+    local expected_project="$2"
+    local expected_release_snapshot="$3"
+    [[ -f "$ACTIVE_STATE_FILE" ]] || return 1
+    ops_load_active_state
+    ops_validate_active_consistency
+    [[ \
+        "$ACTIVE_SLOT" == "$expected_slot" \
+        && "$ACTIVE_PROJECT" == "$expected_project" \
+        && "$ACTIVE_RELEASE_SNAPSHOT" == "$expected_release_snapshot" \
+    ]]
+)
+
+ops_remove_orphan_transaction_backups() {
+    local candidate
+    local referenced_previous=
+    local referenced_journal_fragment=
+    local referenced_journal_state=
+    if [[ -f "$ACTIVE_STATE_FILE" ]]; then
+        ops_load_active_state
+        if [[ "$PREVIOUS_AVAILABLE" == "1" ]]; then
+            referenced_previous="$PREVIOUS_FRAGMENT_BACKUP"
+        fi
+    fi
+    if [[ -f "$OPS_JOURNAL_FILE" ]]; then
+        ops_load_journal
+        referenced_journal_fragment="$JOURNAL_OLD_FRAGMENT"
+        referenced_journal_state="$JOURNAL_OLD_STATE"
+    fi
+    while IFS= read -r candidate; do
+        [[ -n "$candidate" ]] || continue
+        if [[ \
+            "$candidate" != "$referenced_previous" \
+            && "$candidate" != "$referenced_journal_fragment" \
+            && "$candidate" != "$referenced_journal_state" \
+        ]]; then
+            ops_helper durable-unlink "$candidate"
+        fi
+    done < <(
+        find "$DEPLOY_STATE_ROOT" \
+            -maxdepth 1 \
+            -type f \
+            \( \
+                -name 'tx-gen-*-old-fragment.caddy' \
+                -o -name 'tx-gen-*-old-state.env' \
+            \) \
+            -print
+    )
 }
 
 ops_test_crash_before_state_commit() {

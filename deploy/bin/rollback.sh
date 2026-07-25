@@ -3,14 +3,16 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 OPS_CONTEXT=rollback
+export OPS_CONTEXT
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/ops-common.sh"
 
 [[ "$#" -eq 0 ]] || ops_die "usage: ${0##*/}"
-ops_acquire_lock
-ops_reconcile_journal
+ops_acquire_lock "$0" "$@"
+ops_reconcile_operations
 ops_load_active_state
 ops_validate_active_consistency
-[[ "$HAS_PREVIOUS" == "1" ]] \
+[[ "$PREVIOUS_AVAILABLE" == "1" ]] \
     || ops_die "no complete previous deployment is recorded"
 
 CURRENT_SLOT="$ACTIVE_SLOT"
@@ -78,7 +80,7 @@ caddy validate --config "$TEMP_CONFIG" --adapter caddyfile >/dev/null
 ops_begin_transaction rollback
 transaction_started=true
 {
-    printf 'STATE_VERSION=2\n'
+    printf 'STATE_VERSION=3\n'
     printf 'GENERATION=%s\n' "$TRANSACTION_GENERATION"
     printf 'ACTIVE_SLOT=%s\n' "$ROLLBACK_SLOT"
     printf 'ACTIVE_RELEASE=%s\n' "$ROLLBACK_RELEASE"
@@ -88,7 +90,7 @@ transaction_started=true
     printf 'ACTIVE_APP_SNAPSHOT=%s\n' "$APP_ENV_FILE"
     printf 'ACTIVE_BACKEND_IMAGE=%s\n' "$BACKEND_IMAGE"
     printf 'ACTIVE_FRONTEND_IMAGE=%s\n' "$FRONTEND_IMAGE"
-    printf 'HAS_PREVIOUS=1\n'
+    printf 'PREVIOUS_AVAILABLE=1\n'
     printf 'PREVIOUS_SLOT=%s\n' "$CURRENT_SLOT"
     printf 'PREVIOUS_RELEASE=%s\n' "$CURRENT_RELEASE"
     printf 'PREVIOUS_PROJECT=%s\n' "$CURRENT_PROJECT"
@@ -111,6 +113,9 @@ ops_verify_public_health \
 ops_test_crash_before_state_commit
 ops_commit_transaction_state "$STATE_CANDIDATE"
 transaction_started=false
+ops_finalize_committed_transaction || true
+ops_remove_orphan_transaction_backups || \
+    printf 'rollback: warning: obsolete transaction backups remain\n' >&2
 
 if ! (
     ops_load_snapshot "$CURRENT_SLOT" "$CURRENT_RELEASE_SNAPSHOT"
@@ -118,4 +123,4 @@ if ! (
 ); then
     printf 'rollback: warning: the replaced app slot could not be stopped\n' >&2
 fi
-printf 'rolled back to %s at %s\n' "$ROLLBACK_SLOT" "$ROLLBACK_RELEASE"
+printf 'rolled back to %s at %s\n' "$ROLLBACK_SLOT" "$ROLLBACK_RELEASE" || true

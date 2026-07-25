@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 OPS_CONTEXT=switch
+export OPS_CONTEXT
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/ops-common.sh"
 
 [[ "$#" -eq 2 ]] \
@@ -12,8 +14,8 @@ REQUESTED_RELEASE_SNAPSHOT="$2"
 [[ "$SLOT" == "blue" || "$SLOT" == "green" ]] \
     || ops_die "invalid slot"
 
-ops_acquire_lock
-ops_reconcile_journal
+ops_acquire_lock "$0" "$@"
+ops_reconcile_operations
 ops_load_snapshot "$SLOT" "$REQUESTED_RELEASE_SNAPSHOT"
 PROJECT="1999wiki-$SLOT"
 CANDIDATE_BASE_URL="http://127.0.0.1:$FRONTEND_PORT"
@@ -89,7 +91,7 @@ caddy validate --config "$TEMP_CONFIG" --adapter caddyfile >/dev/null
 ops_begin_transaction switch
 transaction_started=true
 {
-    printf 'STATE_VERSION=2\n'
+    printf 'STATE_VERSION=3\n'
     printf 'GENERATION=%s\n' "$TRANSACTION_GENERATION"
     printf 'ACTIVE_SLOT=%s\n' "$SLOT"
     printf 'ACTIVE_RELEASE=%s\n' "$RELEASE"
@@ -99,7 +101,7 @@ transaction_started=true
     printf 'ACTIVE_APP_SNAPSHOT=%s\n' "$APP_ENV_FILE"
     printf 'ACTIVE_BACKEND_IMAGE=%s\n' "$BACKEND_IMAGE"
     printf 'ACTIVE_FRONTEND_IMAGE=%s\n' "$FRONTEND_IMAGE"
-    printf 'HAS_PREVIOUS=%s\n' "$OLD_STATE_PRESENT"
+    printf 'PREVIOUS_AVAILABLE=%s\n' "$OLD_STATE_PRESENT"
     printf 'PREVIOUS_SLOT=%s\n' "$OLD_SLOT"
     printf 'PREVIOUS_RELEASE=%s\n' "$OLD_RELEASE"
     printf 'PREVIOUS_PROJECT=%s\n' "$OLD_PROJECT"
@@ -126,9 +128,9 @@ ops_verify_public_health \
 ops_test_crash_before_state_commit
 ops_commit_transaction_state "$STATE_CANDIDATE"
 transaction_started=false
-if [[ "$OLD_STATE_PRESENT" == "0" ]]; then
-    ops_helper durable-unlink "$TRANSACTION_OLD_FRAGMENT"
-fi
+ops_finalize_committed_transaction || true
+ops_remove_orphan_transaction_backups || \
+    printf 'switch: warning: obsolete transaction backups remain\n' >&2
 
 if [[ "$OLD_STATE_PRESENT" == "1" ]]; then
     if ! (
@@ -138,4 +140,4 @@ if [[ "$OLD_STATE_PRESENT" == "1" ]]; then
         printf 'switch: warning: the previous app slot could not be stopped\n' >&2
     fi
 fi
-printf 'active slot is now %s at %s\n' "$SLOT" "$RELEASE"
+printf 'active slot is now %s at %s\n' "$SLOT" "$RELEASE" || true

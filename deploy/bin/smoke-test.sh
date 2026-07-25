@@ -296,11 +296,12 @@ if events[-1] != "done" or events.count("done") != 1:
     )
 PY
 
-if [[ "$MEDIA_URL" == /media/* ]]; then
-    MEDIA_RETRIEVAL_URL="$PUBLIC_BASE_URL$MEDIA_URL"
-else
-    MEDIA_RETRIEVAL_URL="$MEDIA_URL"
-fi
+MEDIA_RETRIEVAL_URL="$(
+    python3 "$OPS_HELPER" validate-media-url \
+        "$APP_ENV_FILE" \
+        "$PUBLIC_BASE_URL" \
+        "$MEDIA_URL"
+)" || die "projected media URL does not match the public origin"
 fetch \
     "$MEDIA_RETRIEVAL_URL" \
     "$TMP_DIR/media-object" \

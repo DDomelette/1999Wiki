@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -13,12 +14,13 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import urljoin, urlsplit
 
 
 KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*")
 RELEASE_RE = re.compile(r"sha-[0-9a-f]{7}")
 GENERATION_RE = re.compile(r"gen-[0-9a-f]{24}")
-PLACEHOLDER_RE = re.compile(r"\$\{[^}]*\}")
+PLACEHOLDER_RE = re.compile(r"\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)")
 IMAGE_REPOSITORIES = {
     "BACKEND_IMAGE": "ghcr.io/ddomelette/1999wiki-backend",
     "FRONTEND_IMAGE": "ghcr.io/ddomelette/1999wiki-frontend",
@@ -48,6 +50,7 @@ APP_REQUIRED = (
     "SILICONFLOW_API_KEY",
     "HUIJI_PROCESSED_ROOT",
 )
+APP_ALLOWED = (*APP_REQUIRED, "MINIO_SECURE")
 INFRA_REQUIRED = (
     "MYSQL_ROOT_PASSWORD",
     "MYSQL_USER",
@@ -55,6 +58,7 @@ INFRA_REQUIRED = (
     "MINIO_ROOT_USER",
     "MINIO_ROOT_PASSWORD",
 )
+INFRA_ALLOWED = (*INFRA_REQUIRED, "MINIO_HOST_PORT", "ATTU_HOST_PORT")
 CADDY_REQUIRED = ("SITE_ADDRESS", "MINIO_PROXY_UPSTREAM")
 STATE_KEYS = (
     "STATE_VERSION",
@@ -67,7 +71,7 @@ STATE_KEYS = (
     "ACTIVE_APP_SNAPSHOT",
     "ACTIVE_BACKEND_IMAGE",
     "ACTIVE_FRONTEND_IMAGE",
-    "HAS_PREVIOUS",
+    "PREVIOUS_AVAILABLE",
     "PREVIOUS_SLOT",
     "PREVIOUS_RELEASE",
     "PREVIOUS_PROJECT",
@@ -84,9 +88,26 @@ JOURNAL_KEYS = (
     "OPERATION",
     "PHASE",
     "OLD_FRAGMENT_BACKUP",
+    "OLD_FRAGMENT_UID",
+    "OLD_FRAGMENT_GID",
+    "OLD_FRAGMENT_MODE",
     "OLD_STATE_PRESENT",
     "OLD_STATE_BACKUP",
     "NEW_STATE_GENERATION",
+)
+RETIREMENT_KEYS = (
+    "RETIREMENT_VERSION",
+    "GENERATION",
+    "PHASE",
+    "ACTIVE_GENERATION",
+    "SLOT",
+    "RELEASE",
+    "PROJECT",
+    "RELEASE_SNAPSHOT",
+    "APP_SNAPSHOT",
+    "BACKEND_IMAGE",
+    "FRONTEND_IMAGE",
+    "FRAGMENT_BACKUP",
 )
 
 
@@ -159,31 +180,65 @@ def validate_release(path: Path, expected_release: str | None = None) -> dict[st
 
 def validate_app(path: Path) -> dict[str, str]:
     values = strict_env(path)
+    unexpected = set(values) - set(APP_ALLOWED)
+    if unexpected:
+        fail(f"APP_ENV_FILE has unexpected keys: {','.join(sorted(unexpected))}")
     require_nonempty(values, APP_REQUIRED, "APP_ENV_FILE")
     if values["APP_ENV"] != "production":
         fail("APP_ENV must be production")
     media_base = values["MEDIA_PUBLIC_BASE_URL"].rstrip("/")
-    if media_base != "/media" and re.fullmatch(r"https://[^/?#]+(?:/[^?#]*)?", media_base) is None:
-        fail("MEDIA_PUBLIC_BASE_URL must be /media or an HTTPS base")
+    if media_base != "/media" and re.fullmatch(
+        r"https://[^/?#]+(?:/[^?#]*)?", media_base
+    ) is None:
+        fail("MEDIA_PUBLIC_BASE_URL must be /media or an absolute HTTPS base")
     values["MEDIA_PUBLIC_BASE_URL"] = media_base
     return values
 
 
 def validate_infra(path: Path) -> dict[str, str]:
     values = strict_env(path)
+    unexpected = set(values) - set(INFRA_ALLOWED)
+    if unexpected:
+        fail(f"INFRA_ENV_FILE has unexpected keys: {','.join(sorted(unexpected))}")
     require_nonempty(values, INFRA_REQUIRED, "INFRA_ENV_FILE")
     return values
 
 
 def validate_caddy(path: Path) -> dict[str, str]:
     values = strict_env(path)
+    if set(values) != set(CADDY_REQUIRED):
+        fail("CADDY_ENV_FILE must contain exactly the approved keys")
     require_nonempty(values, CADDY_REQUIRED, "CADDY_ENV_FILE")
     if re.fullmatch(r"127\.0\.0\.1:[0-9]{2,5}", values["MINIO_PROXY_UPSTREAM"]) is None:
         fail("MINIO_PROXY_UPSTREAM must use IPv4 loopback")
     return values
 
 
+def absolute_path(path: Path) -> Path:
+    return Path(os.path.abspath(os.fspath(path)))
+
+
+def reject_symlink_components(path: Path, *, allow_missing_final: bool = False) -> Path:
+    absolute = absolute_path(path)
+    current = Path(absolute.anchor)
+    parts = absolute.parts[1:] if absolute.anchor else absolute.parts
+    for index, part in enumerate(parts):
+        current = current / part
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            if allow_missing_final and index == len(parts) - 1:
+                return absolute
+            fail(f"required path component is missing: {current}")
+        if stat.S_ISLNK(info.st_mode):
+            fail(f"symlink path components are forbidden: {current}")
+        if index < len(parts) - 1 and not stat.S_ISDIR(info.st_mode):
+            fail(f"non-directory path component is forbidden: {current}")
+    return absolute
+
+
 def resolved_file(path: Path) -> Path:
+    path = reject_symlink_components(path)
     try:
         resolved = path.resolve(strict=True)
     except OSError:
@@ -194,8 +249,8 @@ def resolved_file(path: Path) -> Path:
 
 
 def contained(root: Path, candidate: Path) -> Path:
-    root = root.resolve(strict=True)
-    candidate = candidate.resolve(strict=True)
+    root = validate_state_root(root)
+    candidate = reject_symlink_components(candidate)
     try:
         candidate.relative_to(root)
     except ValueError:
@@ -239,14 +294,146 @@ def validate_protected_file(
 
 
 def validate_state_root(path: Path) -> Path:
-    try:
-        resolved = path.resolve(strict=True)
-    except OSError:
-        fail(f"deployment state root is missing: {path}")
-    if not resolved.is_dir():
+    resolved = reject_symlink_components(path)
+    info = os.lstat(resolved)
+    if not stat.S_ISDIR(info.st_mode):
         fail(f"deployment state root is not a directory: {resolved}")
-    validate_owner_mode(resolved, exact_mode=0o700)
+    mode = stat.S_IMODE(info.st_mode)
+    if info.st_uid not in {0, os.geteuid()}:
+        fail(f"path must be owned by root or current user: {resolved}")
+    if mode != 0o700:
+        fail(f"path must have mode 0700: {resolved}")
     return resolved
+
+
+def canonical_lock_path(state_root: Path, lock_path: Path) -> tuple[Path, Path]:
+    state_root = validate_state_root(state_root)
+    lock_path = absolute_path(lock_path)
+    if lock_path != state_root / "operations.lock":
+        fail("operations lock must use the canonical state-root path")
+    return state_root, lock_path
+
+
+def validate_lock_descriptor(
+    state_root: Path,
+    lock_path: Path,
+    descriptor: int,
+) -> None:
+    state_root, lock_path = canonical_lock_path(state_root, lock_path)
+    try:
+        path_info = os.lstat(lock_path)
+    except FileNotFoundError:
+        fail("operations lock file is missing")
+    if stat.S_ISLNK(path_info.st_mode):
+        fail("operations lock symlink is forbidden")
+    if not stat.S_ISREG(path_info.st_mode):
+        fail("operations lock is not a regular file")
+    if path_info.st_uid not in {0, os.geteuid()}:
+        fail("operations lock owner is unsafe")
+    if stat.S_IMODE(path_info.st_mode) != 0o600:
+        fail("operations lock must have mode 0600")
+    try:
+        descriptor_info = os.fstat(descriptor)
+    except OSError:
+        fail("inherited operations lock descriptor is closed")
+    if not stat.S_ISREG(descriptor_info.st_mode):
+        fail("inherited operations lock descriptor is not regular")
+    if (descriptor_info.st_dev, descriptor_info.st_ino) != (
+        path_info.st_dev,
+        path_info.st_ino,
+    ):
+        fail("inherited operations lock descriptor does not match canonical inode")
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fail("inherited operations lock descriptor does not own the global lock")
+
+
+def lock_exec(
+    state_root: Path,
+    lock_path: Path,
+    descriptor: int,
+    command: list[str],
+) -> None:
+    state_root, lock_path = canonical_lock_path(state_root, lock_path)
+    if descriptor < 3:
+        fail("operations lock descriptor must be at least 3")
+    root_descriptor = os.open(
+        state_root,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    lock_descriptor = -1
+    try:
+        try:
+            lock_descriptor = os.open(
+                "operations.lock",
+                os.O_RDWR
+                | os.O_CREAT
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+                0o600,
+                dir_fd=root_descriptor,
+            )
+        except OSError as exc:
+            if lock_path.is_symlink():
+                fail("operations lock symlink is forbidden")
+            raise exc
+        os.fchmod(lock_descriptor, 0o600)
+        try:
+            fcntl.flock(lock_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fail("another production operation holds the global lock")
+        if lock_descriptor != descriptor:
+            os.dup2(lock_descriptor, descriptor, inheritable=True)
+            os.close(lock_descriptor)
+            lock_descriptor = descriptor
+        os.set_inheritable(lock_descriptor, True)
+        validate_lock_descriptor(state_root, lock_path, lock_descriptor)
+        if not command:
+            fail("lock-exec requires a command")
+        environment = os.environ.copy()
+        environment["OPS_LOCK_FD"] = str(descriptor)
+        environment["OPS_LOCK_HELD"] = "1"
+        environment["OPS_LOCK_FILE"] = str(lock_path)
+        os.execvpe(command[0], command, environment)
+    finally:
+        if lock_descriptor >= 0:
+            try:
+                os.close(lock_descriptor)
+            except OSError:
+                pass
+        os.close(root_descriptor)
+
+
+def validate_media_url(app_path: Path, public_base: str, returned_url: str) -> str:
+    media_base = validate_app(app_path)["MEDIA_PUBLIC_BASE_URL"]
+    public = urlsplit(public_base)
+    if public.scheme not in {"http", "https"} or not public.netloc:
+        fail("PUBLIC_BASE_URL must be an absolute HTTP(S) origin")
+    if public.path not in {"", "/"} or public.query or public.fragment:
+        fail("PUBLIC_BASE_URL must not contain a path, query, or fragment")
+    public_origin = (public.scheme.lower(), public.hostname, public.port)
+    if media_base == "/media":
+        if not returned_url.startswith("/media/"):
+            fail("relative media URL is outside MEDIA_PUBLIC_BASE_URL")
+        return urljoin(public_base.rstrip("/") + "/", returned_url.lstrip("/"))
+
+    configured = urlsplit(media_base)
+    configured_origin = (
+        configured.scheme.lower(),
+        configured.hostname,
+        configured.port,
+    )
+    if configured_origin != public_origin:
+        fail("absolute MEDIA_PUBLIC_BASE_URL origin differs from PUBLIC_BASE_URL")
+    returned = urlsplit(returned_url)
+    returned_origin = (returned.scheme.lower(), returned.hostname, returned.port)
+    if returned_origin != public_origin:
+        fail("returned media URL origin differs from PUBLIC_BASE_URL")
+    normalized_base = media_base.rstrip("/")
+    if not returned_url.startswith(normalized_base + "/"):
+        fail("returned media URL is outside MEDIA_PUBLIC_BASE_URL")
+    return returned_url
 
 
 def fsync_directory(path: Path) -> None:
@@ -266,9 +453,12 @@ def atomic_replace(
     gid: int,
 ) -> None:
     """Write, fsync, chmod/chown, and atomically replace within target directory."""
-    parent = target.parent
+    target = absolute_path(target)
+    parent = reject_symlink_components(target.parent)
     if not parent.is_dir():
         fail(f"atomic target parent is missing: {parent}")
+    if target.exists() or target.is_symlink():
+        reject_symlink_components(target)
     descriptor, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", dir=parent)
     temp_path = Path(temp_name)
     try:
@@ -291,6 +481,9 @@ def atomic_replace(
 
 
 def durable_unlink(path: Path) -> None:
+    path = absolute_path(path)
+    if path.exists() or path.is_symlink():
+        reject_symlink_components(path)
     try:
         path.unlink()
     except FileNotFoundError:
@@ -335,13 +528,20 @@ def snapshot(
     current = state_root
     for name in ("snapshots", release, slot):
         current = current / name
-        if current.exists():
-            if not current.is_dir():
-                fail(f"snapshot parent is not a directory: {current}")
-            validate_owner_mode(current, exact_mode=0o700)
-        else:
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
             current.mkdir(mode=0o700)
             fsync_directory(current.parent)
+            info = os.lstat(current)
+        else:
+            if stat.S_ISLNK(info.st_mode):
+                fail(f"snapshot path component is a forbidden symlink: {current}")
+            if not stat.S_ISDIR(info.st_mode):
+                fail(f"snapshot parent is not a directory: {current}")
+        mode = stat.S_IMODE(info.st_mode)
+        if info.st_uid not in {0, os.geteuid()} or mode != 0o700:
+            fail(f"snapshot directory owner/mode is unsafe: {current}")
     release_snapshot = current / "release.env"
     app_snapshot = current / "app.env"
     ensure_snapshot_file(
@@ -429,7 +629,7 @@ def validate_state(path: Path, state_root: Path) -> dict[str, str]:
     values = strict_env(path)
     if set(values) != set(STATE_KEYS):
         fail("active state has missing or unexpected keys")
-    if values["STATE_VERSION"] != "2":
+    if values["STATE_VERSION"] != "3":
         fail("active state version is unsupported")
     if GENERATION_RE.fullmatch(values["GENERATION"]) is None:
         fail("active state generation is invalid")
@@ -460,18 +660,22 @@ def validate_state(path: Path, state_root: Path) -> dict[str, str]:
         return release_snapshot, app_snapshot, release, release_values
 
     check_deployment("ACTIVE")
-    if values["HAS_PREVIOUS"] == "1":
+    if values["PREVIOUS_AVAILABLE"] == "1":
         check_deployment("PREVIOUS")
         backup = contained(state_root, Path(values["PREVIOUS_FRAGMENT_BACKUP"]))
         validate_fragment(backup, values["PREVIOUS_FRONTEND_PORT"])
         if values["PREVIOUS_SLOT"] == values["ACTIVE_SLOT"]:
             fail("active and previous slots must differ")
-    elif values["HAS_PREVIOUS"] == "0":
+    elif values["PREVIOUS_AVAILABLE"] == "0":
         for key in STATE_KEYS:
-            if key.startswith("PREVIOUS_") and values[key]:
+            if (
+                key.startswith("PREVIOUS_")
+                and key != "PREVIOUS_AVAILABLE"
+                and values[key]
+            ):
                 fail("state without previous deployment contains previous values")
     else:
-        fail("HAS_PREVIOUS must be 0 or 1")
+        fail("PREVIOUS_AVAILABLE must be 0 or 1")
     return values
 
 
@@ -494,18 +698,73 @@ def validate_journal(path: Path, state_root: Path) -> dict[str, str]:
     old_fragment = contained(state_root, Path(values["OLD_FRAGMENT_BACKUP"]))
     if old_fragment.name != f"tx-{generation}-old-fragment.caddy":
         fail("transaction old fragment path is invalid")
+    old_fragment_info = os.lstat(old_fragment)
+    expected_fragment_meta = (
+        values["OLD_FRAGMENT_UID"],
+        values["OLD_FRAGMENT_GID"],
+        values["OLD_FRAGMENT_MODE"],
+    )
+    actual_fragment_meta = (
+        str(old_fragment_info.st_uid),
+        str(old_fragment_info.st_gid),
+        f"{stat.S_IMODE(old_fragment_info.st_mode):o}",
+    )
+    if expected_fragment_meta != actual_fragment_meta:
+        fail("transaction old fragment metadata diverges from journal")
     if values["OLD_STATE_PRESENT"] == "1":
         old_state = contained(state_root, Path(values["OLD_STATE_BACKUP"]))
         if old_state.name != f"tx-{generation}-old-state.env":
             fail("transaction old state path is invalid")
-        validate_state(old_state, state_root)
+        old_state_values = validate_state(old_state, state_root)
+        validate_fragment(old_fragment, old_state_values["ACTIVE_FRONTEND_PORT"])
     elif values["OLD_STATE_PRESENT"] == "0":
         if values["OLD_STATE_BACKUP"]:
             fail("transaction without old state has a backup path")
+        text = old_fragment.read_text(encoding="utf-8").strip()
+        if re.fullmatch(r"reverse_proxy 127\.0\.0\.1:[0-9]{4,5}", text) is None:
+            fail("transaction old fragment is not an exact loopback reverse proxy")
     else:
         fail("transaction OLD_STATE_PRESENT is invalid")
     if values["NEW_STATE_GENERATION"] != generation:
         fail("transaction new state generation is invalid")
+    return values
+
+
+def validate_retirement(path: Path, state_root: Path) -> dict[str, str]:
+    state_root = validate_state_root(state_root)
+    path = contained(state_root, path)
+    validate_owner_mode(path, exact_mode=0o600)
+    values = strict_env(path)
+    if set(values) != set(RETIREMENT_KEYS):
+        fail("retirement journal has missing or unexpected keys")
+    if values["RETIREMENT_VERSION"] != "1":
+        fail("retirement journal version is unsupported")
+    if GENERATION_RE.fullmatch(values["GENERATION"]) is None:
+        fail("retirement generation is invalid")
+    if values["PHASE"] not in {"prepared", "resources_removed", "state_committed"}:
+        fail("retirement phase is invalid")
+    if GENERATION_RE.fullmatch(values["ACTIVE_GENERATION"]) is None:
+        fail("retirement active generation is invalid")
+    slot = values["SLOT"]
+    release = values["RELEASE"]
+    if slot not in {"blue", "green"} or values["PROJECT"] != f"1999wiki-{slot}":
+        fail("retirement slot/project is invalid")
+    if RELEASE_RE.fullmatch(release) is None:
+        fail("retirement release is invalid")
+    loaded = load_snapshot(
+        state_root,
+        slot,
+        Path(values["RELEASE_SNAPSHOT"]),
+    )
+    release_snapshot, app_snapshot, loaded_release, release_values, _ = loaded
+    if loaded_release != release or str(app_snapshot) != values["APP_SNAPSHOT"]:
+        fail("retirement snapshot identity diverges")
+    if values["BACKEND_IMAGE"] != release_values["BACKEND_IMAGE"]:
+        fail("retirement Backend image diverges from snapshot")
+    if values["FRONTEND_IMAGE"] != release_values["FRONTEND_IMAGE"]:
+        fail("retirement Frontend image diverges from snapshot")
+    fragment = contained(state_root, Path(values["FRAGMENT_BACKUP"]))
+    validate_fragment(fragment, release_values["FRONTEND_PORT"])
     return values
 
 
@@ -615,6 +874,30 @@ def command_emit_media_base(args: argparse.Namespace) -> None:
     print(validate_app(Path(args.path))["MEDIA_PUBLIC_BASE_URL"])
 
 
+def command_validate_media_url(args: argparse.Namespace) -> None:
+    print(validate_media_url(Path(args.app_path), args.public_base, args.returned_url))
+
+
+def command_verify_lock(args: argparse.Namespace) -> None:
+    validate_lock_descriptor(
+        Path(args.state_root),
+        Path(args.lock_path),
+        int(args.descriptor),
+    )
+
+
+def command_lock_exec(args: argparse.Namespace) -> None:
+    command = list(args.exec_command)
+    if command and command[0] == "--":
+        command = command[1:]
+    lock_exec(
+        Path(args.state_root),
+        Path(args.lock_path),
+        int(args.descriptor),
+        command,
+    )
+
+
 def command_fragment_metadata(args: argparse.Namespace) -> None:
     uid, gid, mode = fragment_metadata(
         Path(args.path),
@@ -673,6 +956,20 @@ def command_mark_journal(args: argparse.Namespace) -> None:
     write_env_atomic(path, values, JOURNAL_KEYS)
 
 
+def command_validate_retirement(args: argparse.Namespace) -> None:
+    values = validate_retirement(Path(args.path), Path(args.state_root))
+    if args.emit:
+        for key in RETIREMENT_KEYS:
+            print(values[key])
+
+
+def command_mark_retirement(args: argparse.Namespace) -> None:
+    path = Path(args.path)
+    values = validate_retirement(path, Path(args.state_root))
+    values["PHASE"] = args.phase
+    write_env_atomic(path, values, RETIREMENT_KEYS)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -701,6 +998,25 @@ def build_parser() -> argparse.ArgumentParser:
     media_parser = commands.add_parser("emit-media-base")
     media_parser.add_argument("path")
     media_parser.set_defaults(handler=command_emit_media_base)
+
+    media_url_parser = commands.add_parser("validate-media-url")
+    media_url_parser.add_argument("app_path")
+    media_url_parser.add_argument("public_base")
+    media_url_parser.add_argument("returned_url")
+    media_url_parser.set_defaults(handler=command_validate_media_url)
+
+    verify_lock_parser = commands.add_parser("verify-lock")
+    verify_lock_parser.add_argument("state_root")
+    verify_lock_parser.add_argument("lock_path")
+    verify_lock_parser.add_argument("descriptor")
+    verify_lock_parser.set_defaults(handler=command_verify_lock)
+
+    lock_exec_parser = commands.add_parser("lock-exec")
+    lock_exec_parser.add_argument("state_root")
+    lock_exec_parser.add_argument("lock_path")
+    lock_exec_parser.add_argument("descriptor")
+    lock_exec_parser.add_argument("exec_command", nargs=argparse.REMAINDER)
+    lock_exec_parser.set_defaults(handler=command_lock_exec)
 
     snapshot_parser = commands.add_parser("snapshot")
     snapshot_parser.add_argument("state_root")
@@ -784,6 +1100,20 @@ def build_parser() -> argparse.ArgumentParser:
         "phase", choices=("prepared", "traffic_installed", "state_committed")
     )
     mark_parser.set_defaults(handler=command_mark_journal)
+
+    retirement_parser = commands.add_parser("validate-retirement")
+    retirement_parser.add_argument("path")
+    retirement_parser.add_argument("state_root")
+    retirement_parser.add_argument("--emit", action="store_true")
+    retirement_parser.set_defaults(handler=command_validate_retirement)
+
+    mark_retirement_parser = commands.add_parser("mark-retirement")
+    mark_retirement_parser.add_argument("path")
+    mark_retirement_parser.add_argument("state_root")
+    mark_retirement_parser.add_argument(
+        "phase", choices=("prepared", "resources_removed", "state_committed")
+    )
+    mark_retirement_parser.set_defaults(handler=command_mark_retirement)
 
     compose_parser = commands.add_parser("validate-compose-status")
     compose_parser.add_argument("path")

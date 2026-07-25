@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 OPS_CONTEXT=cleanup
+export OPS_CONTEXT
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/ops-common.sh"
 
 [[ "$#" -eq 3 ]] \
@@ -18,41 +20,56 @@ CONFIRMATION="remove-${SLOT}-${REQUESTED_RELEASE}"
 [[ "$PROVIDED_CONFIRMATION" == "$CONFIRMATION" ]] \
     || ops_die "confirmation must be exactly: $CONFIRMATION"
 
-ops_acquire_lock
-ops_reconcile_journal
+ops_acquire_lock "$0" "$@"
+retirement_was_pending=false
+if [[ -e "$OPS_RETIREMENT_FILE" ]]; then
+    retirement_was_pending=true
+fi
+ops_reconcile_operations
 ops_load_active_state
 ops_validate_active_consistency
 
+if [[ "$retirement_was_pending" == "true" && "$PREVIOUS_AVAILABLE" == "0" ]]; then
+    [[ \
+        "$SLOT" == "$RETIREMENT_SLOT" \
+        && "$REQUESTED_RELEASE" == "$RETIREMENT_RELEASE" \
+    ]] || ops_die "completed retirement does not match the requested cleanup target"
+    printf 'retirement retry completed for %s at %s\n' "$SLOT" "$REQUESTED_RELEASE" \
+        || true
+    exit 0
+fi
+
+[[ "$PREVIOUS_AVAILABLE" == "1" ]] \
+    || ops_die "no previous rollback target is available to retire"
+[[ \
+    "$SLOT" == "$PREVIOUS_SLOT" \
+    && "$REQUESTED_RELEASE" == "$PREVIOUS_RELEASE" \
+    && "1999wiki-$SLOT" == "$PREVIOUS_PROJECT" \
+]] || ops_die "cleanup target must exactly match the recorded previous deployment"
 [[ "$SLOT" != "$ACTIVE_SLOT" && "$REQUESTED_RELEASE" != "$ACTIVE_RELEASE" ]] \
-    || ops_die "refusing to remove the active project, slot, release, or images"
-if [[ "$HAS_PREVIOUS" == "1" ]]; then
-    [[ "$SLOT" != "$PREVIOUS_SLOT" && "$REQUESTED_RELEASE" != "$PREVIOUS_RELEASE" ]] \
-        || ops_die "refusing to remove the recorded rollback target"
-fi
-
-TARGET_RELEASE_SNAPSHOT="${TARGET_RELEASE_SNAPSHOT:-$DEPLOY_STATE_ROOT/snapshots/$REQUESTED_RELEASE/$SLOT/release.env}"
-ops_load_snapshot "$SLOT" "$TARGET_RELEASE_SNAPSHOT"
-[[ "$RELEASE" == "$REQUESTED_RELEASE" ]] \
-    || ops_die "cleanup snapshot does not match the requested release"
-PROJECT="1999wiki-$SLOT"
-[[ "$PROJECT" != "1999wiki-infra" ]] \
-    || ops_die "infra project cleanup is forbidden"
-
-for protected_image in "$ACTIVE_BACKEND_IMAGE" "$ACTIVE_FRONTEND_IMAGE"; do
-    [[ "$BACKEND_IMAGE" != "$protected_image" && "$FRONTEND_IMAGE" != "$protected_image" ]] \
-        || ops_die "refusing to remove an image used by the active deployment"
+    || ops_die "refusing to retire the active deployment"
+for active_image in "$ACTIVE_BACKEND_IMAGE" "$ACTIVE_FRONTEND_IMAGE"; do
+    [[ \
+        "$PREVIOUS_BACKEND_IMAGE" != "$active_image" \
+        && "$PREVIOUS_FRONTEND_IMAGE" != "$active_image" \
+    ]] || ops_die "recorded previous images are still used by the active deployment"
 done
-if [[ "$HAS_PREVIOUS" == "1" ]]; then
-    for protected_image in "$PREVIOUS_BACKEND_IMAGE" "$PREVIOUS_FRONTEND_IMAGE"; do
-        [[ "$BACKEND_IMAGE" != "$protected_image" && "$FRONTEND_IMAGE" != "$protected_image" ]] \
-            || ops_die "refusing to remove an image used by the recorded rollback target"
-    done
+
+ops_load_snapshot "$PREVIOUS_SLOT" "$PREVIOUS_RELEASE_SNAPSHOT"
+[[ \
+    "$RELEASE" == "$PREVIOUS_RELEASE" \
+    && "$APP_ENV_FILE" == "$PREVIOUS_APP_SNAPSHOT" \
+    && "$BACKEND_IMAGE" == "$PREVIOUS_BACKEND_IMAGE" \
+    && "$FRONTEND_IMAGE" == "$PREVIOUS_FRONTEND_IMAGE" \
+]] || ops_die "recorded previous deployment diverges from its snapshot"
+[[ -z "$(ops_compose "$PREVIOUS_PROJECT" ps --status running -q)" ]] \
+    || ops_die "recorded previous project must be stopped before retirement"
+
+RETIREMENT_GENERATION="$(ops_helper generation)"
+ops_write_retirement "$RETIREMENT_GENERATION"
+if [[ "${OPS_TEST_RETIREMENT_CRASH_PHASE:-}" == "after-prepared" ]]; then
+    kill -KILL "$$"
 fi
-
-running_containers="$(ops_compose "$PROJECT" ps --status running -q)"
-[[ -z "$running_containers" ]] \
-    || ops_die "target app project is not inactive"
-
-ops_compose "$PROJECT" down --remove-orphans
-docker image rm "$BACKEND_IMAGE" "$FRONTEND_IMAGE"
-printf 'removed inactive %s project and exact %s images\n' "$SLOT" "$RELEASE"
+ops_reconcile_retirement
+printf 'retired previous %s deployment at %s\n' "$SLOT" "$REQUESTED_RELEASE" \
+    || true

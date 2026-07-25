@@ -399,8 +399,13 @@ def _deploy_failure_harness() -> str:
     """
 
 
-def _switch_restore_harness() -> str:
-    return """\
+def _switch_restore_harness(corrupt_backup: bool = False) -> str:
+    corrupt_line = (
+        "printf 'corrupt-backup\\n' >\"$TRANSACTION_OLD_FRAGMENT\""
+        if corrupt_backup
+        else ":"
+    )
+    return f"""\
         set -Eeuo pipefail
         root=/tmp/1999wiki
         stub=/tmp/stub
@@ -444,6 +449,8 @@ def _switch_restore_harness() -> str:
             ACTIVE_FRAGMENT="$root/caddy/active.caddy" \
             CADDY_SERVICE_UID=65534 \
             CADDY_SERVICE_GIDS=1234 \
+            python3 /repo/deploy/bin/ops_helper.py lock-exec \
+            "$root/deploy-state" "$root/deploy-state/operations.lock" 9 -- \
             /bin/bash -c '
                 SCRIPT_DIR=/repo/deploy/bin
                 OPS_CONTEXT=test-transaction
@@ -456,6 +463,7 @@ def _switch_restore_harness() -> str:
                 status=$?
                 set -e
                 [[ "$status" -ne 0 ]]
+                {corrupt_line}
                 ops_reconcile_journal
             ' 2>&1
         )"
@@ -470,6 +478,7 @@ def _switch_restore_harness() -> str:
         if [[ -e "$root/deploy-state/active.env" ]]; then
             printf '%s\\n' '__STATE_WAS_WRITTEN__'
         fi
+        printf '__JOURNAL=%s\\n' "$([[ -e "$root/deploy-state/transaction.env" ]] && printf present || printf absent)"
     """
 
 
@@ -478,7 +487,35 @@ def _cleanup_harness(
     customize: str = "",
     release: str = "sha-abcdef0",
     slot: str = "green",
+    crash_phase: str = "",
+    retry_after_failure: bool = False,
 ) -> str:
+    crash_assignment = (
+        f"OPS_TEST_RETIREMENT_CRASH_PHASE={crash_phase} \\" if crash_phase else ""
+    )
+    retry_block = ""
+    if retry_after_failure:
+        retry_block = f"""\
+        set +e
+        retry_output="$(
+            PATH="$stub:$PATH" \
+            DEPLOY_ROOT="$root" \
+            RELEASES_DIR="$root/releases" \
+            STATE_DIR="$root/deploy-state" \
+            APP_COMPOSE_FILE=/repo/deploy/compose.app.yml \
+            APP_ENV_FILE="$root/protected/app.env" \
+            ACTIVE_FRAGMENT="$root/active.caddy" \
+            RELEASE_ENV_FILE="$root/releases/sha-abcdef0/green.env" \
+            /bin/bash /repo/deploy/bin/cleanup.sh \
+            {release} {slot} {confirmation!r} 2>&1
+        )"
+        retry_status=$?
+        set -e
+        output="$output
+        __RETRY__
+        $retry_output"
+        status="$retry_status"
+        """
     return f"""\
         set -Eeuo pipefail
         root=/tmp/1999wiki
@@ -531,8 +568,11 @@ def _cleanup_harness(
             "$root/releases/sha-1234567/blue.env" "$root/protected/app.env" /repo \
             >/dev/null
         printf 'reverse_proxy 127.0.0.1:18080\\n' >"$root/active.caddy"
+        printf 'reverse_proxy 127.0.0.1:18180\\n' \
+            >"$root/deploy-state/previous-green.caddy"
+        chmod 640 "$root/deploy-state/previous-green.caddy"
         cat >"$root/deploy-state/active.env" <<'EOF'
-        STATE_VERSION=2
+        STATE_VERSION=3
         GENERATION=gen-0123456789abcdef01234567
         ACTIVE_SLOT=blue
         ACTIVE_RELEASE=sha-1234567
@@ -542,16 +582,16 @@ def _cleanup_harness(
         ACTIVE_APP_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-1234567/blue/app.env
         ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
         ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
-        HAS_PREVIOUS=0
-        PREVIOUS_SLOT=
-        PREVIOUS_RELEASE=
-        PREVIOUS_PROJECT=
-        PREVIOUS_FRONTEND_PORT=
-        PREVIOUS_RELEASE_SNAPSHOT=
-        PREVIOUS_APP_SNAPSHOT=
-        PREVIOUS_BACKEND_IMAGE=
-        PREVIOUS_FRONTEND_IMAGE=
-        PREVIOUS_FRAGMENT_BACKUP=
+        PREVIOUS_AVAILABLE=1
+        PREVIOUS_SLOT=green
+        PREVIOUS_RELEASE=sha-abcdef0
+        PREVIOUS_PROJECT=1999wiki-green
+        PREVIOUS_FRONTEND_PORT=18180
+        PREVIOUS_RELEASE_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-abcdef0/green/release.env
+        PREVIOUS_APP_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-abcdef0/green/app.env
+        PREVIOUS_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
+        PREVIOUS_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        PREVIOUS_FRAGMENT_BACKUP=/tmp/1999wiki/deploy-state/previous-green.caddy
         EOF
         chmod 600 "$root/deploy-state/active.env"
         {textwrap.dedent(customize)}
@@ -559,11 +599,22 @@ def _cleanup_harness(
         #!/usr/bin/env bash
         set -Eeuo pipefail
         printf 'docker %s\\n' "$*" >>/tmp/calls
+        if [[ "$1" == "image" && "$2" == "ls" ]]; then
+            image="${{@: -1}}"
+            if [[ ! -f /tmp/removed-images ]] \
+                || ! grep -Fxq "$image" /tmp/removed-images; then
+                printf '%s\\n' "$image"
+            fi
+        elif [[ "$1" == "image" && "$2" == "rm" ]]; then
+            shift 2
+            printf '%s\\n' "$@" >>/tmp/removed-images
+        fi
         exit 0
         EOF
         chmod +x "$stub/docker"
         set +e
         output="$(
+            {crash_assignment}
             PATH="$stub:$PATH" \
             DEPLOY_ROOT="$root" \
             RELEASES_DIR="$root/releases" \
@@ -577,9 +628,256 @@ def _cleanup_harness(
         )"
         status=$?
         set -e
+        {retry_block}
         printf '%s\\n__STATUS=%s\\n' "$output" "$status"
         printf '%s\\n' '__CALLS__'
         sed -n '1,120p' "$calls"
+        printf '%s\\n' '__STATE__'
+        if [[ -e "$root/deploy-state/active.env" ]]; then
+            sed -n '1,30p' "$root/deploy-state/active.env"
+        fi
+        printf '__RETIREMENT=%s\\n' "$([[ -e "$root/deploy-state/retirement.env" ]] && printf present || printf absent)"
+    """
+
+
+def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
+    child_failure_flag = "1" if fail_child_after_commit else "0"
+    return f"""\
+        set -Eeuo pipefail
+        root=/tmp/lifecycle
+        stub=/tmp/stub
+        calls=/tmp/calls
+        mkdir -p "$root/bin" "$root/protected" "$root/releases/sha-1234567" \
+            "$root/releases/sha-abcdef0" "$root/state" "$root/rag" "$stub"
+        chmod 700 "$root/state"
+        : >"$calls"
+        cp /repo/deploy/bin/*.sh /repo/deploy/bin/ops_helper.py "$root/bin/"
+        cat >"$root/bin/smoke-test.sh" <<'EOF'
+        #!/usr/bin/env bash
+        printf 'smoke %s\\n' "$*" >>/tmp/calls
+        exit 0
+        EOF
+        if [[ "{child_failure_flag}" == "1" ]]; then
+            mv "$root/bin/switch.sh" "$root/bin/switch.real.sh"
+            cat >"$root/bin/switch.sh" <<'EOF'
+        #!/usr/bin/env bash
+        /bin/bash /tmp/lifecycle/bin/switch.real.sh "$@"
+        exit 42
+        EOF
+            mv "$root/bin/ops_helper.py" "$root/bin/ops_helper.real.py"
+            cat >"$root/bin/ops_helper.py" <<'PY'
+        import os
+        import sys
+
+        if (
+            len(sys.argv) >= 3
+            and sys.argv[1] == "durable-unlink"
+            and sys.argv[2].endswith("/transaction.env")
+        ):
+            raise SystemExit(23)
+        os.execv(
+            sys.executable,
+            [sys.executable, "/tmp/lifecycle/bin/ops_helper.real.py", *sys.argv[1:]],
+        )
+        PY
+        fi
+        chmod +x "$root/bin/"*.sh "$root/bin/ops_helper.py"
+        cat >"$root/protected/app.env" <<'EOF'
+        APP_ENV=production
+        MILVUS_URI=http://standalone:19530
+        MILVUS_DB_NAME=wiki
+        MILVUS_COLLECTION_NAME=collection
+        MINIO_ENDPOINT=minio:9000
+        MINIO_ACCESS_KEY=x
+        MINIO_SECRET_KEY=x
+        MINIO_BUCKET=assets
+        MEDIA_PUBLIC_BASE_URL=/media
+        MYSQL_HOST=mysql
+        MYSQL_PORT=3306
+        MYSQL_DATABASE=wiki
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        DEEPSEEK_API_KEY=x
+        SILICONFLOW_API_KEY=x
+        HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
+        EOF
+        cat >"$root/protected/infra.env" <<'EOF'
+        MYSQL_ROOT_PASSWORD=root
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        MINIO_ROOT_USER=x
+        MINIO_ROOT_PASSWORD=x
+        EOF
+        cat >"$root/protected/caddy.env" <<'EOF'
+        SITE_ADDRESS=:80
+        MINIO_PROXY_UPSTREAM=127.0.0.1:19000
+        EOF
+        cat >"$root/releases/sha-1234567/blue.env" <<'EOF'
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        BACKEND_PORT=18000
+        FRONTEND_PORT=18080
+        EOF
+        cat >"$root/releases/sha-abcdef0/green.env" <<'EOF'
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        BACKEND_PORT=18100
+        FRONTEND_PORT=18180
+        EOF
+        chmod 600 "$root/protected/"*.env "$root/releases/"*/*.env
+        printf '%s\\n' '{{"schema_version":"evb.active-build/v1"}}' \
+            >"$root/rag/active_build.v1.json"
+        helper="$root/bin/ops_helper.py"
+        if [[ "{child_failure_flag}" == "1" ]]; then
+            helper="$root/bin/ops_helper.real.py"
+        fi
+        python3 "$helper" snapshot "$root/state" sha-1234567 blue \
+            "$root/releases/sha-1234567/blue.env" "$root/protected/app.env" /repo \
+            >/dev/null
+        python3 "$helper" snapshot "$root/state" sha-abcdef0 green \
+            "$root/releases/sha-abcdef0/green.env" "$root/protected/app.env" /repo \
+            >/dev/null
+        printf 'reverse_proxy 127.0.0.1:18080\\n' >"$root/active.caddy"
+        chmod 640 "$root/active.caddy"
+        cat >"$root/state/active.env" <<'EOF'
+        STATE_VERSION=3
+        GENERATION=gen-0123456789abcdef01234567
+        ACTIVE_SLOT=blue
+        ACTIVE_RELEASE=sha-1234567
+        ACTIVE_PROJECT=1999wiki-blue
+        ACTIVE_FRONTEND_PORT=18080
+        ACTIVE_RELEASE_SNAPSHOT=/tmp/lifecycle/state/snapshots/sha-1234567/blue/release.env
+        ACTIVE_APP_SNAPSHOT=/tmp/lifecycle/state/snapshots/sha-1234567/blue/app.env
+        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
+        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        PREVIOUS_AVAILABLE=0
+        PREVIOUS_SLOT=
+        PREVIOUS_RELEASE=
+        PREVIOUS_PROJECT=
+        PREVIOUS_FRONTEND_PORT=
+        PREVIOUS_RELEASE_SNAPSHOT=
+        PREVIOUS_APP_SNAPSHOT=
+        PREVIOUS_BACKEND_IMAGE=
+        PREVIOUS_FRONTEND_IMAGE=
+        PREVIOUS_FRAGMENT_BACKUP=
+        EOF
+        chmod 600 "$root/state/active.env"
+        cat >"$root/Caddyfile" <<EOF
+        :80 {{
+            import $root/active.caddy
+        }}
+        EOF
+        cat >"$stub/docker" <<'EOF'
+        #!/usr/bin/env bash
+        set -Eeuo pipefail
+        printf 'docker %s\\n' "$*" >>/tmp/calls
+        if [[ "$1" == "compose" && "$2" == "version" ]]; then
+            exit 0
+        fi
+        if [[ "$1" == "network" && "$2" == "inspect" ]]; then
+            printf '1999wiki-infra\\n'
+            exit 0
+        fi
+        if [[ " $* " == *" ps --format json backend frontend "* ]]; then
+            printf '%s\\n' '[{{"Service":"backend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"}},{{"Service":"frontend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"}}]'
+            exit 0
+        fi
+        if [[ " $* " == *" ps --format json "* ]]; then
+            printf '%s\\n' '[{{"State":"running","Health":"healthy"}}]'
+            exit 0
+        fi
+        if [[ "$1" == "image" && "$2" == "ls" ]]; then
+            image="${{@: -1}}"
+            if [[ ! -f /tmp/removed-images ]] \
+                || ! grep -Fxq "$image" /tmp/removed-images; then
+                printf '%s\\n' "$image"
+            fi
+            exit 0
+        fi
+        if [[ "$1" == "image" && "$2" == "rm" ]]; then
+            shift 2
+            printf '%s\\n' "$@" >>/tmp/removed-images
+            exit 0
+        fi
+        exit 0
+        EOF
+        cat >"$stub/curl" <<'EOF'
+        #!/usr/bin/env bash
+        set -Eeuo pipefail
+        output=/dev/stdout
+        while (($#)); do
+            case "$1" in
+                -o|--output) output="$2"; shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        printf '%s' '{{"status":"ok","vectorstore_loaded":true,"provenance_status":"pass","llm_ready":true}}' >"$output"
+        EOF
+        cat >"$stub/caddy" <<'EOF'
+        #!/usr/bin/env bash
+        printf 'caddy %s\\n' "$*" >>/tmp/calls
+        exit 0
+        EOF
+        cat >"$stub/df" <<'EOF'
+        #!/usr/bin/env bash
+        printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'
+        printf '/dev/test 100000000 1 99999999 1%% /tmp\\n'
+        EOF
+        chmod +x "$stub/"*
+        common_env=(
+            PATH="$stub:$PATH"
+            REPO_ROOT=/repo
+            DEPLOY_ROOT="$root"
+            RELEASES_DIR="$root/releases"
+            DEPLOY_STATE_ROOT="$root/state"
+            ACTIVE_FRAGMENT="$root/active.caddy"
+            CADDY_IMPORT_PATH="$root/active.caddy"
+            CADDY_CONFIG="$root/Caddyfile"
+            CADDY_ENV_FILE="$root/protected/caddy.env"
+            CADDY_SERVICE_UID=0
+            CADDY_SERVICE_GIDS=0
+            APP_COMPOSE_FILE=/repo/deploy/compose.app.yml
+            INFRA_COMPOSE_FILE=/repo/deploy/compose.infra.yml
+            APP_ENV_FILE="$root/protected/app.env"
+            INFRA_ENV_FILE="$root/protected/infra.env"
+            RAG_ROOT="$root/rag"
+            PUBLIC_BASE_URL=http://127.0.0.1
+            HEALTH_ATTEMPTS=1
+            HEALTH_INTERVAL_SECONDS=0
+            VERIFY_ATTEMPTS=1
+            VERIFY_INTERVAL_SECONDS=0
+            SMOKE_RAG_QUESTION=fixture
+        )
+        if [[ "{child_failure_flag}" == "1" ]]; then
+            set +e
+            output="$(
+                env "${{common_env[@]}}" \
+                    SOURCE_RELEASE_ENV_FILE="$root/releases/sha-abcdef0/green.env" \
+                    SOURCE_APP_ENV_FILE="$root/protected/app.env" \
+                    /bin/bash "$root/bin/deploy.sh" sha-abcdef0 green 2>&1
+            )"
+            deploy_status=$?
+            set -e
+            printf '%s\\n__DEPLOY_STATUS=%s\\n' "$output" "$deploy_status"
+        else
+            env "${{common_env[@]}}" \
+                /bin/bash "$root/bin/switch.sh" green \
+                "$root/state/snapshots/sha-abcdef0/green/release.env"
+            env "${{common_env[@]}}" \
+                /bin/bash "$root/bin/cleanup.sh" \
+                sha-1234567 blue remove-blue-sha-1234567
+            env "${{common_env[@]}}" \
+                RELEASE_ENV_FILE="$root/releases/sha-1234567/blue.env" \
+                /bin/bash "$root/bin/preflight.sh" sha-1234567 blue
+        fi
+        printf '__STATE__\\n'
+        sed -n '1,30p' "$root/state/active.env"
+        printf '__FRAGMENT__\\n'
+        sed -n '1,10p' "$root/active.caddy"
+        printf '__JOURNAL=%s\\n' "$([[ -e "$root/state/transaction.env" ]] && printf present || printf absent)"
+        printf '__RETIREMENT=%s\\n' "$([[ -e "$root/state/retirement.env" ]] && printf present || printf absent)"
+        printf '__CALLS__\\n'
+        sed -n '1,240p' "$calls"
     """
 
 
@@ -638,7 +936,7 @@ def _journal_recovery_harness(phase: str) -> str:
             "$root/state" sha-abcdef0 green \
             "$root/source/release.env" "$root/source/app.env" /repo >/dev/null
         cat >"$root/state-template.env" <<'EOF'
-        STATE_VERSION=2
+        STATE_VERSION=3
         GENERATION=GENERATION_PLACEHOLDER
         ACTIVE_SLOT=green
         ACTIVE_RELEASE=sha-abcdef0
@@ -648,7 +946,7 @@ def _journal_recovery_harness(phase: str) -> str:
         ACTIVE_APP_SNAPSHOT=/tmp/ops/state/snapshots/sha-abcdef0/green/app.env
         ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
         ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
-        HAS_PREVIOUS=0
+        PREVIOUS_AVAILABLE=0
         PREVIOUS_SLOT=
         PREVIOUS_RELEASE=
         PREVIOUS_PROJECT=
@@ -683,7 +981,9 @@ def _journal_recovery_harness(phase: str) -> str:
             CADDY_SERVICE_GIDS=0
         )
         set +e
-        env "${{common_env[@]}}" /bin/bash -c '
+        env "${{common_env[@]}}" python3 /repo/deploy/bin/ops_helper.py \
+            lock-exec "$root/state" "$root/state/operations.lock" 9 -- \
+            /bin/bash -c '
             SCRIPT_DIR=/repo/deploy/bin
             OPS_CONTEXT=crash-producer
             source /repo/deploy/bin/ops-common.sh
@@ -696,7 +996,9 @@ def _journal_recovery_harness(phase: str) -> str:
         set -e
         [[ "$producer_status" -ne 0 ]]
         [[ -e "$root/state/transaction.env" ]]
-        env "${{common_env[@]}}" /bin/bash -c '
+        env "${{common_env[@]}}" python3 /repo/deploy/bin/ops_helper.py \
+            lock-exec "$root/state" "$root/state/operations.lock" 9 -- \
+            /bin/bash -c '
             SCRIPT_DIR=/repo/deploy/bin
             OPS_CONTEXT=crash-reconciler
             source /repo/deploy/bin/ops-common.sh
@@ -718,8 +1020,15 @@ def _journal_recovery_harness(phase: str) -> str:
     """
 
 
-def _rollback_harness(reload_failure: bool) -> str:
+def _rollback_harness(
+    reload_failure: bool,
+    *,
+    durable_unlink_failure: bool = False,
+    stop_failure: bool = False,
+) -> str:
     reload_failure_flag = "1" if reload_failure else "0"
+    durable_unlink_failure_flag = "1" if durable_unlink_failure else "0"
+    stop_failure_flag = "1" if stop_failure else "0"
     return f"""\
         set -Eeuo pipefail
         root=/tmp/rollback
@@ -730,6 +1039,24 @@ def _rollback_harness(reload_failure: bool) -> str:
         chmod 700 "$root/state"
         : >"$calls"
         cp /repo/deploy/bin/*.sh /repo/deploy/bin/ops_helper.py "$root/bin/"
+        if [[ "{durable_unlink_failure_flag}" == "1" ]]; then
+            mv "$root/bin/ops_helper.py" "$root/bin/ops_helper.real.py"
+            cat >"$root/bin/ops_helper.py" <<'PY'
+        import os
+        import sys
+
+        if (
+            len(sys.argv) >= 3
+            and sys.argv[1] == "durable-unlink"
+            and sys.argv[2].endswith("/transaction.env")
+        ):
+            raise SystemExit(23)
+        os.execv(
+            sys.executable,
+            [sys.executable, "/tmp/rollback/bin/ops_helper.real.py", *sys.argv[1:]],
+        )
+        PY
+        fi
         cat >"$root/bin/smoke-test.sh" <<'EOF'
         #!/usr/bin/env bash
         printf 'smoke %s\\n' "$*" >>/tmp/calls
@@ -779,7 +1106,7 @@ def _rollback_harness(reload_failure: bool) -> str:
         printf 'reverse_proxy 127.0.0.1:18180\\n' >"$root/state/previous.caddy"
         chmod 640 "$root/active.caddy" "$root/state/previous.caddy"
         cat >"$root/state/active.env" <<'EOF'
-        STATE_VERSION=2
+        STATE_VERSION=3
         GENERATION=gen-0123456789abcdef01234567
         ACTIVE_SLOT=blue
         ACTIVE_RELEASE=sha-1234567
@@ -789,7 +1116,7 @@ def _rollback_harness(reload_failure: bool) -> str:
         ACTIVE_APP_SNAPSHOT=/tmp/rollback/state/snapshots/sha-1234567/blue/app.env
         ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
         ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
-        HAS_PREVIOUS=1
+        PREVIOUS_AVAILABLE=1
         PREVIOUS_SLOT=green
         PREVIOUS_RELEASE=sha-abcdef0
         PREVIOUS_PROJECT=1999wiki-green
@@ -815,6 +1142,9 @@ def _rollback_harness(reload_failure: bool) -> str:
         #!/usr/bin/env bash
         set -Eeuo pipefail
         printf 'docker %s\\n' "$*" >>/tmp/calls
+        if [[ "{stop_failure_flag}" == "1" && " $* " == *" stop backend frontend "* ]]; then
+            exit 29
+        fi
         if [[ " $* " == *" ps --format json backend frontend "* ]]; then
             printf '%s\\n' '[{{"Service":"backend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"}},{{"Service":"frontend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"}}]'
         fi
@@ -892,9 +1222,8 @@ def test_mutating_operations_share_lock_snapshot_and_journal_controls() -> None:
     for contract in (
         "DEPLOY_STATE_ROOT",
         "operations.lock",
-        "flock -n",
         "OPS_LOCK_HELD",
-        "ops_reconcile_journal",
+        "ops_reconcile_operations",
         "transaction.env",
         "prepared",
         "traffic_installed",
@@ -907,6 +1236,10 @@ def test_mutating_operations_share_lock_snapshot_and_journal_controls() -> None:
         "strict_env",
         "atomic_replace",
         "fsync",
+        "lock_exec",
+        "validate_lock_descriptor",
+        "LOCK_NB",
+        "O_NOFOLLOW",
         "validate_state",
         "validate_journal",
         "fragment_metadata",
@@ -918,7 +1251,7 @@ def test_mutating_operations_share_lock_snapshot_and_journal_controls() -> None:
         text = _read(BIN / script_name)
         assert 'source "$SCRIPT_DIR/ops-common.sh"' in text
         assert "ops_acquire_lock" in text
-        assert "ops_reconcile_journal" in text
+        assert "ops_reconcile_operations" in text
 
 
 def test_deploy_owns_partial_candidate_cleanup_before_compose_up() -> None:
@@ -950,7 +1283,7 @@ def test_cleanup_requires_strict_reconciled_state_and_protects_previous() -> Non
     assert "ops_validate_active_consistency" in text
     assert "PREVIOUS_SLOT" in text
     assert "PREVIOUS_RELEASE" in text
-    assert "recorded rollback target" in text
+    assert "recorded previous deployment" in text
 
 
 def test_smoke_hardens_assets_redirects_media_base_and_terminal_sse() -> None:
@@ -1164,6 +1497,22 @@ def test_transaction_reload_failure_atomically_restores_fragment_and_omits_state
     calls = result.stdout.partition("__CALLS__")[2]
     assert calls.count("caddy reload") == 2
     assert "__STATE_WAS_WRITTEN__" not in result.stdout
+    assert "__JOURNAL=absent" in result.stdout
+
+
+def test_corrupt_recovery_backup_fails_before_fragment_install_or_reload(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(tmp_path, _switch_restore_harness(True))
+    assert result.returncode == 0, result.stderr
+    assert "__STATUS=0" not in result.stdout
+    fragment = result.stdout.partition("__FRAGMENT__")[2].partition(
+        "__FRAGMENT_META__"
+    )[0]
+    assert fragment.strip() == "reverse_proxy 127.0.0.1:18180"
+    calls = result.stdout.partition("__CALLS__")[2]
+    assert calls.count("caddy reload") == 1
+    assert "__JOURNAL=present" in result.stdout
 
 
 def test_rollback_only_restores_the_recorded_application_and_fragment() -> None:
@@ -1255,10 +1604,8 @@ def test_cleanup_is_exactly_scoped_and_requires_release_confirmation() -> None:
     common = _read(OPS_COMMON)
     assert 'CONFIRMATION="remove-${SLOT}-${REQUESTED_RELEASE}"' in text
     assert 'docker compose \\' in common
-    assert " down " in text
+    assert " down " in common
     assert "--volumes" not in text
-    assert "1999wiki-infra" in text
-    assert 'docker image rm "$BACKEND_IMAGE" "$FRONTEND_IMAGE"' in text
 
 
 def test_cleanup_stub_removes_only_named_inactive_project_and_exact_images(
@@ -1273,21 +1620,54 @@ def test_cleanup_stub_removes_only_named_inactive_project_and_exact_images(
     calls = result.stdout.partition("__CALLS__")[2]
     assert "docker compose -p 1999wiki-green" in calls
     assert " down --remove-orphans" in calls
+    assert "1999wiki-infra" not in calls
+    assert "--volumes" not in calls
     assert (
-        "docker image rm "
-        "ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0 "
-        "ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"
+        "docker image rm ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"
+    ) in calls
+    assert (
+        "docker image rm ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"
     ) in calls
     assert "--volumes" not in calls
     assert "prune" not in calls
     assert "1999wiki-infra" not in calls
+    state = result.stdout.partition("__STATE__")[2].partition("__RETIREMENT")[0]
+    assert "PREVIOUS_AVAILABLE=0" in state
+    assert "PREVIOUS_SLOT=\n" in state
+    assert "__RETIREMENT=absent" in result.stdout
 
 
 def test_cleanup_wrong_confirmation_issues_no_docker_command(tmp_path: Path) -> None:
     result = _run_linux_harness(tmp_path, _cleanup_harness("wrong"))
     assert result.returncode == 0, result.stderr
     assert "__STATUS=0" not in result.stdout
-    assert result.stdout.partition("__CALLS__")[2].strip() == ""
+    calls = result.stdout.partition("__CALLS__")[2].partition("__STATE__")[0]
+    assert calls.strip() == ""
+
+
+@pytest.mark.parametrize(
+    "crash_phase",
+    ("after-prepared", "after-resources-removed", "after-state-commit"),
+)
+def test_cleanup_retirement_crash_retry_finishes_idempotently(
+    tmp_path: Path,
+    crash_phase: str,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _cleanup_harness(
+            "remove-green-sha-abcdef0",
+            crash_phase=crash_phase,
+            retry_after_failure=True,
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__RETRY__" in result.stdout
+    assert "__STATUS=0" in result.stdout
+    state = result.stdout.partition("__STATE__")[2].partition("__RETIREMENT")[0]
+    assert "ACTIVE_SLOT=blue" in state
+    assert "PREVIOUS_AVAILABLE=0" in state
+    assert "__RETIREMENT=absent" in result.stdout
 
 
 def test_strict_env_parser_rejects_placeholders_without_evaluating_them(
@@ -1326,10 +1706,9 @@ def test_operations_lock_rejects_a_concurrent_mutator(tmp_path: Path) -> None:
         root=/tmp/state
         mkdir "$root"
         chmod 700 "$root"
-        DEPLOY_STATE_ROOT="$root" /bin/bash -c '
-            SCRIPT_DIR=/repo/deploy/bin
-            source /repo/deploy/bin/ops-common.sh
-            ops_acquire_lock
+        python3 /repo/deploy/bin/ops_helper.py \
+            lock-exec "$root" "$root/operations.lock" 9 -- \
+            /bin/bash -c '
             touch /tmp/lock-ready
             sleep 2
         ' &
@@ -1340,11 +1719,9 @@ def test_operations_lock_rejects_a_concurrent_mutator(tmp_path: Path) -> None:
         done
         set +e
         output="$(
-            DEPLOY_STATE_ROOT="$root" /bin/bash -c '
-                SCRIPT_DIR=/repo/deploy/bin
-                source /repo/deploy/bin/ops-common.sh
-                ops_acquire_lock
-            ' 2>&1
+            python3 /repo/deploy/bin/ops_helper.py \
+                lock-exec "$root" "$root/operations.lock" 9 -- \
+                /bin/true 2>&1
         )"
         status=$?
         set -e
@@ -1443,7 +1820,7 @@ def test_snapshot_freezes_identity_and_rejects_wrong_slot_or_ambient_port(
             "green",
             "diverges",
         ),
-        ("", "sha-1234567", "blue", "active"),
+        ("", "sha-1234567", "blue", "recorded previous"),
     ],
 )
 def test_cleanup_fails_closed_on_unreconciled_or_active_targets(
@@ -1465,7 +1842,8 @@ def test_cleanup_fails_closed_on_unreconciled_or_active_targets(
     assert result.returncode == 0, result.stderr
     assert "__STATUS=0" not in result.stdout
     assert diagnostic in result.stdout.lower()
-    assert result.stdout.partition("__CALLS__")[2].strip() == ""
+    calls = result.stdout.partition("__CALLS__")[2].partition("__STATE__")[0]
+    assert calls.strip() == ""
 
 
 @pytest.mark.parametrize(
@@ -1529,3 +1907,295 @@ def test_rollback_reload_failure_restores_fragment_and_state(
     calls = result.stdout.partition("__CALLS__")[2]
     assert calls.count("caddy reload") == 2
     assert " stop backend frontend" not in calls
+
+
+def test_committed_rollback_survives_post_commit_journal_unlink_failure(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _rollback_harness(False, durable_unlink_failure=True),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" in result.stdout
+    assert "housekeeping remains pending" in result.stdout
+    fragment = result.stdout.partition("__FRAGMENT__")[2].partition("__STATE__")[0]
+    state = result.stdout.partition("__STATE__")[2].partition("__JOURNAL")[0]
+    assert "127.0.0.1:18180" in fragment
+    assert "ACTIVE_SLOT=green" in state
+    assert "__JOURNAL=present" in result.stdout
+
+
+def test_committed_rollback_treats_old_project_stop_failure_as_warning(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _rollback_harness(False, stop_failure=True),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" in result.stdout
+    assert "could not be stopped" in result.stdout
+    state = result.stdout.partition("__STATE__")[2].partition("__JOURNAL")[0]
+    assert "ACTIVE_SLOT=green" in state
+    assert "__JOURNAL=absent" in result.stdout
+
+
+def test_full_retirement_lifecycle_makes_old_slot_preflight_reusable(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(tmp_path, _lifecycle_harness())
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "preflight passed for sha-1234567 in blue" in result.stdout
+    state = result.stdout.partition("__STATE__")[2].partition("__FRAGMENT__")[0]
+    assert "ACTIVE_SLOT=green" in state
+    assert "ACTIVE_RELEASE=sha-abcdef0" in state
+    assert "PREVIOUS_AVAILABLE=0" in state
+    assert "PREVIOUS_SLOT=\n" in state
+    assert "__JOURNAL=absent" in result.stdout
+    assert "__RETIREMENT=absent" in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2]
+    assert "1999wiki-blue" in calls
+    assert " down --remove-orphans" in calls
+    assert "image rm ghcr.io/ddomelette/1999wiki-backend:sha-1234567" in calls
+    assert "image rm ghcr.io/ddomelette/1999wiki-frontend:sha-1234567" in calls
+
+
+def test_deploy_does_not_stop_candidate_when_child_committed_then_failed(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _lifecycle_harness(fail_child_after_commit=True),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__DEPLOY_STATUS=0" not in result.stdout
+    state = result.stdout.partition("__STATE__")[2].partition("__FRAGMENT__")[0]
+    fragment = result.stdout.partition("__FRAGMENT__")[2].partition("__JOURNAL")[0]
+    assert "ACTIVE_SLOT=green" in state
+    assert "127.0.0.1:18180" in fragment
+    assert "__JOURNAL=present" in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2]
+    green_lines = [line for line in calls.splitlines() if "1999wiki-green" in line]
+    assert not any(" stop backend frontend" in line for line in green_lines)
+
+
+def test_secure_lock_exec_accepts_real_inheritance_and_rejects_symlink(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        mkdir /tmp/state
+        chmod 700 /tmp/state
+        python3 /repo/deploy/bin/ops_helper.py lock-exec \
+            /tmp/state /tmp/state/operations.lock 9 -- \
+            /bin/bash -c '
+                python3 /repo/deploy/bin/ops_helper.py verify-lock \
+                    /tmp/state /tmp/state/operations.lock 9
+                printf real-inherited-lock-ok
+            '
+        printf '\\n'
+        rm -f /tmp/state/operations.lock
+        printf untouched >/tmp/outside-lock
+        ln -s /tmp/outside-lock /tmp/state/operations.lock
+        set +e
+        python3 /repo/deploy/bin/ops_helper.py lock-exec \
+            /tmp/state /tmp/state/operations.lock 9 -- /bin/true \
+            >/tmp/symlink-output 2>&1
+        symlink_status=$?
+        set -e
+        printf '__SYMLINK_STATUS=%s\\n' "$symlink_status"
+        sed -n '1,20p' /tmp/symlink-output
+        printf '__OUTSIDE=%s\\n' "$(< /tmp/outside-lock)"
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "real-inherited-lock-ok" in result.stdout
+    assert "__SYMLINK_STATUS=0" not in result.stdout
+    assert "symlink" in result.stdout.lower()
+    assert "__OUTSIDE=untouched" in result.stdout
+
+
+def test_secure_lock_rejects_spoofed_separately_opened_fd_under_contention(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        mkdir /tmp/state
+        chmod 700 /tmp/state
+        python3 /repo/deploy/bin/ops_helper.py lock-exec \
+            /tmp/state /tmp/state/operations.lock 9 -- \
+            /bin/bash -c 'touch /tmp/holder-ready; sleep 2' &
+        holder=$!
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            [[ ! -e /tmp/holder-ready ]] || break
+            sleep 0.1
+        done
+        set +e
+        output="$(
+            /bin/bash -c '
+                exec 9<>/tmp/state/operations.lock
+                OPS_LOCK_HELD=1 OPS_LOCK_FD=9 \
+                    python3 /repo/deploy/bin/ops_helper.py verify-lock \
+                    /tmp/state /tmp/state/operations.lock 9
+            ' 2>&1
+        )"
+        status=$?
+        set -e
+        wait "$holder"
+        printf '%s\\n__STATUS=%s\\n' "$output" "$status"
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" not in result.stdout
+    assert "lock" in result.stdout.lower()
+
+
+def test_snapshot_symlink_redirect_is_rejected_without_outside_write(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        mkdir -p /tmp/state /tmp/outside /tmp/source
+        chmod 700 /tmp/state /tmp/outside
+        ln -s /tmp/outside /tmp/state/snapshots
+        cat >/tmp/source/release.env <<'EOF'
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        BACKEND_PORT=18000
+        FRONTEND_PORT=18080
+        EOF
+        cat >/tmp/source/app.env <<'EOF'
+        APP_ENV=production
+        MILVUS_URI=http://standalone:19530
+        MILVUS_DB_NAME=wiki
+        MILVUS_COLLECTION_NAME=collection
+        MINIO_ENDPOINT=minio:9000
+        MINIO_ACCESS_KEY=x
+        MINIO_SECRET_KEY=x
+        MINIO_BUCKET=assets
+        MEDIA_PUBLIC_BASE_URL=/media
+        MYSQL_HOST=mysql
+        MYSQL_PORT=3306
+        MYSQL_DATABASE=wiki
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        DEEPSEEK_API_KEY=x
+        SILICONFLOW_API_KEY=x
+        HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
+        EOF
+        chmod 600 /tmp/source/release.env /tmp/source/app.env
+        set +e
+        output="$(
+            python3 /repo/deploy/bin/ops_helper.py snapshot \
+                /tmp/state sha-abcdef0 blue \
+                /tmp/source/release.env /tmp/source/app.env /repo 2>&1
+        )"
+        status=$?
+        set -e
+        printf '%s\\n__STATUS=%s\\n' "$output" "$status"
+        if find /tmp/outside -type f | grep -q .; then
+            printf '__OUTSIDE_WRITE=true\\n'
+        else
+            printf '__OUTSIDE_WRITE=false\\n'
+        fi
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" not in result.stdout
+    assert "symlink" in result.stdout.lower()
+    assert "__OUTSIDE_WRITE=false" in result.stdout
+
+
+def test_strict_app_schema_rejects_bare_secret_placeholder_and_extra_key(
+    tmp_path: Path,
+) -> None:
+    body = _smoke_harness().replace(
+        "MINIO_SECRET_KEY=x",
+        "MINIO_SECRET_KEY=$RUNTIME_SECRET",
+    )
+    placeholder = _run_linux_harness(tmp_path, body)
+    assert placeholder.returncode != 0
+    assert "unresolved placeholder" in (placeholder.stdout + placeholder.stderr)
+
+    extra = _run_linux_harness(
+        tmp_path,
+        _smoke_harness().replace(
+            "HUIJI_PROCESSED_ROOT=/runtime/rag/huiji",
+            (
+                "HUIJI_PROCESSED_ROOT=/runtime/rag/huiji\n"
+                "        UNEXPECTED_APP_KEY=value"
+            ),
+        ),
+    )
+    assert extra.returncode != 0
+    assert "unexpected" in (extra.stdout + extra.stderr).lower()
+
+
+def test_app_schema_rejects_absolute_http_media_base(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _smoke_harness().replace(
+            "MEDIA_PUBLIC_BASE_URL=/media",
+            "MEDIA_PUBLIC_BASE_URL=http://wiki.example/media",
+        ),
+    )
+    assert result.returncode != 0
+    assert "https" in (result.stdout + result.stderr).lower()
+
+
+def test_media_validator_rejects_absolute_origin_unrelated_to_public_base(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        cat >/tmp/app.env <<'EOF'
+        APP_ENV=production
+        MILVUS_URI=http://standalone:19530
+        MILVUS_DB_NAME=wiki
+        MILVUS_COLLECTION_NAME=collection
+        MINIO_ENDPOINT=minio:9000
+        MINIO_ACCESS_KEY=x
+        MINIO_SECRET_KEY=x
+        MINIO_BUCKET=assets
+        MEDIA_PUBLIC_BASE_URL=https://cdn.invalid/media
+        MYSQL_HOST=mysql
+        MYSQL_PORT=3306
+        MYSQL_DATABASE=wiki
+        MYSQL_USER=x
+        MYSQL_PASSWORD=x
+        DEEPSEEK_API_KEY=x
+        SILICONFLOW_API_KEY=x
+        HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
+        EOF
+        python3 /repo/deploy/bin/ops_helper.py validate-media-url \
+            /tmp/app.env https://wiki.example \
+            https://cdn.invalid/media/object.webp
+        """,
+    )
+    assert result.returncode != 0
+    assert "origin" in (result.stdout + result.stderr).lower()
+
+
+def test_state_schema_and_cleanup_expose_retirement_protocol() -> None:
+    helper = _read(OPS_HELPER)
+    common = _read(OPS_COMMON)
+    cleanup = _read(BIN / "cleanup.sh")
+    rollback = _read(BIN / "rollback.sh")
+    assert "PREVIOUS_AVAILABLE" in helper
+    assert "RETIREMENT_KEYS" in helper
+    assert "ops_reconcile_retirement" in common
+    assert "retirement.env" in common
+    assert "resources_removed" in common
+    assert "PREVIOUS_AVAILABLE" in cleanup
+    assert "PREVIOUS_AVAILABLE" in rollback

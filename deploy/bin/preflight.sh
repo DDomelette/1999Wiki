@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 OPS_CONTEXT=preflight
+export OPS_CONTEXT
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/ops-common.sh"
 
 PROTECTED_ENV_DIR="${PROTECTED_ENV_DIR:-$DEPLOY_ROOT/protected}"
@@ -29,6 +31,8 @@ ops_require_commands docker caddy curl python3 flock stat
 docker compose version >/dev/null 2>&1 \
     || ops_die "Docker Compose v2 is unavailable"
 ops_validate_state_root
+[[ ! -e "$OPS_RETIREMENT_FILE" ]] \
+    || ops_die "a pending retirement journal must be reconciled under the operations lock"
 
 for required_directory in \
     "$DEPLOY_ROOT" \
@@ -85,6 +89,10 @@ if [[ -f "$ACTIVE_STATE_FILE" ]]; then
     ops_validate_active_consistency
     [[ "$ACTIVE_SLOT" != "$SLOT" ]] \
         || ops_die "target slot is currently active"
+    if [[ "$PREVIOUS_AVAILABLE" == "1" ]]; then
+        [[ "$PREVIOUS_SLOT" != "$SLOT" ]] \
+            || ops_die "target slot is still protected as the rollback target"
+    fi
 fi
 
 if grep -Eiq \

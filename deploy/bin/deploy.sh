@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 OPS_CONTEXT=deploy
+export OPS_CONTEXT
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/ops-common.sh"
 
 [[ "$#" -eq 2 ]] \
@@ -18,8 +20,8 @@ SOURCE_RELEASE_ENV_FILE="${SOURCE_RELEASE_ENV_FILE:-${RELEASE_ENV_FILE:-$RELEASE
 SOURCE_APP_ENV_FILE="${SOURCE_APP_ENV_FILE:-${APP_ENV_FILE:-$DEPLOY_ROOT/protected/app.env}}"
 PROJECT="1999wiki-$SLOT"
 
-ops_acquire_lock
-ops_reconcile_journal
+ops_acquire_lock "$0" "$@"
+ops_reconcile_operations
 ops_snapshot_release \
     "$REQUESTED_RELEASE" \
     "$SLOT" \
@@ -37,7 +39,15 @@ cleanup() {
     trap - EXIT
     if (( status != 0 )) \
         && [[ "$candidate_cleanup_required" == "true" && "$switched" == "false" ]]; then
-        ops_compose "$PROJECT" stop backend frontend >/dev/null 2>&1 || true
+        set +e
+        ops_reconcile_operations >/dev/null 2>&1
+        if ! ops_candidate_is_committed \
+            "$SLOT" \
+            "$PROJECT" \
+            "$RELEASE_SNAPSHOT"; then
+            ops_compose "$PROJECT" stop backend frontend >/dev/null 2>&1 || true
+        fi
+        set -e
     fi
     exit "$status"
 }
@@ -61,4 +71,4 @@ ops_verify_project_identity "$PROJECT" "$CANDIDATE_BASE_URL" \
 "$SCRIPT_DIR/switch.sh" "$SLOT" "$RELEASE_SNAPSHOT"
 switched=true
 candidate_cleanup_required=false
-printf 'deployed %s to %s\n' "$RELEASE" "$SLOT"
+printf 'deployed %s to %s\n' "$RELEASE" "$SLOT" || true
