@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -32,7 +36,9 @@ from backend.schemas import (
     CategoriesResponse,
     CategoryDocsResponse,
     HealthResponse,
+    LivenessResponse,
     MediaItem,
+    ReadinessResponse,
     SourceItem,
     VoicePanelPage,
     normalize_asset_items,
@@ -164,9 +170,230 @@ def _model_to_dict(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
+_READINESS_SUBSYSTEMS = (
+    "configuration",
+    "rag_artifacts",
+    "milvus",
+    "minio",
+    "mysql",
+)
+
+
+def _production_mode() -> bool:
+    return os.environ.get("APP_ENV") == "production"
+
+
+def _configuration_ready() -> bool:
+    huiji = getattr(cfg, "huiji", None)
+    processed_root = Path(getattr(huiji, "processed_root", ""))
+    declared_root_value = os.environ.get("HUIJI_PROCESSED_ROOT", "").strip()
+    declared_root = Path(declared_root_value) if declared_root_value else Path()
+    return all(
+        (
+            bool(str(getattr(getattr(cfg, "llm", None), "api_key", "")).strip()),
+            bool(
+                str(
+                    getattr(getattr(cfg, "embedding", None), "api_key", "")
+                ).strip()
+            ),
+            bool(getattr(huiji, "enabled", False)),
+            getattr(huiji, "source_mode", "") == "huiji_crawler",
+            processed_root.is_absolute(),
+            bool(declared_root_value),
+            declared_root.is_absolute(),
+            declared_root.resolve() == processed_root.resolve(),
+        )
+    )
+
+
+def _milvus_configuration_ready() -> bool:
+    vectorstore = getattr(cfg, "vectorstore", None)
+    uri = str(getattr(vectorstore, "uri", "") or "").strip()
+    parsed = urlparse(uri)
+    hostname = parsed.hostname
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        return False
+    normalized_host = hostname.rstrip(".").lower()
+    if normalized_host == "localhost":
+        return False
+    try:
+        address = ip_address(normalized_host)
+    except ValueError:
+        address = None
+    if address is not None and (address.is_loopback or address.is_unspecified):
+        return False
+    return all(
+        (
+            getattr(vectorstore, "provider", "") == "milvus",
+            str(getattr(vectorstore, "db_name", "") or "").strip(),
+            str(getattr(vectorstore, "collection_name", "") or "").strip(),
+        )
+    )
+
+
+def _minio_configuration_ready() -> bool:
+    assets = getattr(cfg, "assets", None)
+    return all(
+        (
+            getattr(assets, "provider", "") == "minio",
+            str(getattr(assets, "endpoint", "") or "").strip(),
+            str(getattr(assets, "bucket_name", "") or "").strip(),
+            str(getattr(assets, "access_key", "") or "").strip(),
+            str(getattr(assets, "secret_key", "") or "").strip(),
+        )
+    )
+
+
+def _mysql_configuration_ready() -> bool:
+    mysql = getattr(cfg, "mysql", None)
+    return all(
+        (
+            str(getattr(mysql, "host", "") or "").strip(),
+            isinstance(getattr(mysql, "port", None), int),
+            str(getattr(mysql, "database", "") or "").strip(),
+            str(getattr(mysql, "user", "") or "").strip(),
+            str(getattr(mysql, "password", "") or "").strip(),
+        )
+    )
+
+
+def _verify_rag_artifacts() -> bool:
+    project_root = Path(
+        getattr(getattr(cfg, "paths", None), "project_root", Path.cwd())
+    )
+    verifier = project_root / "deploy" / "bin" / "verify-rag-closure.py"
+    processed_root = Path(getattr(getattr(cfg, "huiji", None), "processed_root", ""))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(verifier), "--root", str(processed_root)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _probe_milvus() -> bool:
+    from pymilvus import MilvusClient
+
+    vectorstore = cfg.vectorstore
+    client = MilvusClient(
+        uri=vectorstore.uri,
+        db_name=vectorstore.db_name,
+        timeout=3,
+    )
+    try:
+        return bool(client.has_collection(vectorstore.collection_name))
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+
+
+def _probe_minio() -> bool:
+    from minio import Minio
+    from urllib3 import PoolManager, Timeout
+
+    assets = cfg.assets
+    http_client = PoolManager(
+        timeout=Timeout(connect=3, read=3),
+        retries=False,
+    )
+    client = Minio(
+        assets.endpoint,
+        access_key=assets.access_key,
+        secret_key=assets.secret_key,
+        secure=assets.secure,
+        http_client=http_client,
+    )
+    try:
+        return bool(client.bucket_exists(assets.bucket_name))
+    finally:
+        http_client.clear()
+
+
+def _probe_mysql() -> bool:
+    import pymysql
+
+    mysql = cfg.mysql
+    connection = pymysql.connect(
+        host=mysql.host,
+        port=mysql.port,
+        user=mysql.user,
+        password=mysql.password,
+        database=mysql.database,
+        charset=mysql.charset,
+        connect_timeout=3,
+        read_timeout=3,
+        write_timeout=3,
+        autocommit=True,
+    )
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            row = cursor.fetchone()
+        return bool(row)
+    finally:
+        connection.close()
+
+
+def _safe_probe(probe: Any) -> bool:
+    try:
+        return bool(probe())
+    except Exception:
+        return False
+
+
+def _readiness_response() -> ReadinessResponse:
+    checks: dict[str, str] = {name: "pass" for name in _READINESS_SUBSYSTEMS}
+    if _production_mode():
+        checks["configuration"] = "pass" if _configuration_ready() else "fail"
+        checks["rag_artifacts"] = "pass" if _verify_rag_artifacts() else "fail"
+        checks["milvus"] = (
+            "pass"
+            if _milvus_configuration_ready() and _safe_probe(_probe_milvus)
+            else "fail"
+        )
+        checks["minio"] = (
+            "pass"
+            if _minio_configuration_ready() and _safe_probe(_probe_minio)
+            else "fail"
+        )
+        checks["mysql"] = (
+            "pass"
+            if _mysql_configuration_ready() and _safe_probe(_probe_mysql)
+            else "fail"
+        )
+    failing = [
+        name for name in _READINESS_SUBSYSTEMS if checks[name] == "fail"
+    ]
+    return ReadinessResponse(
+        status="not_ready" if failing else "ready",
+        checks=checks,
+        failing_subsystems=failing,
+    )
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     _ensure_loaded()
+
+
+@app.get("/health/live", response_model=LivenessResponse)
+async def health_live() -> LivenessResponse:
+    return LivenessResponse(status="alive")
+
+
+@app.get("/health/ready", response_model=ReadinessResponse)
+def health_ready() -> ReadinessResponse | JSONResponse:
+    response = _readiness_response()
+    if response.status == "not_ready":
+        return JSONResponse(response.model_dump(), status_code=503)
+    return response
 
 
 @app.get("/health", response_model=HealthResponse)

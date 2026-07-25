@@ -308,6 +308,7 @@ def test_backend_final_stage_copy_sources_are_the_runtime_allow_list() -> None:
         "config/config.py",
         "config/settings.yaml",
         "config/provenance",
+        "deploy/bin/verify-rag-closure.py",
         "src/__init__.py",
         "src/rag",
         "src/assets",
@@ -360,7 +361,7 @@ def test_backend_final_stage_has_executable_runtime_contracts() -> None:
     assert "--timeout=5s" in healthcheck
     assert "--start-period=30s" in healthcheck
     assert "--retries=3" in healthcheck
-    assert "http://127.0.0.1:8000/health" in healthcheck
+    assert "http://127.0.0.1:8000/health/live" in healthcheck
 
     runs = _instruction(runtime, "RUN")
     import_gate = [
@@ -414,7 +415,8 @@ def test_frontend_stages_build_then_serve_only_dist_as_caddy() -> None:
 def test_caddy_configuration_exactly_routes_api_before_spa() -> None:
     assert _normalized_caddy_lines() == (
         ":8080 {",
-        "handle /health {",
+        "@health path /health /health/*",
+        "handle @health {",
         "reverse_proxy backend:8000",
         "}",
         "handle /api/wiki/* {",
@@ -453,7 +455,8 @@ def test_frontend_caddy_routes_preserved_and_stripped_api_families(
         "set -eu; "
         "caddy start --config /tmp/Caddyfile --adapter caddyfile >/tmp/caddy.log 2>&1; "
         "trap 'caddy stop >/dev/null 2>&1 || true' EXIT; "
-        "wget -qO- 'http://127.0.0.1:8080/health'; printf '\\n'; "
+        "wget -qO- 'http://127.0.0.1:8080/health/live'; printf '\\n'; "
+        "wget -qO- 'http://127.0.0.1:8080/health/ready'; printf '\\n'; "
         "wget -qO- 'http://127.0.0.1:8080/api/wiki/pages?limit=1'; printf '\\n'; "
         "wget -qO- 'http://127.0.0.1:8080/api/media/voice/page?cursor=x'; printf '\\n'; "
         "wget -qO- 'http://127.0.0.1:8080/api/ask'; printf '\\n'; "
@@ -480,7 +483,8 @@ def test_frontend_caddy_routes_preserved_and_stripped_api_families(
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.splitlines() == [
-        "/health",
+        "/health/live",
+        "/health/ready",
         "/api/wiki/pages?limit=1",
         "/api/media/voice/page?cursor=x",
         "/ask",

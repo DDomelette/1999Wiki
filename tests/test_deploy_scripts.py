@@ -75,6 +75,153 @@ def _run_linux_harness(tmp_path: Path, body: str) -> subprocess.CompletedProcess
     )
 
 
+def _rag_closure_setup(root_argument: str = '"$root/rag-artifacts"') -> str:
+    template = """\
+        python3 - "$root/rag-artifacts" <<'PY'
+        import hashlib
+        import json
+        import pathlib
+        import sys
+
+        root = pathlib.Path(sys.argv[1])
+        build = "fixture-build"
+        activation = "fixture-activation"
+
+        def write_json(path, payload):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ) + "\\n",
+                encoding="utf-8",
+            )
+
+        def digest(path):
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+
+        payloads = {
+            "parent_blocks": ("parent_blocks.jsonl", b'{"parent_id":"p1"}\\n'),
+            "child_blocks": ("child_blocks.jsonl", b'{"child_id":"c1"}\\n'),
+            "media_assets": (
+                "runtime/media_assets.v3.jsonl",
+                b'{"binding_id":"b1"}\\n',
+            ),
+            "child_bm25": (
+                "indexes/child_text_bm25.json",
+                b'{"ids":["c1"]}\\n',
+            ),
+            "media_bm25": (
+                "indexes/media_binding_bm25.v3.json",
+                b'{"ids":["b1"]}\\n',
+            ),
+            "media_schema": (
+                "runtime/media_assets.v3.schema.json",
+                b'{"schema_version":"evb.media-assets/v3"}\\n',
+            ),
+            "media_manifest": (
+                "runtime/media_assets.v3.manifest.json",
+                b'{"schema_version":"evb.media-artifact-manifest/v3"}\\n',
+            ),
+        }
+        paths = {}
+        for name, (relative, raw) in payloads.items():
+            path = root / build / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+            paths[name] = path
+
+        build_manifest = root / build / "build_manifest.json"
+        write_json(
+            build_manifest,
+            {
+                "schema_version": "huiji.corpus-build/v2",
+                "artifact_schema_version": "evb.media-asset/v3",
+                "build_version": build,
+                "artifacts": [
+                    {
+                        "relative_path": path.relative_to(root / build).as_posix(),
+                        "sha256": digest(path),
+                        "size": path.stat().st_size,
+                    }
+                    for path in paths.values()
+                ],
+            },
+        )
+        transaction = root / "activation" / "transactions" / activation
+        collection = transaction / "collection_manifest.v1.json"
+        write_json(
+            collection,
+            {
+                "schema_version": "evb.collection-manifest/v1",
+                "artifact_schema_version": "evb.media-asset/v3",
+                "build_version": build,
+                "build_manifest": {
+                    "relative_path": (
+                        "data/processed/huiji/fixture-build/build_manifest.json"
+                    ),
+                    "sha256": digest(build_manifest),
+                    "size": build_manifest.stat().st_size,
+                },
+                "artifacts": {
+                    name: {
+                        "relative_path": (
+                            "data/processed/huiji/"
+                            + path.relative_to(root).as_posix()
+                        ),
+                        "sha256": digest(path),
+                        "size": path.stat().st_size,
+                    }
+                    for name, path in paths.items()
+                },
+                "milvus": {
+                    "collection": "fixture-collection",
+                    "database": "fixture-db",
+                    "schema_sha256": "a" * 64,
+                },
+                "embedding": {
+                    "model_id": "fixture-model",
+                    "config_fingerprint": "b" * 64,
+                },
+            },
+        )
+        inventory = transaction / "deployment_inventory.v1.json"
+        write_json(
+            inventory,
+            {
+                "schema_version": (
+                    "huiji.activation-deployment-inventory/v1"
+                ),
+                "activation_id": activation,
+            },
+        )
+        write_json(
+            root / "active_build.v1.json",
+            {
+                "schema_version": "evb.active-build/v1",
+                "generation": 1,
+                "build_version": build,
+                "previous_build_version": "previous-build",
+                "build_manifest_sha256": digest(build_manifest),
+                "milvus_collection_name": "fixture-collection",
+                "collection_schema_fingerprint": "a" * 64,
+                "collection_manifest_sha256": digest(collection),
+                "embedding_model_id": "fixture-model",
+                "embedding_config_fingerprint": "b" * 64,
+                "artifact_schema_version": "evb.media-asset/v3",
+                "deployment_inventory_sha256": digest(inventory),
+                "activation_epoch": 1,
+                "activation_id": activation,
+                "activated_at_utc": "2026-07-22T06:59:27Z",
+            },
+        )
+        PY
+    """
+    return template.replace('"$root/rag-artifacts"', root_argument, 1)
+
+
 def _preflight_harness(customize: str = "") -> str:
     return f"""\
         set -Eeuo pipefail
@@ -83,8 +230,7 @@ def _preflight_harness(customize: str = "") -> str:
         calls=/tmp/calls
         mkdir -p "$root/protected" "$root/releases/sha-abcdef0" \
             "$root/deploy-state" "$root/rag-artifacts" "$stub"
-        printf '%s\\n' '{{"schema_version":"evb.active-build/v1"}}' \
-            >"$root/rag-artifacts/active_build.v1.json"
+        {_rag_closure_setup()}
         cp /repo/deploy/Caddyfile "$root/Caddyfile"
         cp /repo/deploy/caddy/active-upstream.caddy.example "$root/active.caddy"
         chmod 644 "$root/active.caddy"
@@ -269,8 +415,8 @@ def _smoke_harness() -> str:
                 content_type=application/javascript
                 printf 'console.log("formal build");' >"$output"
                 ;;
-            http://127.0.0.1:18080/health)
-                printf '%s' '{"status":"ok","vectorstore_loaded":true,"provenance_status":"pass","llm_ready":true}' >"$output"
+            http://127.0.0.1:18080/health/ready)
+                printf '%s' '{"status":"ready","checks":{"configuration":"pass","rag_artifacts":"pass","milvus":"pass","minio":"pass","mysql":"pass"},"failing_subsystems":[]}' >"$output"
                 ;;
             http://127.0.0.1:18080/api/wiki/health)
                 printf '%s' '{"ready":true,"pageCount":1,"mediaLinkCount":1}' >"$output"
@@ -642,6 +788,7 @@ def _cleanup_harness(
 
 def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
     child_failure_flag = "1" if fail_child_after_commit else "0"
+    rag_closure_setup = _rag_closure_setup('"$root/rag"')
     return f"""\
         set -Eeuo pipefail
         root=/tmp/lifecycle
@@ -651,7 +798,8 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
             "$root/releases/sha-abcdef0" "$root/state" "$root/rag" "$stub"
         chmod 700 "$root/state"
         : >"$calls"
-        cp /repo/deploy/bin/*.sh /repo/deploy/bin/ops_helper.py "$root/bin/"
+        cp /repo/deploy/bin/*.sh /repo/deploy/bin/ops_helper.py \
+            /repo/deploy/bin/verify-rag-closure.py "$root/bin/"
         cat >"$root/bin/smoke-test.sh" <<'EOF'
         #!/usr/bin/env bash
         printf 'smoke %s\\n' "$*" >>/tmp/calls
@@ -725,8 +873,7 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
         FRONTEND_PORT=18180
         EOF
         chmod 600 "$root/protected/"*.env "$root/releases/"*/*.env
-        printf '%s\\n' '{{"schema_version":"evb.active-build/v1"}}' \
-            >"$root/rag/active_build.v1.json"
+        {rag_closure_setup}
         helper="$root/bin/ops_helper.py"
         if [[ "{child_failure_flag}" == "1" ]]; then
             helper="$root/bin/ops_helper.real.py"
@@ -1403,6 +1550,23 @@ def test_preflight_success_is_read_only_and_does_not_disclose_credentials(
             'rm -f "$root/rag-artifacts/active_build.v1.json"',
             "active_build.v1.json",
         ),
+        (
+            (
+                'printf tampered >>'
+                '"$root/rag-artifacts/fixture-build/parent_blocks.jsonl"'
+            ),
+            "mismatch",
+        ),
+        (
+            (
+                'cp "$root/rag-artifacts/fixture-build/parent_blocks.jsonl" '
+                "/tmp/outside-parent-blocks.jsonl; "
+                'rm "$root/rag-artifacts/fixture-build/parent_blocks.jsonl"; '
+                "ln -s /tmp/outside-parent-blocks.jsonl "
+                '"$root/rag-artifacts/fixture-build/parent_blocks.jsonl"'
+            ),
+            "symlink",
+        ),
     ],
 )
 def test_preflight_rejects_unsafe_paths_modes_images_and_empty_secrets_without_leaks(
@@ -1533,7 +1697,7 @@ def test_smoke_test_requires_live_rag_fixture_and_covers_candidate_and_public_ba
         "CANDIDATE_BASE_URL",
         "PUBLIC_BASE_URL",
         "SMOKE_RAG_QUESTION",
-        "/health",
+        "/health/ready",
         "/api/wiki/health",
         "/api/wiki/pages?limit=1",
         "/api/ask",
@@ -1552,7 +1716,7 @@ def test_smoke_test_uses_candidate_for_app_checks_and_public_host_for_media(
     assert result.returncode == 0, result.stdout + result.stderr
     calls = result.stdout.partition("__CALLS__")[2].splitlines()
     assert "http://127.0.0.1:18080/" in calls
-    assert "http://127.0.0.1:18080/health" in calls
+    assert "http://127.0.0.1:18080/health/ready" in calls
     assert "http://127.0.0.1:18080/api/wiki/health" in calls
     assert "http://127.0.0.1:18080/api/ask" in calls
     assert "http://127.0.0.1:18080/api/ask/stream" in calls

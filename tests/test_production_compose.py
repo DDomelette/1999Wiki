@@ -247,85 +247,22 @@ def test_backend_healthcheck_enforces_full_production_readiness() -> None:
     compile(command, "<backend-compose-healthcheck>", "exec")
     assert "json.load" in command
     assert "timeout=3" in command
-    assert "os.environ.get" in command
+    assert "http://127.0.0.1:8000/health/ready" in command
     for variable in APP_SECRET_KEYS:
-        assert variable in command
+        assert variable not in command
     assert "raise SystemExit" in command
-    assert command.index("raise SystemExit") < command.index("urlopen")
-    assert re.search(r"""data\.get\(['"]status['"]\)\s*==\s*['"]ok['"]""", command)
+    assert re.search(r"""data\.get\(['"]status['"]\)\s*==\s*['"]ready['"]""", command)
     assert re.search(
-        r"""data\.get\(['"]vectorstore_loaded['"]\)\s+is\s+True""", command
-    )
-    assert re.search(
-        r"""data\.get\(['"]provenance_status['"]\)\s*==\s*['"]pass['"]""",
+        r"""data\.get\(['"]failing_subsystems['"]\)\s*==\s*\[\]""",
         command,
     )
-    assert re.search(r"""data\.get\(['"]llm_ready['"]\)\s+is\s+True""", command)
 
 
-def test_checked_in_app_example_cannot_pass_backend_credential_health_gate() -> None:
+def test_backend_healthcheck_never_reads_or_discloses_runtime_credentials() -> None:
     command = _compose(APP_COMPOSE)["services"]["backend"]["healthcheck"]["test"][3]
-    environment = os.environ.copy()
-    example_values = _env_values(APP_ENV)
-    environment.update(example_values)
-    environment["APP_ENV_FILE"] = str(APP_ENV)
-
-    docker = shutil.which("docker")
-    assert docker, "Docker CLI is required to validate production Compose"
-    render = subprocess.run(
-        [
-            docker,
-            "compose",
-            "-p",
-            "1999wiki-explicit-example",
-            "--env-file",
-            str(RELEASE_ENV),
-            "-f",
-            str(APP_COMPOSE),
-            "config",
-        ],
-        cwd=ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    assert render.returncode == 0, render.stderr
-
-    result = subprocess.run(
-        [sys.executable, "-c", command],
-        cwd=ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    assert result.returncode != 0
-    diagnostics = result.stdout + result.stderr
     for variable in APP_SECRET_KEYS:
-        assert variable in diagnostics
-    assert "urlopen" not in diagnostics
-
-    sentinel_environment = os.environ.copy()
-    sentinel_environment.update(
-        {variable: "must-never-appear-in-diagnostics" for variable in APP_SECRET_KEYS}
-    )
-    sentinel_environment["MINIO_ACCESS_KEY"] = ""
-    sentinel_result = subprocess.run(
-        [sys.executable, "-c", command],
-        cwd=ROOT,
-        env=sentinel_environment,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    assert sentinel_result.returncode != 0
-    sentinel_diagnostics = sentinel_result.stdout + sentinel_result.stderr
-    assert "MINIO_ACCESS_KEY" in sentinel_diagnostics
-    assert "must-never-appear-in-diagnostics" not in sentinel_diagnostics
+        assert variable not in command
+    assert "os.environ" not in command
 
 
 def test_frontend_healthcheck_enforces_static_and_proxied_backend_readiness() -> None:
@@ -333,18 +270,13 @@ def test_frontend_healthcheck_enforces_static_and_proxied_backend_readiness() ->
     assert healthcheck["test"][0] == "CMD-SHELL"
     command = healthcheck["test"][1]
     assert "wget -q -T 3 -O - http://127.0.0.1:8080/)" in command
-    assert "wget -q -T 3 -O - http://127.0.0.1:8080/health)" in command
+    assert "wget -q -T 3 -O - http://127.0.0.1:8080/health/ready)" in command
     assert '<div id="root"></div>' in command
-    assert """grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'""" in command
+    assert """grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"'""" in command
     assert (
-        """grep -Eq '"vectorstore_loaded"[[:space:]]*:[[:space:]]*true'"""
+        """grep -Eq '"failing_subsystems"[[:space:]]*:[[:space:]]*\\[\\]'"""
         in command
     )
-    assert (
-        """grep -Eq '"provenance_status"[[:space:]]*:[[:space:]]*"pass"'"""
-        in command
-    )
-    assert """grep -Eq '"llm_ready"[[:space:]]*:[[:space:]]*true'""" in command
     assert "&&" in command
 
 

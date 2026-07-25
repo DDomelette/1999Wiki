@@ -17,6 +17,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY backend ./backend
 COPY config/config.py config/settings.yaml ./config/
 COPY config/provenance ./config/provenance
+COPY deploy/bin/verify-rag-closure.py ./deploy/bin/
 COPY src/__init__.py ./src/
 COPY src/rag ./src/rag
 COPY src/assets ./src/assets
@@ -39,5 +40,5 @@ RUN python -c "import backend.main"
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

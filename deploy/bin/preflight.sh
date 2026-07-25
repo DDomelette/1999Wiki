@@ -56,6 +56,9 @@ for required_file in \
         || ops_die "required file is missing: $required_file"
 done
 
+python3 "$SCRIPT_DIR/verify-rag-closure.py" \
+    --root "$RAG_ROOT"
+
 for protected_file in \
     "$RELEASE_ENV_FILE" \
     "$APP_ENV_FILE" \

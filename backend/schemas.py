@@ -270,6 +270,21 @@ class HealthResponse(BaseModel):
     provenance_evidence: str = ""
 
 
+class LivenessResponse(BaseModel):
+    status: Literal["alive"]
+
+
+class ReadinessResponse(BaseModel):
+    status: Literal["ready", "not_ready"]
+    checks: dict[
+        Literal["configuration", "rag_artifacts", "milvus", "minio", "mysql"],
+        Literal["pass", "fail"],
+    ]
+    failing_subsystems: list[
+        Literal["configuration", "rag_artifacts", "milvus", "minio", "mysql"]
+    ] = Field(default_factory=list)
+
+
 class CategoryMeta(BaseModel):
     key: str
     title: str

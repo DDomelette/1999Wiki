@@ -119,7 +119,7 @@ assert_non_html_response \
     "formal React asset"
 
 fetch \
-    "$CANDIDATE_BASE_URL/health" \
+    "$CANDIDATE_BASE_URL/health/ready" \
     "$TMP_DIR/health.json" \
     "$TMP_DIR/health.headers" \
     >"$TMP_DIR/health.metadata"
@@ -130,10 +130,8 @@ import sys
 
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 required = {
-    "status": "ok",
-    "vectorstore_loaded": True,
-    "provenance_status": "pass",
-    "llm_ready": True,
+    "status": "ready",
+    "failing_subsystems": [],
 }
 if any(payload.get(key) != value for key, value in required.items()):
     raise SystemExit("smoke-test: candidate health is not fully ready")

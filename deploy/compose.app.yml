@@ -17,33 +17,20 @@ services:
         - -c
         - |
           import json
-          import os
           import urllib.request
 
-          required = (
-              'MINIO_ACCESS_KEY',
-              'MINIO_SECRET_KEY',
-              'MYSQL_USER',
-              'MYSQL_PASSWORD',
-              'DEEPSEEK_API_KEY',
-              'SILICONFLOW_API_KEY',
-          )
-          missing = [name for name in required if not os.environ.get(name)]
-          if missing:
-              raise SystemExit('missing required runtime credentials: ' + ','.join(missing))
-
           data = json.load(
-              urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)
+              urllib.request.urlopen(
+                  'http://127.0.0.1:8000/health/ready',
+                  timeout=3,
+              )
           )
           if not (
-              data.get('status') == 'ok'
-              and data.get('vectorstore_loaded') is True
-              and data.get('provenance_status') == 'pass'
-              and data.get('llm_ready') is True
+              data.get('status') == 'ready'
+              and data.get('failing_subsystems') == []
           ):
               raise SystemExit(
-                  'backend readiness failed: '
-                  'status,vectorstore_loaded,provenance_status,llm_ready'
+                  'backend readiness failed'
               )
       interval: 30s
       timeout: 5s
@@ -72,11 +59,9 @@ services:
         - >-
           static="$$(wget -q -T 3 -O - http://127.0.0.1:8080/)" &&
           printf '%s' "$$static" | grep -Fq '<div id="root"></div>' &&
-          readiness="$$(wget -q -T 3 -O - http://127.0.0.1:8080/health)" &&
-          printf '%s' "$$readiness" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' &&
-          printf '%s' "$$readiness" | grep -Eq '"vectorstore_loaded"[[:space:]]*:[[:space:]]*true' &&
-          printf '%s' "$$readiness" | grep -Eq '"provenance_status"[[:space:]]*:[[:space:]]*"pass"' &&
-          printf '%s' "$$readiness" | grep -Eq '"llm_ready"[[:space:]]*:[[:space:]]*true'
+          readiness="$$(wget -q -T 3 -O - http://127.0.0.1:8080/health/ready)" &&
+          printf '%s' "$$readiness" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' &&
+          printf '%s' "$$readiness" | grep -Eq '"failing_subsystems"[[:space:]]*:[[:space:]]*\[\]'
       interval: 30s
       timeout: 5s
       retries: 3
