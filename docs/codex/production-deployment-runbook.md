@@ -376,24 +376,128 @@ digests with the locally pulled images' `RepoDigests`.
 A release labeled `ready_with_deferred_ghcr` is deployable from TCR but is not
 fully mirrored. Repair it only through `.github/workflows/backfill-ghcr.yml`
 using the exact original publish run, artifact name, release tag, and full
-commit:
+commit. Record the selected workflow ref's head SHA before dispatch so a
+moving branch cannot silently change the reviewed backfill implementation:
 
 ```bash
+REVIEWED_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+RELEASE_TAG=sha-abcdef0
+RELEASE_RUN_ID=123456789
+BACKFILL_REF=main
+BACKFILL_HEAD_SHA="$(
+  gh api repos/DDomelette/1999Wiki/git/ref/heads/${BACKFILL_REF} \
+    --jq .object.sha
+)"
+test "${#BACKFILL_HEAD_SHA}" -eq 40
+
 gh workflow run backfill-ghcr.yml \
   --repo DDomelette/1999Wiki \
-  --ref main \
-  --field release_run_id=123456789 \
-  --field release_tag=sha-abcdef0 \
-  --field expected_commit=abcdef0123456789abcdef0123456789abcdef01
+  --ref "$BACKFILL_REF" \
+  --field release_run_id="$RELEASE_RUN_ID" \
+  --field release_tag="$RELEASE_TAG" \
+  --field expected_commit="$REVIEWED_COMMIT"
 ```
 
-The backfill workflow downloads `release-sha-abcdef0` from run `123456789`,
-verifies the original immutable manifest, reads each exact TCR digest, and
-copies that content to GHCR. It never checks out the old commit to rebuild an
-image and never edits `release-manifest.json`. Preserve the successful
-`mirror-<release-tag>-<backfill-run-id>` artifact and its
-`mirror-attestation.json` beside the original manifest when GHCR recovery is
-required.
+Do not select a run by ordering or time. Open the Actions page, locate the
+backfill dispatch made by this operator, copy its numeric run ID, and enter it
+explicitly. The following checks bind that ID to the expected workflow and
+recorded head SHA before the operator confirms it:
+
+```bash
+read -r -p 'Confirm exact backfill run ID: ' BACKFILL_RUN_ID
+case "$BACKFILL_RUN_ID" in
+  ''|*[!0-9]*) echo 'backfill run ID must be decimal' >&2; exit 2 ;;
+esac
+
+gh run view "$BACKFILL_RUN_ID" \
+  --repo DDomelette/1999Wiki \
+  --json databaseId,workflowName,headSha,status,conclusion,url
+test "$(
+  gh run view "$BACKFILL_RUN_ID" \
+    --repo DDomelette/1999Wiki \
+    --json databaseId --jq .databaseId
+)" = "$BACKFILL_RUN_ID"
+test "$(
+  gh run view "$BACKFILL_RUN_ID" \
+    --repo DDomelette/1999Wiki \
+    --json workflowName --jq .workflowName
+)" = 'Backfill GHCR from a verified release'
+test "$(
+  gh run view "$BACKFILL_RUN_ID" \
+    --repo DDomelette/1999Wiki \
+    --json headSha --jq .headSha
+)" = "$BACKFILL_HEAD_SHA"
+read -r -p 'Metadata matches; use this exact backfill run? [y/N] ' CONFIRM_RUN
+test "$CONFIRM_RUN" = y
+
+gh run watch "$BACKFILL_RUN_ID" \
+  --repo DDomelette/1999Wiki \
+  --exit-status
+test "$(
+  gh run view "$BACKFILL_RUN_ID" \
+    --repo DDomelette/1999Wiki \
+    --json status --jq .status
+)" = completed
+test "$(
+  gh run view "$BACKFILL_RUN_ID" \
+    --repo DDomelette/1999Wiki \
+    --json conclusion --jq .conclusion
+)" = success
+```
+
+Download only the artifact whose name embeds that confirmed run ID. Verify the
+attestation against the byte-identical original manifest and reviewed commit
+before transfer:
+
+```bash
+MIRROR_DIR="mirror-input-${BACKFILL_RUN_ID}"
+ORIGINAL_MANIFEST="release-input-${RELEASE_RUN_ID}/release-manifest.json"
+install -d -m 0700 "$MIRROR_DIR"
+gh run download "$BACKFILL_RUN_ID" \
+  --repo DDomelette/1999Wiki \
+  --name "mirror-${RELEASE_TAG}-${BACKFILL_RUN_ID}" \
+  --dir "$MIRROR_DIR"
+python3 deploy/bin/release_manifest.py verify \
+  --manifest "$ORIGINAL_MANIFEST" \
+  --commit "$REVIEWED_COMMIT" \
+  --registry ghcr \
+  --attestation "$MIRROR_DIR/mirror-attestation.json" \
+  > "$MIRROR_DIR/release.identity.ghcr"
+(
+  cd "$MIRROR_DIR"
+  sha256sum mirror-attestation.json > mirror-attestation.sha256
+)
+```
+
+Copy the exact attestation and checksum into the existing private server
+release directory, verify its bytes remotely, and regenerate GHCR release
+metadata against the unchanged server manifest:
+
+```bash
+scp \
+  "$MIRROR_DIR/mirror-attestation.json" \
+  "$MIRROR_DIR/mirror-attestation.sha256" \
+  root@production-host:/srv/1999wiki/releases/sha-abcdef0/
+```
+
+```bash
+cd /srv/1999wiki/releases/sha-abcdef0
+chmod 0600 mirror-attestation.json mirror-attestation.sha256
+sha256sum --check mirror-attestation.sha256
+cd /srv/1999wiki/runtime-bundle
+python3 deploy/bin/release_manifest.py verify \
+  --manifest /srv/1999wiki/releases/sha-abcdef0/release-manifest.json \
+  --commit abcdef0123456789abcdef0123456789abcdef01 \
+  --registry ghcr \
+  --attestation /srv/1999wiki/releases/sha-abcdef0/mirror-attestation.json \
+  > /srv/1999wiki/releases/sha-abcdef0/release.identity.ghcr
+chmod 0600 /srv/1999wiki/releases/sha-abcdef0/release.identity.ghcr
+```
+
+The backfill workflow itself downloads `release-sha-abcdef0` from original run
+`123456789`, verifies its immutable manifest, reads each exact TCR digest, and
+copies that content to GHCR. It never rebuilds an image and never edits
+`release-manifest.json`.
 
 ### Explicit GHCR recovery
 
@@ -401,7 +505,8 @@ GHCR is an operator-selected recovery source, never a silent fallback. It may
 be selected only when both GHCR records in the original manifest are
 `published`, or when a completed backfill's matching attestation is supplied
 with the byte-identical original manifest. Authenticate with a token limited
-to `read:packages`, then emit GHCR metadata explicitly:
+to `read:packages`. For an originally `ready` release with two `published`
+GHCR records, emit GHCR metadata explicitly without an attestation:
 
 ```bash
 read -rsp 'GHCR token: ' GHCR_TOKEN
@@ -416,11 +521,8 @@ python3 deploy/bin/release_manifest.py verify \
   > /srv/1999wiki/releases/sha-abcdef0/release.identity.ghcr
 ```
 
-For an originally deferred mirror, the last command must also include:
-
-```text
---attestation /srv/1999wiki/releases/sha-abcdef0/mirror-attestation.json
-```
+For an originally deferred mirror, use only the attestation-verified
+`release.identity.ghcr` generated by the exact-run procedure above.
 
 Use the resulting digest-qualified GHCR refs in both slot files and repeat the
 normal pull, `RepoDigests`, preflight, and blue/green checks. A partial,
