@@ -1,5 +1,13 @@
 # 1999Wiki 项目迁移、容器发布与蓝绿部署规范（初稿）
 
+> **文档定位：Initial Draft / 历史迁移草案。** 本文保留早期清单、容量和迁移决策，
+> 不再作为生产操作入口。最终实现边界见
+> [Production Container Readiness Design](../../superpowers/specs/2026-07-23-production-container-readiness-design.md)，
+> 实现任务见
+> [Production Container Readiness Plan](../../superpowers/plans/2026-07-23-production-container-readiness.md)，
+> 实际发布、蓝绿切换和回滚步骤见
+> [Production Deployment Runbook](../production-deployment-runbook.md)。
+>
 > 状态：Draft / 初稿（本地迁移基线准备完成）  
 > 版本：v0.5
 > 日期：2026-07-23  

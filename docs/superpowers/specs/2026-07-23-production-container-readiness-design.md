@@ -1,5 +1,10 @@
 # 1999Wiki Production Container Readiness Design
 
+**Status:** Final implementation design. The historical migration document is
+an initial draft; production operators must use this design together with the
+[implementation plan](../plans/2026-07-23-production-container-readiness.md)
+and the [production deployment runbook](../../codex/production-deployment-runbook.md).
+
 ## 1. Purpose
 
 This design turns the migrated 1999Wiki repository into a reproducible,
@@ -355,3 +360,46 @@ Before any image is publishable:
 9. Add host Caddy and blue/green deployment scripts.
 10. Add the manual GHCR workflow.
 11. Run clean-checkout, image-build, Compose-render, and smoke verification.
+
+## 16. Release verification closure
+
+Task 12 closed the local release gate on 2026-07-26 without publishing images,
+connecting to the production server, changing DNS, or mutating production data.
+The verification used the real active RAG closure read-only and isolated,
+named temporary Docker projects for all smoke-test writes.
+
+The verified release-producing commit is `f71176d`. Both images were built
+locally from that commit with the required immutable tag:
+
+```text
+ghcr.io/ddomelette/1999wiki-backend:sha-f71176d
+sha256:7807a2a5cf4b86c5792bd940a7c30e4b400300b52fa90c99146e920d1dbc891b
+
+ghcr.io/ddomelette/1999wiki-frontend:sha-f71176d
+sha256:3dea7dd909ed9691d57755d8b6b8ca258fa5344b3c6ac35aa85839e5967275f4
+```
+
+These are local image IDs, not evidence of GHCR publication. The manual
+publication workflow remains the authority for registry digests.
+
+The final local gate passed:
+
+- 1,737 Python tests, with four known platform skips;
+- 238 React tests across 50 files;
+- the React production build;
+- both production Docker builds and runtime-content inspection;
+- the real RAG closure at exactly 11 files and 222,789,868 bytes;
+- isolated MySQL, MinIO, etcd, and Milvus health;
+- the formal React shell and hashed asset, Backend readiness, Wiki
+  health/list/detail, synchronous RAG, RAG SSE with one terminal `done`, and a
+  same-origin non-HTML `/media/` object through Caddy.
+
+The smoke gate exposed and closed one release blocker: activation artifact
+validation assumed the development checkout prefix and rejected the approved
+production relocation at `/runtime/rag/huiji`. The runtime now validates the
+canonical manifest identity independently of that mount relocation.
+
+The complete operator procedure is
+[docs/codex/production-deployment-runbook.md](../../codex/production-deployment-runbook.md).
+Live publication and deployment must wait for review of the whole release
+branch and require separate operator authorization.
