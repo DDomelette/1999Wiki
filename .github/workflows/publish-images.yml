@@ -7,6 +7,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: publish-images-${{ github.sha }}
+  cancel-in-progress: false
+
 jobs:
   python-tests:
     runs-on: ubuntu-latest
@@ -68,6 +72,13 @@ jobs:
         run: |
           short_sha="${GITHUB_SHA::7}"
           echo "tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
+      - id: immutability
+        name: Refuse existing release tags
+        shell: bash
+        run: |
+          bash .github/scripts/refuse-existing-image-tags.sh \
+            "ghcr.io/ddomelette/1999wiki-backend:${{ steps.tag.outputs.tag }}" \
+            "ghcr.io/ddomelette/1999wiki-frontend:${{ steps.tag.outputs.tag }}"
       - id: backend
         uses: docker/build-push-action@v6
         with:
@@ -86,12 +97,32 @@ jobs:
           tags: ghcr.io/ddomelette/1999wiki-frontend:${{ steps.tag.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - id: manifest
+        name: Create release identity manifest
+        shell: bash
+        run: |
+          python3 deploy/bin/release_manifest.py create \
+            --commit "$GITHUB_SHA" \
+            --backend-tag "ghcr.io/ddomelette/1999wiki-backend:${{ steps.tag.outputs.tag }}" \
+            --backend-digest "${{ steps.backend.outputs.digest }}" \
+            --frontend-tag "ghcr.io/ddomelette/1999wiki-frontend:${{ steps.tag.outputs.tag }}" \
+            --frontend-digest "${{ steps.frontend.outputs.digest }}" \
+            --output release-manifest.json
+      - name: Upload release identity manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.tag.outputs.tag }}
+          path: release-manifest.json
+          if-no-files-found: error
+          retention-days: 90
       - id: summary
         name: Write published image digests
         shell: bash
         run: |
           {
             echo "## Published images"
-            echo "- Backend: ghcr.io/ddomelette/1999wiki-backend@${{ steps.backend.outputs.digest }}"
-            echo "- Frontend: ghcr.io/ddomelette/1999wiki-frontend@${{ steps.frontend.outputs.digest }}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Backend: ghcr.io/ddomelette/1999wiki-backend:${{ steps.tag.outputs.tag }}@${{ steps.backend.outputs.digest }}"
+            echo "- Frontend: ghcr.io/ddomelette/1999wiki-frontend:${{ steps.tag.outputs.tag }}@${{ steps.frontend.outputs.digest }}"
+            echo "- Artifact: release-${{ steps.tag.outputs.tag }}/release-manifest.json"
           } >> "$GITHUB_STEP_SUMMARY"

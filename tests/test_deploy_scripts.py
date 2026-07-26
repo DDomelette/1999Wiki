@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 import textwrap
+import uuid
 from pathlib import Path
 
 import pytest
@@ -22,12 +23,14 @@ SCRIPTS = (
 )
 OPS_COMMON = BIN / "ops-common.sh"
 OPS_HELPER = BIN / "ops_helper.py"
+RAG_PERMISSION_PREPARER = BIN / "prepare-rag-permissions.py"
 REQUIRED_FILES = (
     DEPLOY / "Caddyfile",
     DEPLOY / "caddy" / "active-upstream.caddy.example",
     DEPLOY / "env" / "caddy.env.example",
     OPS_COMMON,
     OPS_HELPER,
+    RAG_PERMISSION_PREPARER,
     *(BIN / name for name in SCRIPTS),
 )
 FORBIDDEN_OPERATIONS = (
@@ -266,8 +269,9 @@ def _preflight_harness(customize: str = "") -> str:
         MINIO_PROXY_UPSTREAM=127.0.0.1:19000
         EOF
         cat >"$root/releases/sha-abcdef0/blue.env" <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18000
         FRONTEND_PORT=18080
         EOF
@@ -466,6 +470,14 @@ def _deploy_failure_harness() -> str:
         if [[ "$1" == "compose" && "$2" == "version" ]]; then
             exit 0
         fi
+        if [[ "$1" == "image" && "$2" == "inspect" ]]; then
+            if [[ "$3" == *"1999wiki-backend"* ]]; then
+                printf '%s\\n' '["ghcr.io/ddomelette/1999wiki-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]'
+            else
+                printf '%s\\n' '["ghcr.io/ddomelette/1999wiki-frontend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]'
+            fi
+            exit 0
+        fi
         if [[ "$1" == "network" && "$2" == "inspect" ]]; then
             printf '1999wiki-infra\\n'
             exit 0
@@ -474,7 +486,7 @@ def _deploy_failure_harness() -> str:
             exit 12
         fi
         if [[ " $* " == *" ps --format json backend frontend "* ]]; then
-            printf '%s\\n' '[{"Service":"backend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"},{"Service":"frontend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"}]'
+            printf '%s\\n' '[{"Service":"backend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"Service":"frontend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]'
             exit 0
         fi
         if [[ " $* " == *" ps --format json "* ]]; then
@@ -691,14 +703,16 @@ def _cleanup_harness(
         HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
         EOF
         cat >"$root/releases/sha-abcdef0/green.env" <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18100
         FRONTEND_PORT=18180
         EOF
         cat >"$root/releases/sha-1234567/blue.env" <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        RELEASE_COMMIT=1234567890abcdef1234567890abcdef12345678
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18000
         FRONTEND_PORT=18080
         EOF
@@ -726,8 +740,8 @@ def _cleanup_harness(
         ACTIVE_FRONTEND_PORT=18080
         ACTIVE_RELEASE_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-1234567/blue/release.env
         ACTIVE_APP_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-1234567/blue/app.env
-        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
-        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         PREVIOUS_AVAILABLE=1
         PREVIOUS_SLOT=green
         PREVIOUS_RELEASE=sha-abcdef0
@@ -735,8 +749,8 @@ def _cleanup_harness(
         PREVIOUS_FRONTEND_PORT=18180
         PREVIOUS_RELEASE_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-abcdef0/green/release.env
         PREVIOUS_APP_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-abcdef0/green/app.env
-        PREVIOUS_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        PREVIOUS_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        PREVIOUS_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        PREVIOUS_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         PREVIOUS_FRAGMENT_BACKUP=/tmp/1999wiki/deploy-state/previous-green.caddy
         EOF
         chmod 600 "$root/deploy-state/active.env"
@@ -799,7 +813,9 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
         chmod 700 "$root/state"
         : >"$calls"
         cp /repo/deploy/bin/*.sh /repo/deploy/bin/ops_helper.py \
-            /repo/deploy/bin/verify-rag-closure.py "$root/bin/"
+            /repo/deploy/bin/verify-rag-closure.py \
+            /repo/deploy/bin/prepare-rag-permissions.py \
+            "$root/bin/"
         cat >"$root/bin/smoke-test.sh" <<'EOF'
         #!/usr/bin/env bash
         printf 'smoke %s\\n' "$*" >>/tmp/calls
@@ -861,14 +877,16 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
         MINIO_PROXY_UPSTREAM=127.0.0.1:19000
         EOF
         cat >"$root/releases/sha-1234567/blue.env" <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        RELEASE_COMMIT=1234567890abcdef1234567890abcdef12345678
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18000
         FRONTEND_PORT=18080
         EOF
         cat >"$root/releases/sha-abcdef0/green.env" <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18100
         FRONTEND_PORT=18180
         EOF
@@ -895,8 +913,8 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
         ACTIVE_FRONTEND_PORT=18080
         ACTIVE_RELEASE_SNAPSHOT=/tmp/lifecycle/state/snapshots/sha-1234567/blue/release.env
         ACTIVE_APP_SNAPSHOT=/tmp/lifecycle/state/snapshots/sha-1234567/blue/app.env
-        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
-        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         PREVIOUS_AVAILABLE=0
         PREVIOUS_SLOT=
         PREVIOUS_RELEASE=
@@ -925,8 +943,16 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
             printf '1999wiki-infra\\n'
             exit 0
         fi
+        if [[ "$1" == "image" && "$2" == "inspect" ]]; then
+            if [[ "$3" == *"1999wiki-backend"* ]]; then
+                printf '%s\\n' '["ghcr.io/ddomelette/1999wiki-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]'
+            else
+                printf '%s\\n' '["ghcr.io/ddomelette/1999wiki-frontend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]'
+            fi
+            exit 0
+        fi
         if [[ " $* " == *" ps --format json backend frontend "* ]]; then
-            printf '%s\\n' '[{{"Service":"backend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"}},{{"Service":"frontend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"}}]'
+            printf '%s\\n' '[{{"Service":"backend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},{{"Service":"frontend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]'
             exit 0
         fi
         if [[ " $* " == *" ps --format json "* ]]; then
@@ -1054,8 +1080,9 @@ def _journal_recovery_harness(phase: str) -> str:
         chmod 700 "$root/state"
         : >"$calls"
         cat >"$root/source/release.env" <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18100
         FRONTEND_PORT=18180
         EOF
@@ -1091,8 +1118,8 @@ def _journal_recovery_harness(phase: str) -> str:
         ACTIVE_FRONTEND_PORT=18180
         ACTIVE_RELEASE_SNAPSHOT=/tmp/ops/state/snapshots/sha-abcdef0/green/release.env
         ACTIVE_APP_SNAPSHOT=/tmp/ops/state/snapshots/sha-abcdef0/green/app.env
-        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         PREVIOUS_AVAILABLE=0
         PREVIOUS_SLOT=
         PREVIOUS_RELEASE=
@@ -1171,10 +1198,12 @@ def _rollback_harness(
     reload_failure: bool,
     *,
     durable_unlink_failure: bool = False,
+    smoke_failure: bool = False,
     stop_failure: bool = False,
 ) -> str:
     reload_failure_flag = "1" if reload_failure else "0"
     durable_unlink_failure_flag = "1" if durable_unlink_failure else "0"
+    smoke_failure_flag = "1" if smoke_failure else "0"
     stop_failure_flag = "1" if stop_failure else "0"
     return f"""\
         set -Eeuo pipefail
@@ -1207,6 +1236,9 @@ def _rollback_harness(
         cat >"$root/bin/smoke-test.sh" <<'EOF'
         #!/usr/bin/env bash
         printf 'smoke %s\\n' "$*" >>/tmp/calls
+        if [[ "{smoke_failure_flag}" == "1" ]]; then
+            exit 31
+        fi
         exit 0
         EOF
         chmod +x "$root/bin/"*.sh "$root/bin/ops_helper.py"
@@ -1230,14 +1262,16 @@ def _rollback_harness(
         HUIJI_PROCESSED_ROOT=/runtime/rag/huiji
         EOF
         cat >"$root/source/blue/release.env" <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        RELEASE_COMMIT=1234567890abcdef1234567890abcdef12345678
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18000
         FRONTEND_PORT=18080
         EOF
         cat >"$root/source/green/release.env" <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18100
         FRONTEND_PORT=18180
         EOF
@@ -1261,8 +1295,8 @@ def _rollback_harness(
         ACTIVE_FRONTEND_PORT=18080
         ACTIVE_RELEASE_SNAPSHOT=/tmp/rollback/state/snapshots/sha-1234567/blue/release.env
         ACTIVE_APP_SNAPSHOT=/tmp/rollback/state/snapshots/sha-1234567/blue/app.env
-        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567
-        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567
+        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         PREVIOUS_AVAILABLE=1
         PREVIOUS_SLOT=green
         PREVIOUS_RELEASE=sha-abcdef0
@@ -1270,8 +1304,8 @@ def _rollback_harness(
         PREVIOUS_FRONTEND_PORT=18180
         PREVIOUS_RELEASE_SNAPSHOT=/tmp/rollback/state/snapshots/sha-abcdef0/green/release.env
         PREVIOUS_APP_SNAPSHOT=/tmp/rollback/state/snapshots/sha-abcdef0/green/app.env
-        PREVIOUS_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        PREVIOUS_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        PREVIOUS_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        PREVIOUS_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         PREVIOUS_FRAGMENT_BACKUP=/tmp/rollback/state/previous.caddy
         EOF
         chmod 600 "$root/state/active.env"
@@ -1292,8 +1326,16 @@ def _rollback_harness(
         if [[ "{stop_failure_flag}" == "1" && " $* " == *" stop backend frontend "* ]]; then
             exit 29
         fi
+        if [[ "$1" == "image" && "$2" == "inspect" ]]; then
+            if [[ "$3" == *"1999wiki-backend"* ]]; then
+                printf '%s\\n' '["ghcr.io/ddomelette/1999wiki-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]'
+            else
+                printf '%s\\n' '["ghcr.io/ddomelette/1999wiki-frontend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]'
+            fi
+            exit 0
+        fi
         if [[ " $* " == *" ps --format json backend frontend "* ]]; then
-            printf '%s\\n' '[{{"Service":"backend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"}},{{"Service":"frontend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"}}]'
+            printf '%s\\n' '[{{"Service":"backend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},{{"Service":"frontend","State":"running","Health":"healthy","Image":"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}]'
         fi
         exit 0
         EOF
@@ -1361,6 +1403,101 @@ def _rollback_harness(
 @pytest.mark.parametrize("path", REQUIRED_FILES)
 def test_required_blue_green_controls_exist(path: Path) -> None:
     assert path.is_file(), f"missing {path.relative_to(ROOT)}"
+
+
+def test_rag_permission_preparation_makes_nested_read_only_mount_non_root_readable(
+    tmp_path: Path,
+) -> None:
+    docker = shutil.which("docker")
+    assert docker, "Docker CLI is required for the Linux permission probe"
+    volume = f"1999wiki-rag-permissions-{uuid.uuid4().hex}"
+
+    def run(*arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [docker, *arguments],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+    try:
+        created = run("volume", "create", volume)
+        assert created.returncode == 0, created.stdout + created.stderr
+        seeded = run(
+            "run",
+            "--rm",
+            "--user",
+            "0:0",
+            "-v",
+            f"{volume}:/closure",
+            SCRIPT_TEST_IMAGE,
+            "/bin/bash",
+            "-ceu",
+            (
+                "mkdir -p /closure/build/runtime; "
+                "printf nested-runtime-artifact >/closure/build/runtime/media.jsonl; "
+                "chmod 0750 /closure /closure/build /closure/build/runtime; "
+                "chmod 0640 /closure/build/runtime/media.jsonl"
+            ),
+        )
+        assert seeded.returncode == 0, seeded.stdout + seeded.stderr
+
+        old_probe = run(
+            "run",
+            "--rm",
+            "--user",
+            "65534:65534",
+            "-v",
+            f"{volume}:/runtime/rag/huiji:ro",
+            SCRIPT_TEST_IMAGE,
+            "python",
+            "-c",
+            (
+                "from pathlib import Path; "
+                "Path('/runtime/rag/huiji/build/runtime/media.jsonl').read_bytes()"
+            ),
+        )
+        assert old_probe.returncode != 0, "old root-owned 0750/0640 state must fail"
+
+        prepared = run(
+            "run",
+            "--rm",
+            "--user",
+            "0:0",
+            "-v",
+            f"{ROOT}:/repo:ro",
+            "-v",
+            f"{volume}:/closure",
+            SCRIPT_TEST_IMAGE,
+            "python",
+            "/repo/deploy/bin/prepare-rag-permissions.py",
+            "--root",
+            "/closure",
+        )
+        assert prepared.returncode == 0, prepared.stdout + prepared.stderr
+
+        new_probe = run(
+            "run",
+            "--rm",
+            "--user",
+            "65534:65534",
+            "-v",
+            f"{volume}:/runtime/rag/huiji:ro",
+            SCRIPT_TEST_IMAGE,
+            "python",
+            "-c",
+            (
+                "from pathlib import Path; "
+                "assert Path('/runtime/rag/huiji/build/runtime/media.jsonl')"
+                ".read_text() == 'nested-runtime-artifact'"
+            ),
+        )
+        assert new_probe.returncode == 0, new_probe.stdout + new_probe.stderr
+    finally:
+        removed = run("volume", "rm", volume)
+        assert removed.returncode == 0, removed.stdout + removed.stderr
 
 
 def test_mutating_operations_share_lock_snapshot_and_journal_controls() -> None:
@@ -1537,7 +1674,7 @@ def test_preflight_success_is_read_only_and_does_not_disclose_credentials(
                 's#ghcr.io/ddomelette/1999wiki-backend#ghcr.io/attacker/backend#' \
                 "$root/releases/sha-abcdef0/blue.env"
             """,
-            "approved immutable image",
+                "digest-qualified immutable image",
         ),
         (
             """\
@@ -1612,10 +1749,12 @@ def test_deploy_stops_failed_candidate_without_switching_or_leaking_secrets(
     assert "__STATUS=0" not in result.stdout
     calls = result.stdout.partition("__CALLS__")[2]
     backend_pull = calls.index(
-        "docker pull ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"
+        "docker pull ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:"
+        + "a" * 64
     )
     frontend_pull = calls.index(
-        "docker pull ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"
+        "docker pull ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:"
+        + "b" * 64
     )
     compose_up = calls.index(" up -d --no-build --pull never backend frontend")
     candidate_stop = calls.index(" stop backend frontend")
@@ -1787,10 +1926,14 @@ def test_cleanup_stub_removes_only_named_inactive_project_and_exact_images(
     assert "1999wiki-infra" not in calls
     assert "--volumes" not in calls
     assert (
-        "docker image rm ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"
+        "docker image rm "
+        "ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:"
+        + "a" * 64
     ) in calls
     assert (
-        "docker image rm ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"
+        "docker image rm "
+        "ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:"
+        + "b" * 64
     ) in calls
     assert "--volumes" not in calls
     assert "prune" not in calls
@@ -1862,6 +2005,82 @@ def test_strict_env_parser_rejects_placeholders_without_evaluating_them(
     assert "18080" not in result.stdout
 
 
+def test_release_validation_rejects_mutable_tag_only_image_refs(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        cat >/tmp/release.env <<'EOF'
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        BACKEND_PORT=18000
+        FRONTEND_PORT=18080
+        EOF
+        python3 /repo/deploy/bin/ops_helper.py \
+            validate-env release /tmp/release.env --release sha-abcdef0
+        """,
+    )
+    assert result.returncode != 0
+    assert "digest" in (result.stdout + result.stderr).lower()
+
+
+def test_release_validation_accepts_digest_qualified_same_commit_refs(
+    tmp_path: Path,
+) -> None:
+    backend_digest = "a" * 64
+    frontend_digest = "b" * 64
+    result = _run_linux_harness(
+        tmp_path,
+        f"""\
+        set -Eeuo pipefail
+        cat >/tmp/release.env <<'EOF'
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:{backend_digest}
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:{frontend_digest}
+        BACKEND_PORT=18000
+        FRONTEND_PORT=18080
+        EOF
+        python3 /repo/deploy/bin/ops_helper.py \
+            validate-env release /tmp/release.env --release sha-abcdef0
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_local_repo_digest_validation_refuses_mismatch_and_accepts_exact_identity(
+    tmp_path: Path,
+) -> None:
+    expected_digest = "a" * 64
+    wrong_digest = "b" * 64
+    result = _run_linux_harness(
+        tmp_path,
+        f"""\
+        set -Eeuo pipefail
+        expected=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:{expected_digest}
+        printf '%s\\n' \
+            '["ghcr.io/ddomelette/1999wiki-backend@sha256:{wrong_digest}"]' \
+            >/tmp/wrong.json
+        printf '%s\\n' \
+            '["ghcr.io/ddomelette/1999wiki-backend@sha256:{expected_digest}"]' \
+            >/tmp/exact.json
+        set +e
+        python3 /repo/deploy/bin/ops_helper.py \
+            validate-image-digests /tmp/wrong.json "$expected" >/tmp/wrong.out 2>&1
+        wrong_status=$?
+        set -e
+        python3 /repo/deploy/bin/ops_helper.py \
+            validate-image-digests /tmp/exact.json "$expected"
+        printf '__WRONG_STATUS=%s\\n' "$wrong_status"
+        sed -n '1,20p' /tmp/wrong.out
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__WRONG_STATUS=0" not in result.stdout
+    assert "digest" in result.stdout.lower()
+
+
 def test_operations_lock_rejects_a_concurrent_mutator(tmp_path: Path) -> None:
     result = _run_linux_harness(
         tmp_path,
@@ -1909,8 +2128,9 @@ def test_snapshot_freezes_identity_and_rejects_wrong_slot_or_ambient_port(
         mkdir -p "$root/state" "$root/source"
         chmod 700 "$root/state"
         cat >"$root/source/release.env" <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18000
         FRONTEND_PORT=18080
         EOF
@@ -2070,7 +2290,30 @@ def test_rollback_reload_failure_restores_fragment_and_state(
     assert "__JOURNAL=absent" in result.stdout
     calls = result.stdout.partition("__CALLS__")[2]
     assert calls.count("caddy reload") == 2
-    assert " stop backend frontend" not in calls
+    green_calls = [line for line in calls.splitlines() if "1999wiki-green" in line]
+    blue_calls = [line for line in calls.splitlines() if "1999wiki-blue" in line]
+    assert any(" stop backend frontend" in line for line in green_calls)
+    assert not any(" stop backend frontend" in line for line in blue_calls)
+
+
+def test_rollback_failed_smoke_stops_only_the_restarted_previous_slot(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _rollback_harness(False, smoke_failure=True),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" not in result.stdout
+    state = result.stdout.partition("__STATE__")[2].partition("__JOURNAL")[0]
+    assert "ACTIVE_SLOT=blue" in state
+    calls = result.stdout.partition("__CALLS__")[2].splitlines()
+    green_calls = [line for line in calls if "1999wiki-green" in line]
+    blue_calls = [line for line in calls if "1999wiki-blue" in line]
+    assert any(" start backend frontend" in line for line in green_calls)
+    assert any(" stop backend frontend" in line for line in green_calls)
+    assert not any(" stop backend frontend" in line for line in blue_calls)
+    assert "caddy reload" not in result.stdout.partition("__CALLS__")[2]
 
 
 def test_committed_rollback_survives_post_commit_journal_unlink_failure(
@@ -2088,6 +2331,9 @@ def test_committed_rollback_survives_post_commit_journal_unlink_failure(
     assert "127.0.0.1:18180" in fragment
     assert "ACTIVE_SLOT=green" in state
     assert "__JOURNAL=present" in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2].splitlines()
+    green_calls = [line for line in calls if "1999wiki-green" in line]
+    assert not any(" stop backend frontend" in line for line in green_calls)
 
 
 def test_committed_rollback_treats_old_project_stop_failure_as_warning(
@@ -2119,10 +2365,17 @@ def test_full_retirement_lifecycle_makes_old_slot_preflight_reusable(
     assert "__JOURNAL=absent" in result.stdout
     assert "__RETIREMENT=absent" in result.stdout
     calls = result.stdout.partition("__CALLS__")[2]
+    assert calls.count("docker image inspect") >= 2
     assert "1999wiki-blue" in calls
     assert " down --remove-orphans" in calls
-    assert "image rm ghcr.io/ddomelette/1999wiki-backend:sha-1234567" in calls
-    assert "image rm ghcr.io/ddomelette/1999wiki-frontend:sha-1234567" in calls
+    assert (
+        "image rm ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:"
+        + "a" * 64
+    ) in calls
+    assert (
+        "image rm ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:"
+        + "b" * 64
+    ) in calls
 
 
 def test_deploy_does_not_stop_candidate_when_child_committed_then_failed(
@@ -2260,8 +2513,9 @@ def test_snapshot_symlink_redirect_is_rejected_without_outside_write(
         chmod 700 /tmp/state /tmp/outside
         ln -s /tmp/outside /tmp/state/snapshots
         cat >/tmp/source/release.env <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18000
         FRONTEND_PORT=18080
         EOF
@@ -2321,8 +2575,9 @@ def test_snapshot_rejects_final_file_symlinks_before_any_write(
         chmod 700 /tmp/state /tmp/state/snapshots \
             /tmp/state/snapshots/sha-abcdef0 "$snapshot_dir" /tmp/outside
         cat >/tmp/source/release.env <<'EOF'
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18000
         FRONTEND_PORT=18080
         EOF

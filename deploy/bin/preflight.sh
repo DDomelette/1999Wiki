@@ -58,6 +58,9 @@ done
 
 python3 "$SCRIPT_DIR/verify-rag-closure.py" \
     --root "$RAG_ROOT"
+python3 "$SCRIPT_DIR/prepare-rag-permissions.py" \
+    --root "$RAG_ROOT" \
+    --check
 
 for protected_file in \
     "$RELEASE_ENV_FILE" \
@@ -77,13 +80,20 @@ ops_helper validate-env caddy "$CADDY_ENV_FILE"
 mapfile -t release_values < <(
     ops_helper emit-release "$RELEASE_ENV_FILE" --release "$RELEASE"
 )
-[[ "${#release_values[@]}" -eq 4 ]] \
+[[ "${#release_values[@]}" -eq 5 ]] \
     || ops_die "release metadata is incomplete"
-BACKEND_IMAGE="${release_values[0]}"
-FRONTEND_IMAGE="${release_values[1]}"
-BACKEND_PORT="${release_values[2]}"
-FRONTEND_PORT="${release_values[3]}"
-export BACKEND_IMAGE FRONTEND_IMAGE BACKEND_PORT FRONTEND_PORT APP_ENV_FILE
+RELEASE_COMMIT="${release_values[0]}"
+BACKEND_IMAGE="${release_values[1]}"
+FRONTEND_IMAGE="${release_values[2]}"
+BACKEND_PORT="${release_values[3]}"
+FRONTEND_PORT="${release_values[4]}"
+export \
+    RELEASE_COMMIT \
+    BACKEND_IMAGE \
+    FRONTEND_IMAGE \
+    BACKEND_PORT \
+    FRONTEND_PORT \
+    APP_ENV_FILE
 
 ops_load_caddy_env
 ops_capture_fragment_metadata

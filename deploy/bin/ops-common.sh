@@ -163,20 +163,22 @@ ops_load_snapshot() {
 }
 
 ops_assign_snapshot_values() {
-    [[ "${#OPS_SNAPSHOT_VALUES[@]}" -eq 8 ]] \
+    [[ "${#OPS_SNAPSHOT_VALUES[@]}" -eq 9 ]] \
         || ops_die "validated snapshot metadata is incomplete"
     RELEASE_SNAPSHOT="${OPS_SNAPSHOT_VALUES[0]}"
     APP_ENV_FILE="${OPS_SNAPSHOT_VALUES[1]}"
     RELEASE="${OPS_SNAPSHOT_VALUES[2]}"
-    BACKEND_IMAGE="${OPS_SNAPSHOT_VALUES[3]}"
-    FRONTEND_IMAGE="${OPS_SNAPSHOT_VALUES[4]}"
-    BACKEND_PORT="${OPS_SNAPSHOT_VALUES[5]}"
-    FRONTEND_PORT="${OPS_SNAPSHOT_VALUES[6]}"
-    MEDIA_PUBLIC_BASE_URL="${OPS_SNAPSHOT_VALUES[7]}"
+    RELEASE_COMMIT="${OPS_SNAPSHOT_VALUES[3]}"
+    BACKEND_IMAGE="${OPS_SNAPSHOT_VALUES[4]}"
+    FRONTEND_IMAGE="${OPS_SNAPSHOT_VALUES[5]}"
+    BACKEND_PORT="${OPS_SNAPSHOT_VALUES[6]}"
+    FRONTEND_PORT="${OPS_SNAPSHOT_VALUES[7]}"
+    MEDIA_PUBLIC_BASE_URL="${OPS_SNAPSHOT_VALUES[8]}"
     export \
         RELEASE_SNAPSHOT \
         APP_ENV_FILE \
         RELEASE \
+        RELEASE_COMMIT \
         BACKEND_IMAGE \
         FRONTEND_IMAGE \
         BACKEND_PORT \
@@ -194,6 +196,21 @@ ops_compose() {
         "$@"
 }
 
+ops_verify_local_image() {
+    local image="$1"
+    local repo_digests
+    repo_digests="$(mktemp "$DEPLOY_STATE_ROOT/.repo-digests.XXXXXX")"
+    if docker image inspect \
+        "$image" \
+        --format '{{json .RepoDigests}}' >"$repo_digests" 2>/dev/null \
+        && ops_helper validate-image-digests "$repo_digests" "$image"; then
+        rm -f -- "$repo_digests"
+        return 0
+    fi
+    rm -f -- "$repo_digests"
+    return 1
+}
+
 ops_verify_project_identity() {
     local project="$1"
     local candidate_base_url="$2"
@@ -204,6 +221,11 @@ ops_verify_project_identity() {
     local health_file
     status_file="$(mktemp "$DEPLOY_STATE_ROOT/.compose-status.XXXXXX")"
     health_file="$(mktemp "$DEPLOY_STATE_ROOT/.candidate-health.XXXXXX")"
+    if ! ops_verify_local_image "$BACKEND_IMAGE" \
+        || ! ops_verify_local_image "$FRONTEND_IMAGE"; then
+        rm -f -- "$status_file" "$health_file"
+        return 1
+    fi
     for ((attempt = 1; attempt <= attempts; attempt++)); do
         if ops_compose "$project" ps --format json backend frontend >"$status_file" 2>/dev/null \
             && ops_helper validate-compose-status \

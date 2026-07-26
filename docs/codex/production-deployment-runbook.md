@@ -8,10 +8,13 @@ it does not build images, crawl data, generate embeddings, run repository
 tests, or install Node.js, Conda, Playwright, Codex CLI, COSCLI, or COS
 credentials.
 
-Use the Backend and Frontend `sha-<7 lowercase hex>` tags from the same reviewed
-commit. Do not overwrite a `sha-*` tag. Do not use `docker compose down -v`,
-unscoped `docker system prune -a`, or delete infrastructure data as part of an
-application rollback.
+Use the Backend and Frontend identities from the workflow's
+`release-manifest.json`. Each identity retains the exact
+`sha-<7 lowercase hex>` tag and qualifies it with the protected registry
+digest as `tag@sha256:<64 lowercase hex>`. The manifest's full commit must equal
+the reviewed commit. Do not overwrite a `sha-*` tag. Do not use
+`docker compose down -v`, unscoped `docker system prune -a`, or delete
+infrastructure data as part of an application rollback.
 
 The checked-in deployment files are a runtime bundle, not a source checkout.
 Transfer the reviewed `deploy/` directory from the same branch as the image
@@ -42,9 +45,9 @@ install -d -m 0750 \
   /srv/1999wiki/minio \
   /srv/1999wiki/etcd \
   /srv/1999wiki/milvus \
-  /srv/1999wiki/rag-artifacts \
   /srv/1999wiki/import-staging \
   /srv/1999wiki/releases
+install -d -m 0755 /srv/1999wiki/rag-artifacts
 install -d -m 0700 \
   /srv/1999wiki/protected \
   /srv/1999wiki/deploy-state
@@ -147,14 +150,29 @@ Place the contents of the active Huiji closure directly under:
 ```
 
 The selected closure is manifest-authoritative, not a hand-picked directory.
-It must contain exactly 11 files totaling 222,789,868 bytes. Verify it before
-starting an application slot:
+It must contain exactly 11 files totaling 222,789,868 bytes. The closure is
+non-secret and mounted read-only. Its production permission contract is
+root-owned or otherwise administratively owned directories at mode `0755` and
+regular files at mode `0644`, so the image's unrelated non-root application
+identity can traverse and read the mount without write access. Verify the
+content, enforce the permission contract, and recheck it before starting an
+application slot:
 
 ```bash
 cd /srv/1999wiki/runtime-bundle
 python3 deploy/bin/verify-rag-closure.py \
   --root /srv/1999wiki/rag-artifacts
+python3 deploy/bin/prepare-rag-permissions.py \
+  --root /srv/1999wiki/rag-artifacts
+python3 deploy/bin/prepare-rag-permissions.py \
+  --root /srv/1999wiki/rag-artifacts \
+  --check
 ```
+
+The permission preparer rejects symlinks and non-regular closure entries.
+Preflight repeats both the byte/hash verification and the mode check. Never
+apply this public-read-only contract to protected environment files or database
+directories.
 
 ## 4. Start and inspect infrastructure
 
@@ -221,6 +239,27 @@ printf '%s' "$GHCR_TOKEN" |
 unset GHCR_TOKEN
 ```
 
+After the manual workflow succeeds, download its artifact named
+`release-sha-abcdef0`. It contains `release-manifest.json`; do not reconstruct
+digest values from the job summary or from an unprotected tag. On an operator
+workstation this can be downloaded from the workflow run's **Artifacts**
+section. Transfer that exact file with the reviewed runtime bundle to:
+
+```text
+/srv/1999wiki/releases/sha-abcdef0/release-manifest.json
+```
+
+Verify the artifact against the reviewed full commit. This command validates
+the exact schema, full commit, both exact tags, both registry digests, and both
+digest-qualified refs, then prints only non-secret release identity:
+
+```bash
+cd /srv/1999wiki/runtime-bundle
+python3 deploy/bin/release_manifest.py verify \
+  --manifest /srv/1999wiki/releases/sha-abcdef0/release-manifest.json \
+  --commit abcdef0123456789abcdef0123456789abcdef01
+```
+
 For release `sha-abcdef0`, create both slot files. Use distinct ports:
 
 ```bash
@@ -233,33 +272,44 @@ cp /srv/1999wiki/releases/sha-abcdef0/blue.env \
 chmod 0600 /srv/1999wiki/releases/sha-abcdef0/green.env
 ```
 
-Edit both files so Backend and Frontend use the same SHA tag:
+Edit both files by copying the three verified identity lines and adding the
+slot's distinct ports:
 
 ```text
 blue:
-  BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-  FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+  RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+  BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest>
+  FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest>
   BACKEND_PORT=18100
   FRONTEND_PORT=18180
 
 green:
-  BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-  FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+  RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+  BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest>
+  FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest>
   BACKEND_PORT=18200
   FRONTEND_PORT=18280
 ```
 
-Pull both images before the change window and record the registry digests in
-the deployment ticket:
+Pull both digest-qualified identities before the change window. Inspect
+`RepoDigests` and confirm each contains the manifest's matching
+`repository@sha256:...` value:
 
 ```bash
-docker pull ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0
-docker pull ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0
+docker pull \
+  ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest>
+docker pull \
+  ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest>
 docker image inspect \
-  ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0 \
-  ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0 \
-  --format '{{index .RepoDigests 0}}'
+  ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest> \
+  ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest> \
+  --format '{{json .RepoDigests}}'
 ```
+
+Deployment snapshots preserve the full commit and both digest-qualified refs.
+Preflight refuses tag-only metadata, mismatched seven-character tags, or refs
+from different commits. Candidate identity checks also compare the protected
+digests with the locally pulled images' `RepoDigests`.
 
 ## 6. Deploy a candidate and switch
 
@@ -307,8 +357,11 @@ overlap only during validation and switching.
 
 Rollback is application-only. It restarts and re-smokes the recorded previous
 slot, restores the Caddy upstream atomically, records the reversed state, and
-stops the replaced slot. It does not alter MySQL, MinIO, etcd, Milvus, the RAG
-closure, or COS.
+stops the replaced slot. If identity, readiness, smoke, Caddy validation, or
+public verification fails before the authoritative state commit, rollback
+stops only the previous-slot candidate it restarted. After state commit, later
+housekeeping failures never stop the new active slot. Rollback does not alter
+MySQL, MinIO, etcd, Milvus, the RAG closure, or COS.
 
 ```bash
 cd /srv/1999wiki/runtime-bundle
@@ -342,8 +395,8 @@ are not referenced by the active or rollback deployment:
 
 ```bash
 docker image rm \
-  ghcr.io/ddomelette/1999wiki-backend:sha-deadbee \
-  ghcr.io/ddomelette/1999wiki-frontend:sha-deadbee
+  ghcr.io/ddomelette/1999wiki-backend:sha-deadbee@sha256:<backend-registry-digest> \
+  ghcr.io/ddomelette/1999wiki-frontend:sha-deadbee@sha256:<frontend-registry-digest>
 ```
 
 Do not perform a global prune.

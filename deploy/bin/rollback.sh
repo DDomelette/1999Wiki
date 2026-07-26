@@ -33,6 +33,38 @@ ops_load_snapshot "$ROLLBACK_SLOT" "$ROLLBACK_RELEASE_SNAPSHOT"
     || ops_die "recorded rollback release diverges from its snapshot"
 CANDIDATE_BASE_URL="http://127.0.0.1:$FRONTEND_PORT"
 
+ROLLBACK_FRAGMENT=
+TEMP_CONFIG=
+STATE_CANDIDATE=
+transaction_started=false
+rollback_cleanup_required=false
+cleanup() {
+    local status=$?
+    trap - EXIT
+    if (( status != 0 )); then
+        set +e
+        if [[ "$transaction_started" == "true" ]]; then
+            ops_recover_failed_transaction "$status" || true
+        fi
+        if [[ "$rollback_cleanup_required" == "true" ]] \
+            && ! ops_candidate_is_committed \
+                "$ROLLBACK_SLOT" \
+                "$ROLLBACK_PROJECT" \
+                "$ROLLBACK_RELEASE_SNAPSHOT"; then
+            (
+                ops_load_snapshot "$ROLLBACK_SLOT" "$ROLLBACK_RELEASE_SNAPSHOT"
+                ops_compose "$ROLLBACK_PROJECT" stop backend frontend
+            ) >/dev/null 2>&1 || true
+        fi
+        set -e
+    fi
+    rm -f -- "$ROLLBACK_FRAGMENT" "$TEMP_CONFIG" "$STATE_CANDIDATE"
+    exit "$status"
+}
+trap cleanup EXIT
+
+# Responsibility is established before Compose can partially restart a service.
+rollback_cleanup_required=true
 ops_compose "$ROLLBACK_PROJECT" start backend frontend
 ops_verify_project_identity "$ROLLBACK_PROJECT" "$CANDIDATE_BASE_URL" \
     || ops_die "recorded previous project did not become healthy with validated images"
@@ -45,17 +77,6 @@ umask 077
 ROLLBACK_FRAGMENT="$(mktemp "$DEPLOY_STATE_ROOT/.rollback-fragment.XXXXXX")"
 TEMP_CONFIG="$(mktemp "$DEPLOY_STATE_ROOT/.rollback-Caddyfile.XXXXXX")"
 STATE_CANDIDATE="$(mktemp "$DEPLOY_STATE_ROOT/.rollback-state.XXXXXX")"
-transaction_started=false
-cleanup() {
-    local status=$?
-    trap - EXIT
-    if (( status != 0 )) && [[ "$transaction_started" == "true" ]]; then
-        ops_recover_failed_transaction "$status" || true
-    fi
-    rm -f -- "$ROLLBACK_FRAGMENT" "$TEMP_CONFIG" "$STATE_CANDIDATE"
-    exit "$status"
-}
-trap cleanup EXIT
 
 # Regenerate from strictly validated previous metadata; never trust stale text.
 printf 'reverse_proxy 127.0.0.1:%s\n' "$FRONTEND_PORT" >"$ROLLBACK_FRAGMENT"
@@ -113,6 +134,7 @@ ops_verify_public_health \
 ops_test_crash_before_state_commit
 ops_commit_transaction_state "$STATE_CANDIDATE"
 transaction_started=false
+rollback_cleanup_required=false
 ops_finalize_committed_transaction || true
 ops_remove_orphan_transaction_backups || \
     printf 'rollback: warning: obsolete transaction backups remain\n' >&2

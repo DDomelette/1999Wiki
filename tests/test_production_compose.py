@@ -323,7 +323,13 @@ def test_runtime_and_release_environment_examples_are_separated() -> None:
     app_keys = _env_keys(APP_ENV)
     release_keys = _env_keys(RELEASE_ENV)
     assert REQUIRED_RUNTIME_KEYS <= app_keys
-    assert {"BACKEND_IMAGE", "FRONTEND_IMAGE", "BACKEND_PORT", "FRONTEND_PORT"} == release_keys
+    assert {
+        "RELEASE_COMMIT",
+        "BACKEND_IMAGE",
+        "FRONTEND_IMAGE",
+        "BACKEND_PORT",
+        "FRONTEND_PORT",
+    } == release_keys
     assert app_keys.isdisjoint(release_keys)
 
     app_example = _read(APP_ENV)
@@ -339,8 +345,9 @@ def test_runtime_and_release_environment_examples_are_separated() -> None:
     assert "outside Git" in app_example
 
     release_example = _read(RELEASE_ENV)
-    assert "ghcr.io/ddomelette/1999wiki-backend:sha-replace-before-production" in release_example
-    assert "ghcr.io/ddomelette/1999wiki-frontend:sha-replace-before-production" in release_example
+    assert "BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-replace@sha256:" in release_example
+    assert "FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-replace@sha256:" in release_example
+    assert "RELEASE_COMMIT=" in release_example
 
 
 def test_application_compose_rejects_missing_protected_runtime_env_path() -> None:

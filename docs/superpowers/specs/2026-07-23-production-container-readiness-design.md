@@ -20,8 +20,11 @@ thread.
 
 - Backend image: `ghcr.io/ddomelette/1999wiki-backend:sha-<7-char-git-sha>`.
 - Frontend image: `ghcr.io/ddomelette/1999wiki-frontend:sha-<7-char-git-sha>`.
-- Images are immutable. A `sha-*` tag is never overwritten with different
-  content.
+- Images are immutable. Publication is serialized per full commit and refuses
+  to push when either target `sha-*` tag already exists.
+- Every published release emits `release-manifest.json`, binding the reviewed
+  full commit, both exact tag refs, and both registry digests. Production uses
+  the resulting `tag@sha256:...` identities; tag-only refs are invalid.
 - GitHub Actions builds both images from the same clean Git commit and pushes
   them only when manually triggered.
 - The server pulls images from GHCR and never builds them.
@@ -247,9 +250,13 @@ It excludes raw crawler data, crawler/browser source packages, embedding/build
 scripts, evaluation tools/results, tests, local logs, backups, credentials,
 MySQL/Milvus/MinIO data, and RAG artifact payloads.
 
-The RAG closure is mounted read-only at `/runtime/rag/huiji`. The current closure
-contains exactly the active pointer, two activation evidence files, the build
-manifest, parent/child blocks, media rows, two BM25 indexes, and the media
+The RAG closure is mounted read-only at `/runtime/rag/huiji`. It is non-secret:
+every directory in the mounted closure uses mode `0755` and every regular file
+uses mode `0644`, allowing the unrelated non-root Backend identity to traverse
+and read it without write access. Preparation rejects symlinks, and preflight
+checks this permission contract. The current closure contains exactly the
+active pointer, two activation evidence files, the build manifest,
+parent/child blocks, media rows, two BM25 indexes, and the media
 schema/manifest: 11 files totaling about 212.47 MiB.
 
 ### 9.2 Frontend image
@@ -291,8 +298,12 @@ in the developer's main checkout.
 4. runs the Python suite;
 5. runs `npm ci`, the frontend suite, and the production build;
 6. builds Backend and Frontend images from the same full SHA;
-7. pushes only `sha-<7-char-sha>` tags to GHCR;
-8. records image digests in the workflow summary.
+7. serializes publication by the full SHA and fails closed unless both exact
+   `sha-<7-char-sha>` tags are absent;
+8. pushes only those two exact tags to GHCR;
+9. creates and uploads a machine-readable release manifest containing the full
+   commit, exact tags, digests, and digest-qualified refs;
+10. records the same attestable identities in the workflow summary.
 
 The workflow receives `contents: read` and `packages: write`. It does not SSH to
 the production server and does not deploy automatically.
@@ -310,6 +321,12 @@ Scripts under `deploy/` provide:
 - rollback to the recorded previous slot;
 - targeted cleanup after the observation period.
 
+Release metadata contains the reviewed full commit and digest-qualified Backend
+and Frontend refs. Its seven-character tags must both match the full commit.
+After pull, operations validate each protected digest against local
+`RepoDigests`; snapshots and active/previous state retain the digest-qualified
+identity.
+
 Scripts never run `docker compose down -v` and never run unrestricted
 `docker system prune -a`. They do not print secret-bearing environment files or
 full `docker inspect` output.
@@ -325,6 +342,10 @@ full `docker inspect` output.
 - Compose services use bounded JSON-file log rotation.
 - Candidate deployment aborts before Caddy switching if any required smoke check
   fails.
+- Rollback owns a previous-slot restart until authoritative state commit.
+  Identity, readiness, smoke, Caddy, or public-verification failure before that
+  commit stops only the restarted candidate; post-commit failures never stop
+  the active slot.
 - Rollback does not modify persistent infrastructure or restore data.
 
 ## 14. Verification gates
