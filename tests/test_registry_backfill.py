@@ -447,6 +447,55 @@ def test_fifth_shared_ghcr_transient_has_no_sixth_attempt_or_attestation(
     assert caught.value.mutated is False
 
 
+@pytest.mark.parametrize(
+    ("final_outcomes", "expected_code"),
+    [
+        ([ProbeState.ABSENT], "manifest_missing_after_copy"),
+        ([ProbeState.PRESENT_CONFLICT], "digest_mismatch"),
+        (
+            [
+                RegistryFailure(
+                    "probe",
+                    GHCR_REGISTRY,
+                    "fatal_registry_failure",
+                )
+            ],
+            "fatal_registry_failure",
+        ),
+        (["transient"] * 5, "network_failure"),
+    ],
+    ids=["absent", "conflict", "fatal", "transient-exhausted"],
+)
+def test_failed_backend_final_verify_removes_its_stale_verified_ref(
+    final_outcomes: list[object],
+    expected_code: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = FakeBackfillTransport(
+        ghcr_states={
+            "backend": ProbeState.PRESENT_EXPECTED,
+            "frontend": ProbeState.PRESENT_EXPECTED,
+        }
+    )
+    transport.scripted["probe:ghcr:backend"].extend(
+        [ProbeState.PRESENT_EXPECTED, *final_outcomes]
+    )
+    monkeypatch.setattr(
+        backfill_ghcr,
+        "create_mirror_attestation",
+        lambda *_args, **_kwargs: pytest.fail("attestation must not be created"),
+    )
+
+    with pytest.raises(BackfillError) as caught:
+        run_backfill(transport)
+
+    assert caught.value.phase == "ghcr_backend_final_verify"
+    assert caught.value.code == expected_code
+    assert caught.value.report()["verified_ghcr"] == {
+        "frontend": GHCR_REFS["frontend"],
+    }
+
+
 def _cli_args(tmp_path: Path, manifest_path: Path) -> list[str]:
     return [
         "--manifest",
@@ -576,6 +625,46 @@ def test_cli_removes_existing_authfile_when_manifest_preflight_fails(
     assert not authfile.exists()
     assert not (tmp_path / "mirror-attestation.json").exists()
     assert not (tmp_path / "mirror-failure.json").exists()
+
+
+@pytest.mark.parametrize(
+    "preflight_failure",
+    ["noncanonical_manifest", "missing_environment"],
+)
+def test_cli_removes_stale_outputs_before_safe_preflight_early_return(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    preflight_failure: str,
+) -> None:
+    manifest_path = tmp_path / "release-manifest.json"
+    manifest_raw = deferred_manifest_raw()
+    if preflight_failure == "noncanonical_manifest":
+        manifest_raw = manifest_raw.rstrip(b"\n")
+        _set_cli_environment(monkeypatch)
+    else:
+        for key in (
+            "TCR_USERNAME",
+            "TCR_PASSWORD",
+            "GHCR_USERNAME",
+            "GHCR_PASSWORD",
+            "TCR_REGISTRY",
+            "TCR_NAMESPACE",
+        ):
+            monkeypatch.delenv(key, raising=False)
+    manifest_path.write_bytes(manifest_raw)
+    authfile = tmp_path / "auth.json"
+    authfile.write_bytes(b"stale-temporary-credential")
+    attestation_output = tmp_path / "mirror-attestation.json"
+    failure_output = tmp_path / "mirror-failure.json"
+    attestation_output.write_bytes(b"stale-attestation")
+    failure_output.write_bytes(b"stale-failure")
+
+    assert main(_cli_args(tmp_path, manifest_path)) == 2
+
+    assert manifest_path.read_bytes() == manifest_raw
+    assert not authfile.exists()
+    assert not attestation_output.exists()
+    assert not failure_output.exists()
 
 
 def _secure_authfile_with_failing_cleanup(path: Path):

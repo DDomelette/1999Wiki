@@ -363,6 +363,7 @@ def backfill_release(
 
     final_refs: dict[str, str] = {}
     for component in COMPONENTS:
+        verified_ghcr.pop(component, None)
         state = probe_target(component, f"ghcr_{component}_final_verify")
         if state is ProbeState.ABSENT:
             raise fatal(
@@ -554,6 +555,17 @@ def _remove(path: Path) -> None:
         pass
 
 
+def _clear_outputs(paths: tuple[Path, ...]) -> None:
+    failed = False
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            failed = True
+    if failed:
+        raise OSError("one or more backfill outputs could not be removed")
+
+
 def _emit_failure(
     error: BackfillError,
     attestation_output: Path,
@@ -633,12 +645,6 @@ def _main_after_path_validation(args: argparse.Namespace) -> int:
         ),
     }
 
-    try:
-        args.attestation_output.unlink(missing_ok=True)
-        args.failure_output.unlink(missing_ok=True)
-    except OSError:
-        return 2
-
     attestation: dict[str, object] | None = None
     primary_error: BackfillError | None = None
     transport: SkopeoTransport | None = None
@@ -712,6 +718,15 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError):
         return 2
     try:
+        try:
+            _clear_outputs(
+                (
+                    args.attestation_output,
+                    args.failure_output,
+                )
+            )
+        except OSError:
+            return 2
         return _main_after_path_validation(args)
     finally:
         _remove(args.authfile)
