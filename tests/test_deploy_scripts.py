@@ -684,7 +684,24 @@ def _cleanup_harness(
     crash_phase: str = "",
     retry_after_failure: bool = False,
     image_state: str = "exact",
+    previous_registry: str = "ghcr",
 ) -> str:
+    previous_repositories = {
+        "ghcr": {
+            "backend": "ghcr.io/ddomelette/1999wiki-backend",
+            "frontend": "ghcr.io/ddomelette/1999wiki-frontend",
+        },
+        "tcr": {
+            "backend": (
+                "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend"
+            ),
+            "frontend": (
+                "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend"
+            ),
+        },
+    }[previous_registry]
+    previous_backend = previous_repositories["backend"]
+    previous_frontend = previous_repositories["frontend"]
     crash_assignment = (
         f"OPS_TEST_RETIREMENT_CRASH_PHASE={crash_phase} \\" if crash_phase else ""
     )
@@ -741,8 +758,8 @@ def _cleanup_harness(
         EOF
         cat >"$root/releases/sha-abcdef0/green.env" <<'EOF'
         RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        BACKEND_IMAGE={previous_backend}:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE={previous_frontend}:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         BACKEND_PORT=18100
         FRONTEND_PORT=18180
         EOF
@@ -786,8 +803,8 @@ def _cleanup_harness(
         PREVIOUS_FRONTEND_PORT=18180
         PREVIOUS_RELEASE_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-abcdef0/green/release.env
         PREVIOUS_APP_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-abcdef0/green/app.env
-        PREVIOUS_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-        PREVIOUS_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        PREVIOUS_BACKEND_IMAGE={previous_backend}:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        PREVIOUS_FRONTEND_IMAGE={previous_frontend}:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         PREVIOUS_FRAGMENT_BACKUP=/tmp/1999wiki/deploy-state/previous-green.caddy
         EOF
         chmod 600 "$root/deploy-state/active.env"
@@ -797,16 +814,16 @@ def _cleanup_harness(
         case "{image_state}" in
             exact|remove-noop|inspect-error|list-error|mismatch)
                 printf '%s\\n' \
-                    ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0 \
-                    ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0 \
+                    {previous_backend}:sha-abcdef0 \
+                    {previous_frontend}:sha-abcdef0 \
                     >/tmp/image-tags
                 ;;
         esac
         case "{image_state}" in
             exact|remove-noop|digest-only)
                 printf '%s\\n' \
-                    ghcr.io/ddomelette/1999wiki-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-                    ghcr.io/ddomelette/1999wiki-frontend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+                    {previous_backend}@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+                    {previous_frontend}@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
                     >/tmp/image-digests
                 ;;
         esac
@@ -846,10 +863,10 @@ def _cleanup_harness(
                 exit 1
             fi
             if [[ "$query" == *"1999wiki-backend"* ]]; then
-                repository=ghcr.io/ddomelette/1999wiki-backend
+                repository={previous_backend}
                 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             else
-                repository=ghcr.io/ddomelette/1999wiki-frontend
+                repository={previous_frontend}
                 digest=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
             fi
             if [[ "{image_state}" == "mismatch" ]]; then
@@ -922,6 +939,7 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
         chmod 700 "$root/state"
         : >"$calls"
         cp /repo/deploy/bin/*.sh /repo/deploy/bin/ops_helper.py \
+            /repo/deploy/bin/release_identity.py \
             /repo/deploy/bin/verify-rag-closure.py \
             /repo/deploy/bin/prepare-rag-permissions.py \
             "$root/bin/"
@@ -1373,7 +1391,8 @@ def _rollback_harness(
             "$root/bin" "$stub"
         chmod 700 "$root/state"
         : >"$calls"
-        cp /repo/deploy/bin/*.sh /repo/deploy/bin/ops_helper.py "$root/bin/"
+        cp /repo/deploy/bin/*.sh /repo/deploy/bin/ops_helper.py \
+            /repo/deploy/bin/release_identity.py "$root/bin/"
         if [[ "{durable_unlink_failure_flag}" == "1" ]]; then
             mv "$root/bin/ops_helper.py" "$root/bin/ops_helper.real.py"
             cat >"$root/bin/ops_helper.py" <<'PY'
@@ -2143,7 +2162,7 @@ def test_host_caddy_strips_media_prefix_before_minio_and_imports_active_app() ->
 
 def test_preflight_contains_fail_closed_security_and_readiness_gates() -> None:
     text = _read(BIN / "preflight.sh")
-    contracts_text = text + _read(OPS_HELPER)
+    contracts_text = text + _read(OPS_HELPER) + _read(BIN / "release_identity.py")
     for command in ("docker", "caddy", "curl", "python3"):
         assert command in text
     for contract in (
@@ -2572,6 +2591,76 @@ def test_cleanup_does_not_commit_when_removed_image_remains_present(
     assert "__RETIREMENT=present" in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("image_state", "should_succeed", "removal_identity"),
+    [
+        ("exact", True, ":sha-abcdef0@sha256:"),
+        ("digest-only", True, "@sha256:"),
+        ("mismatch", False, None),
+        ("inspect-error", False, None),
+        ("absent", True, None),
+    ],
+)
+def test_cleanup_reconciles_tcr_image_identity_states(
+    tmp_path: Path,
+    image_state: str,
+    should_succeed: bool,
+    removal_identity: str | None,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _cleanup_harness(
+            "remove-green-sha-abcdef0",
+            image_state=image_state,
+            previous_registry="tcr",
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert ("__STATUS=0" in result.stdout) is should_succeed
+    calls = result.stdout.partition("__CALLS__")[2].partition("__STATE__")[0]
+    if removal_identity is None:
+        assert "docker image rm" not in calls
+    else:
+        assert (
+            "docker image rm "
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend"
+            + removal_identity
+        ) in calls
+    state = result.stdout.partition("__STATE__")[2].partition("__RETIREMENT")[0]
+    if should_succeed:
+        assert "PREVIOUS_AVAILABLE=0" in state
+        assert "__RETIREMENT=absent" in result.stdout
+    else:
+        assert "PREVIOUS_AVAILABLE=1" in state
+        assert "__RETIREMENT=present" in result.stdout
+
+
+def test_cleanup_fails_closed_before_image_removal_for_cross_registry_same_digest(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _cleanup_harness(
+            "remove-green-sha-abcdef0",
+            previous_registry="tcr",
+            customize="""\
+            sed -i \
+                -e 's/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/g' \
+                -e 's/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/g' \
+                "$root/deploy-state/active.env" \
+                "$root/deploy-state/snapshots/sha-1234567/blue/release.env"
+            """,
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" not in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2].partition("__STATE__")[0]
+    assert "docker image rm" not in calls
+    state = result.stdout.partition("__STATE__")[2].partition("__RETIREMENT")[0]
+    assert "PREVIOUS_AVAILABLE=1" in state
+    assert "__RETIREMENT=present" in result.stdout
+
+
 def test_real_docker_registry_retirement_reconciles_tag_and_digest_identities() -> None:
     docker = shutil.which("docker")
     assert docker, "Docker CLI is required for the local Registry regression"
@@ -2849,6 +2938,94 @@ def test_release_validation_accepts_digest_qualified_same_commit_refs(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_release_validation_accepts_paired_tcr_refs(tmp_path: Path) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        cat >/tmp/release.env <<'EOF'
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE=ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        FRONTEND_IMAGE=ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:sha-abcdef0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        BACKEND_PORT=18000
+        FRONTEND_PORT=18080
+        EOF
+        python3 /repo/deploy/bin/ops_helper.py \
+            validate-env release /tmp/release.env --release sha-abcdef0
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("backend", "frontend"),
+    [
+        (
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:"
+            "sha-abcdef0@sha256:" + "a" * 64,
+            "ghcr.io/ddomelette/1999wiki-frontend:"
+            "sha-abcdef0@sha256:" + "b" * 64,
+        ),
+        (
+            "ccr.ccs.tencentyun.com/1999wiki_typo/1999wiki-backend:"
+            "sha-abcdef0@sha256:" + "a" * 64,
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:"
+            "sha-abcdef0@sha256:" + "b" * 64,
+        ),
+        (
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:"
+            "sha-abcdef0@sha256:" + "a" * 64,
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:"
+            "sha-abcdef0@sha256:" + "b" * 64,
+        ),
+        (
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:sha-abcdef0",
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:"
+            "sha-abcdef0@sha256:" + "b" * 64,
+        ),
+        (
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:"
+            "sha-abcdef0@sha256:" + "A" * 64,
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:"
+            "sha-abcdef0@sha256:" + "b" * 64,
+        ),
+        (
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:"
+            "sha-deadbee@sha256:" + "a" * 64,
+            "ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:"
+            "sha-deadbee@sha256:" + "b" * 64,
+        ),
+        (
+            "registry.example/1999wiki-backend:"
+            "sha-abcdef0@sha256:" + "a" * 64,
+            "registry.example/1999wiki-frontend:"
+            "sha-abcdef0@sha256:" + "b" * 64,
+        ),
+    ],
+)
+def test_release_validation_rejects_unbound_or_unapproved_image_pairs(
+    tmp_path: Path,
+    backend: str,
+    frontend: str,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        f"""\
+        set -Eeuo pipefail
+        cat >/tmp/release.env <<'EOF'
+        RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+        BACKEND_IMAGE={backend}
+        FRONTEND_IMAGE={frontend}
+        BACKEND_PORT=18000
+        FRONTEND_PORT=18080
+        EOF
+        python3 /repo/deploy/bin/ops_helper.py \
+            validate-env release /tmp/release.env --release sha-abcdef0
+        """,
+    )
+    assert result.returncode != 0
+
+
 def test_local_repo_digest_validation_refuses_mismatch_and_accepts_exact_identity(
     tmp_path: Path,
 ) -> None:
@@ -2879,6 +3056,52 @@ def test_local_repo_digest_validation_refuses_mismatch_and_accepts_exact_identit
     assert result.returncode == 0, result.stdout + result.stderr
     assert "__WRONG_STATUS=0" not in result.stdout
     assert "digest" in result.stdout.lower()
+
+
+def test_tcr_repo_digest_validation_requires_exact_canonical_identity(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        expected=ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        printf '%s\n' \
+            '["ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]' \
+            >/tmp/tcr.json
+        printf '%s\n' \
+            '["ghcr.io/ddomelette/1999wiki-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]' \
+            >/tmp/ghcr.json
+        python3 /repo/deploy/bin/ops_helper.py \
+            validate-image-digests /tmp/tcr.json "$expected"
+        set +e
+        python3 /repo/deploy/bin/ops_helper.py \
+            validate-image-digests /tmp/ghcr.json "$expected"
+        mismatch_status=$?
+        set -e
+        printf '__MISMATCH_STATUS=%s\n' "$mismatch_status"
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__MISMATCH_STATUS=0" not in result.stdout
+
+
+def test_emit_image_identity_cli_parses_approved_tcr_ref(tmp_path: Path) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        """\
+        set -Eeuo pipefail
+        python3 /repo/deploy/bin/ops_helper.py emit-image-identity \
+            ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:sha-abcdef0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        """,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "ccr.ccs.tencentyun.com/1999wiki_code/"
+        "1999wiki-backend:sha-abcdef0\n"
+        "ccr.ccs.tencentyun.com/1999wiki_code/"
+        f"1999wiki-backend@sha256:{'a' * 64}\n"
+    )
 
 
 def test_operations_lock_rejects_a_concurrent_mutator(tmp_path: Path) -> None:

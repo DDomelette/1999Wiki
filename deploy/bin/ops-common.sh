@@ -403,15 +403,38 @@ ops_retirement_matches_previous() {
 
 ops_set_retirement_image_refs() {
     local image="$1"
+    local output
+    output="$(ops_helper emit-image-identity "$image")" || return 1
+    mapfile -t OPS_RETIREMENT_PARSED_REFS <<<"$output"
+    [[ "${#OPS_RETIREMENT_PARSED_REFS[@]}" -eq 2 ]] || return 1
+    OPS_RETIREMENT_IMAGE_TAG="${OPS_RETIREMENT_PARSED_REFS[0]}"
+    OPS_RETIREMENT_IMAGE_DIGEST="${OPS_RETIREMENT_PARSED_REFS[1]}"
+}
+
+ops_reject_cross_repository_digest_alias() {
+    local active_image="$1"
+    local retirement_image="$2"
+    local active_output
+    local retirement_output
+    local -a active_refs
+    local -a retirement_refs
+    active_output="$(ops_helper emit-image-identity "$active_image")" \
+        || ops_die "active image identity is invalid during retirement"
+    retirement_output="$(ops_helper emit-image-identity "$retirement_image")" \
+        || ops_die "retirement image identity is invalid"
+    mapfile -t active_refs <<<"$active_output"
+    mapfile -t retirement_refs <<<"$retirement_output"
+    [[ \
+        "${#active_refs[@]}" -eq 2 \
+        && "${#retirement_refs[@]}" -eq 2 \
+    ]] || ops_die "image identity output is incomplete during retirement"
     if [[ \
-        "$image" =~ ^(ghcr\.io/ddomelette/1999wiki-(backend|frontend):sha-[0-9a-f]{7})@(sha256:[0-9a-f]{64})$ \
+        "${active_refs[1]#*@}" == "${retirement_refs[1]#*@}" \
+        && "${active_refs[1]%@*}" != "${retirement_refs[1]%@*}" \
     ]]; then
-        OPS_RETIREMENT_IMAGE_TAG="${BASH_REMATCH[1]}"
-        OPS_RETIREMENT_IMAGE_DIGEST="${OPS_RETIREMENT_IMAGE_TAG%:sha-*}"
-        OPS_RETIREMENT_IMAGE_DIGEST+="@${BASH_REMATCH[3]}"
-        return 0
+        ops_die \
+            "active and retirement images alias one digest across repositories"
     fi
-    return 1
 }
 
 ops_exact_retirement_tag_status() {
@@ -484,6 +507,12 @@ ops_remove_retirement_resources() {
         && "$BACKEND_IMAGE" == "$RETIREMENT_BACKEND_IMAGE" \
         && "$FRONTEND_IMAGE" == "$RETIREMENT_FRONTEND_IMAGE" \
     ]] || ops_die "retirement snapshot no longer matches the journal"
+    ops_reject_cross_repository_digest_alias \
+        "$ACTIVE_BACKEND_IMAGE" \
+        "$RETIREMENT_BACKEND_IMAGE"
+    ops_reject_cross_repository_digest_alias \
+        "$ACTIVE_FRONTEND_IMAGE" \
+        "$RETIREMENT_FRONTEND_IMAGE"
     ops_compose "$RETIREMENT_PROJECT" down --remove-orphans
     local image
     local digest_status

@@ -1,130 +1,112 @@
 #!/usr/bin/env python3
-"""Create the machine-readable identity manifest for one image release."""
+"""Thin CLI for canonical v2 release manifests and mirror attestations."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
-
-COMMIT_RE = re.compile(r"[0-9a-f]{40}")
-DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
-REPOSITORIES = {
-    "backend": "ghcr.io/ddomelette/1999wiki-backend",
-    "frontend": "ghcr.io/ddomelette/1999wiki-frontend",
-}
-
-
-class ManifestError(ValueError):
-    pass
-
-
-def _image_record(
-    component: str,
-    *,
-    commit: str,
-    tag: str,
-    digest: str,
-) -> dict[str, str]:
-    expected_tag = f"{REPOSITORIES[component]}:sha-{commit[:7]}"
-    if tag != expected_tag:
-        raise ManifestError(f"{component} tag does not match the full commit")
-    if DIGEST_RE.fullmatch(digest) is None:
-        raise ManifestError(f"{component} digest is not a sha256 registry digest")
-    return {"tag": tag, "digest": digest, "ref": f"{tag}@{digest}"}
+from release_identity import (
+    GHCR_STATUSES,
+    REPOSITORIES,
+    ManifestError,
+    canonical_json,
+    create_mirror_attestation,
+    create_release_manifest,
+    emit_release_env,
+    verify_release_manifest_bytes,
+)
 
 
-def create_manifest(
-    *,
-    commit: str,
-    backend_tag: str,
-    backend_digest: str,
-    frontend_tag: str,
-    frontend_digest: str,
-) -> dict[str, object]:
-    if COMMIT_RE.fullmatch(commit) is None:
-        raise ManifestError("commit must be a full lowercase Git SHA")
-    return {
-        "schema_version": "1999wiki.release/v1",
-        "commit": commit,
-        "images": {
-            "backend": _image_record(
-                "backend",
-                commit=commit,
-                tag=backend_tag,
-                digest=backend_digest,
-            ),
-            "frontend": _image_record(
-                "frontend",
-                commit=commit,
-                tag=frontend_tag,
-                digest=frontend_digest,
-            ),
+def _load_json(path: Path) -> object:
+    return json.loads(path.read_bytes())
+
+
+def _create(args: argparse.Namespace) -> None:
+    payload = create_release_manifest(
+        args.commit,
+        {
+            "backend": args.backend_digest,
+            "frontend": args.frontend_digest,
         },
-    }
+        {
+            "backend": args.backend_ghcr_status,
+            "frontend": args.frontend_ghcr_status,
+        },
+    )
+    args.output.write_bytes(canonical_json(payload))
 
 
-def verify_manifest(path: Path, expected_commit: str) -> dict[str, object]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        images = payload["images"]
-        backend = images["backend"]
-        frontend = images["frontend"]
-        canonical = create_manifest(
-            commit=payload["commit"],
-            backend_tag=backend["tag"],
-            backend_digest=backend["digest"],
-            frontend_tag=frontend["tag"],
-            frontend_digest=frontend["digest"],
-        )
-    except (KeyError, TypeError, json.JSONDecodeError) as exc:
-        raise ManifestError("manifest schema is invalid") from exc
-    if payload != canonical:
-        raise ManifestError("manifest contains unexpected or divergent identity fields")
-    if payload["commit"] != expected_commit:
-        raise ManifestError("manifest commit does not match the reviewed full SHA")
-    return payload
+def _verify(args: argparse.Namespace) -> None:
+    manifest_raw = args.manifest.read_bytes()
+    manifest = verify_release_manifest_bytes(manifest_raw, args.commit)
+    attestation = _load_json(args.attestation) if args.attestation else None
+    for line in emit_release_env(manifest, args.registry, attestation):
+        print(line)
 
 
-def main() -> int:
+def _attest(args: argparse.Namespace) -> None:
+    manifest_raw = args.manifest.read_bytes()
+    verify_release_manifest_bytes(manifest_raw, args.commit)
+    payload = create_mirror_attestation(
+        manifest_raw,
+        {
+            "backend": args.backend_ghcr_ref,
+            "frontend": args.frontend_ghcr_ref,
+        },
+        args.workflow_run_id,
+        args.completed_at,
+    )
+    args.output.write_bytes(canonical_json(payload))
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
+
     create = commands.add_parser("create")
     create.add_argument("--commit", required=True)
-    create.add_argument("--backend-tag", required=True)
     create.add_argument("--backend-digest", required=True)
-    create.add_argument("--frontend-tag", required=True)
     create.add_argument("--frontend-digest", required=True)
+    create.add_argument(
+        "--backend-ghcr-status",
+        choices=sorted(GHCR_STATUSES),
+        required=True,
+    )
+    create.add_argument(
+        "--frontend-ghcr-status",
+        choices=sorted(GHCR_STATUSES),
+        required=True,
+    )
     create.add_argument("--output", type=Path, required=True)
+    create.set_defaults(handler=_create)
+
     verify = commands.add_parser("verify")
     verify.add_argument("--manifest", type=Path, required=True)
     verify.add_argument("--commit", required=True)
-    args = parser.parse_args()
+    verify.add_argument("--registry", choices=tuple(REPOSITORIES), required=True)
+    verify.add_argument("--attestation", type=Path)
+    verify.set_defaults(handler=_verify)
+
+    attest = commands.add_parser("attest")
+    attest.add_argument("--manifest", type=Path, required=True)
+    attest.add_argument("--commit", required=True)
+    attest.add_argument("--backend-ghcr-ref", required=True)
+    attest.add_argument("--frontend-ghcr-ref", required=True)
+    attest.add_argument("--workflow-run-id", required=True)
+    attest.add_argument("--completed-at", required=True)
+    attest.add_argument("--output", type=Path, required=True)
+    attest.set_defaults(handler=_attest)
+    return parser
+
+
+def main() -> int:
     try:
-        if args.command == "create":
-            payload = create_manifest(
-                commit=args.commit,
-                backend_tag=args.backend_tag,
-                backend_digest=args.backend_digest,
-                frontend_tag=args.frontend_tag,
-                frontend_digest=args.frontend_digest,
-            )
-            args.output.write_text(
-                json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True)
-                + "\n",
-                encoding="utf-8",
-                newline="\n",
-            )
-        else:
-            payload = verify_manifest(args.manifest, args.commit)
-            print(f"RELEASE_COMMIT={payload['commit']}")
-            images = payload["images"]
-            print(f"BACKEND_IMAGE={images['backend']['ref']}")
-            print(f"FRONTEND_IMAGE={images['frontend']['ref']}")
-    except (OSError, ManifestError) as exc:
+        args = build_parser().parse_args()
+        args.handler(args)
+    except (OSError, UnicodeError, json.JSONDecodeError, ManifestError) as exc:
         print(f"release-manifest: {exc}", file=sys.stderr)
         return 1
     return 0

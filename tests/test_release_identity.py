@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RELEASE_MANIFEST = ROOT / "deploy" / "bin" / "release_manifest.py"
 sys.path.insert(0, str(ROOT / "deploy" / "bin"))
 
 from release_identity import (  # noqa: E402
@@ -64,7 +66,6 @@ def test_release_v2_records_mandatory_tcr_and_deferred_ghcr() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("schema_version", "1999wiki.release/v1"),
         ("commit", "ABCDEF0123456789abcdef0123456789abcdef01"),
         ("release_tag", "sha-deadbee"),
         ("primary_registry", "ghcr"),
@@ -252,3 +253,146 @@ def test_attestation_verification_rejects_independent_missing_required_fields(
     mutate(attestation)
     with pytest.raises(ManifestError):
         verify_mirror_attestation(raw, attestation, COMMIT)
+
+
+def run_release_manifest(*args: object) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(RELEASE_MANIFEST), *(str(arg) for arg in args)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def create_manifest_with_cli(
+    tmp_path: Path,
+    *,
+    backend_status: str,
+    frontend_status: str,
+) -> Path:
+    manifest_path = tmp_path / "release-manifest.json"
+    result = run_release_manifest(
+        "create",
+        "--commit",
+        COMMIT,
+        "--backend-digest",
+        BACKEND_DIGEST,
+        "--frontend-digest",
+        FRONTEND_DIGEST,
+        "--backend-ghcr-status",
+        backend_status,
+        "--frontend-ghcr-status",
+        frontend_status,
+        "--output",
+        manifest_path,
+    )
+    assert result.returncode == 0, result.stderr
+    return manifest_path
+
+
+def test_release_manifest_cli_creates_canonical_v2_and_verifies_tcr(
+    tmp_path: Path,
+) -> None:
+    manifest_path = create_manifest_with_cli(
+        tmp_path,
+        backend_status="published",
+        frontend_status="deferred_after_5_network_failures",
+    )
+    assert manifest_path.read_bytes() == canonical_deferred_manifest_bytes()
+
+    result = run_release_manifest(
+        "verify",
+        "--manifest",
+        manifest_path,
+        "--commit",
+        COMMIT,
+        "--registry",
+        "tcr",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        f"RELEASE_COMMIT={COMMIT}\n"
+        "BACKEND_IMAGE=ccr.ccs.tencentyun.com/1999wiki_code/"
+        f"1999wiki-backend:sha-abcdef0@{BACKEND_DIGEST}\n"
+        "FRONTEND_IMAGE=ccr.ccs.tencentyun.com/1999wiki_code/"
+        f"1999wiki-frontend:sha-abcdef0@{FRONTEND_DIGEST}\n"
+    )
+
+
+def test_release_manifest_cli_verifies_originally_complete_ghcr(
+    tmp_path: Path,
+) -> None:
+    manifest_path = create_manifest_with_cli(
+        tmp_path,
+        backend_status="published",
+        frontend_status="published",
+    )
+    result = run_release_manifest(
+        "verify",
+        "--manifest",
+        manifest_path,
+        "--commit",
+        COMMIT,
+        "--registry",
+        "ghcr",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        f"RELEASE_COMMIT={COMMIT}\n"
+        "BACKEND_IMAGE=ghcr.io/ddomelette/"
+        f"1999wiki-backend:sha-abcdef0@{BACKEND_DIGEST}\n"
+        "FRONTEND_IMAGE=ghcr.io/ddomelette/"
+        f"1999wiki-frontend:sha-abcdef0@{FRONTEND_DIGEST}\n"
+    )
+
+
+def test_release_manifest_cli_attests_then_verifies_deferred_ghcr(
+    tmp_path: Path,
+) -> None:
+    manifest_path = create_manifest_with_cli(
+        tmp_path,
+        backend_status="published",
+        frontend_status="deferred_after_5_network_failures",
+    )
+    attestation_path = tmp_path / "mirror-attestation.json"
+    attest_result = run_release_manifest(
+        "attest",
+        "--manifest",
+        manifest_path,
+        "--commit",
+        COMMIT,
+        "--backend-ghcr-ref",
+        f"ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@{BACKEND_DIGEST}",
+        "--frontend-ghcr-ref",
+        f"ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@{FRONTEND_DIGEST}",
+        "--workflow-run-id",
+        "123456789",
+        "--completed-at",
+        "2026-07-26T12:00:00Z",
+        "--output",
+        attestation_path,
+    )
+    assert attest_result.returncode == 0, attest_result.stderr
+    expected_attestation = completed_attestation(manifest_path.read_bytes())
+    assert attestation_path.read_bytes() == canonical_json(expected_attestation)
+
+    verify_result = run_release_manifest(
+        "verify",
+        "--manifest",
+        manifest_path,
+        "--commit",
+        COMMIT,
+        "--registry",
+        "ghcr",
+        "--attestation",
+        attestation_path,
+    )
+    assert verify_result.returncode == 0, verify_result.stderr
+    assert verify_result.stdout == (
+        f"RELEASE_COMMIT={COMMIT}\n"
+        "BACKEND_IMAGE=ghcr.io/ddomelette/"
+        f"1999wiki-backend:sha-abcdef0@{BACKEND_DIGEST}\n"
+        "FRONTEND_IMAGE=ghcr.io/ddomelette/"
+        f"1999wiki-frontend:sha-abcdef0@{FRONTEND_DIGEST}\n"
+    )

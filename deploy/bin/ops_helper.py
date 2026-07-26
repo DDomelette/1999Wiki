@@ -12,9 +12,12 @@ import secrets
 import stat
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import unquote, urljoin, urlsplit
+
+from release_identity import REPOSITORIES
 
 
 KEY_RE = re.compile(r"[A-Z][A-Z0-9_]*")
@@ -23,9 +26,10 @@ COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 GENERATION_RE = re.compile(r"gen-[0-9a-f]{24}")
 PLACEHOLDER_RE = re.compile(r"\$(?:\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)")
-IMAGE_REPOSITORIES = {
-    "BACKEND_IMAGE": "ghcr.io/ddomelette/1999wiki-backend",
-    "FRONTEND_IMAGE": "ghcr.io/ddomelette/1999wiki-frontend",
+APPROVED_IMAGE_REPOSITORIES = {
+    repository: (registry, component)
+    for registry, components in REPOSITORIES.items()
+    for component, repository in components.items()
 }
 RELEASE_KEYS = (
     "RELEASE_COMMIT",
@@ -118,6 +122,16 @@ class ControlError(ValueError):
     pass
 
 
+@dataclass(frozen=True)
+class ImageIdentity:
+    registry: str
+    component: str
+    tag: str
+    digest: str
+    tagged_ref: str
+    canonical_ref: str
+
+
 def fail(message: str) -> None:
     raise ControlError(message)
 
@@ -156,6 +170,32 @@ def require_nonempty(values: dict[str, str], required: Iterable[str], label: str
         fail(f"{label} has empty required variables: {','.join(missing)}")
 
 
+def parse_image_identity(
+    value: str,
+    expected_component: str | None = None,
+) -> ImageIdentity:
+    for repository, (registry, component) in APPROVED_IMAGE_REPOSITORIES.items():
+        match = re.fullmatch(
+            re.escape(repository)
+            + r":(sha-[0-9a-f]{7})@(sha256:[0-9a-f]{64})",
+            value,
+        )
+        if match is None:
+            continue
+        if expected_component is not None and component != expected_component:
+            fail("image component does not match its release field")
+        tag, digest = match.groups()
+        return ImageIdentity(
+            registry=registry,
+            component=component,
+            tag=tag,
+            digest=digest,
+            tagged_ref=f"{repository}:{tag}",
+            canonical_ref=f"{repository}@{digest}",
+        )
+    fail("image is not an approved digest-qualified immutable image")
+
+
 def validate_release(path: Path, expected_release: str | None = None) -> dict[str, str]:
     values = strict_env(path)
     if set(values) != set(RELEASE_KEYS):
@@ -167,19 +207,13 @@ def validate_release(path: Path, expected_release: str | None = None) -> dict[st
     commit = values["RELEASE_COMMIT"]
     if COMMIT_RE.fullmatch(commit) is None:
         fail("RELEASE_COMMIT must be a full lowercase Git SHA")
-    tags: set[str] = set()
-    for key, repository in IMAGE_REPOSITORIES.items():
-        match = re.fullmatch(
-            re.escape(repository)
-            + r":(sha-[0-9a-f]{7})@(sha256:[0-9a-f]{64})",
-            values[key],
-        )
-        if match is None:
-            fail(f"{key} is not an approved digest-qualified immutable image")
-        tags.add(match.group(1))
-    if len(tags) != 1:
+    backend = parse_image_identity(values["BACKEND_IMAGE"], "backend")
+    frontend = parse_image_identity(values["FRONTEND_IMAGE"], "frontend")
+    if backend.registry != frontend.registry:
+        fail("Backend and Frontend images must use the same approved registry")
+    if backend.tag != frontend.tag:
         fail("Backend and Frontend image tags must be identical")
-    release = next(iter(tags))
+    release = backend.tag
     if release != f"sha-{commit[:7]}":
         fail("paired image tags do not match RELEASE_COMMIT")
     if expected_release is not None and release != expected_release:
@@ -194,20 +228,13 @@ def validate_release(path: Path, expected_release: str | None = None) -> dict[st
 
 
 def validate_image_digests(path: Path, expected_image: str) -> None:
-    match = re.fullmatch(
-        r"(ghcr\.io/ddomelette/1999wiki-(?:backend|frontend))"
-        r":sha-[0-9a-f]{7}@(sha256:[0-9a-f]{64})",
-        expected_image,
-    )
-    if match is None:
-        fail("expected image is not digest-qualified")
+    identity = parse_image_identity(expected_image)
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list) or not all(
         isinstance(value, str) for value in payload
     ):
         fail("local image RepoDigests are not a string list")
-    expected_repo_digest = f"{match.group(1)}@{match.group(2)}"
-    if expected_repo_digest not in payload:
+    if identity.canonical_ref not in payload:
         fail("local image RepoDigests do not contain the protected digest")
 
 
@@ -971,6 +998,12 @@ def command_validate_image_digests(args: argparse.Namespace) -> None:
     validate_image_digests(Path(args.path), args.expected_image)
 
 
+def command_emit_image_identity(args: argparse.Namespace) -> None:
+    identity = parse_image_identity(args.image)
+    print(identity.tagged_ref)
+    print(identity.canonical_ref)
+
+
 def command_emit_caddy(args: argparse.Namespace) -> None:
     values = validate_caddy(Path(args.path))
     for key in CADDY_REQUIRED:
@@ -1102,6 +1135,10 @@ def build_parser() -> argparse.ArgumentParser:
     image_digest_parser.add_argument("path")
     image_digest_parser.add_argument("expected_image")
     image_digest_parser.set_defaults(handler=command_validate_image_digests)
+
+    image_identity_parser = commands.add_parser("emit-image-identity")
+    image_identity_parser.add_argument("image")
+    image_identity_parser.set_defaults(handler=command_emit_image_identity)
 
     caddy_parser = commands.add_parser("emit-caddy")
     caddy_parser.add_argument("path")

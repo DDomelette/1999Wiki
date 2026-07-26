@@ -345,8 +345,14 @@ def test_runtime_and_release_environment_examples_are_separated() -> None:
     assert "outside Git" in app_example
 
     release_example = _read(RELEASE_ENV)
-    assert "BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-replace@sha256:" in release_example
-    assert "FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-replace@sha256:" in release_example
+    assert (
+        "BACKEND_IMAGE=ccr.ccs.tencentyun.com/1999wiki_code/"
+        "1999wiki-backend:sha-replace@sha256:"
+    ) in release_example
+    assert (
+        "FRONTEND_IMAGE=ccr.ccs.tencentyun.com/1999wiki_code/"
+        "1999wiki-frontend:sha-replace@sha256:"
+    ) in release_example
     assert "RELEASE_COMMIT=" in release_example
 
 
