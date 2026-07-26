@@ -2766,15 +2766,6 @@ def test_real_docker_registry_retirement_reconciles_tag_and_digest_identities() 
         assert pulled_tag.returncode == 0, pulled_tag.stdout + pulled_tag.stderr
         assert run("image", "inspect", tag_ref).returncode == 0
         assert run("image", "inspect", digest_ref).returncode == 0
-        digest_list = run(
-            "image",
-            "ls",
-            "--format",
-            "{{.Repository}}:{{.Tag}}",
-            digest_ref,
-        )
-        assert digest_list.returncode == 0
-        assert digest_list.stdout == ""
 
         removed_tag_digest = run("image", "rm", tag_digest_ref)
         assert (

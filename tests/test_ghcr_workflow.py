@@ -99,6 +99,7 @@ def test_publish_builds_once_after_independent_test_jobs() -> None:
     publish = jobs["publish"]
 
     _uses(python, "actions/setup-python@v5")
+    _uses(python, "docker/setup-buildx-action@v3")
     python_commands = _run_text(python)
     assert "pip install -r requirements/dev.lock.txt" in python_commands
     assert "python -m pytest -q" in python_commands

@@ -75,7 +75,7 @@ def test_pointer_cas_never_overwrites_existing_target(tmp_path: Path) -> None:
     assert target.read_bytes() == first
 
 
-def test_bootstrap_lock_releases_the_same_windows_byte_range(tmp_path: Path) -> None:
+def test_bootstrap_lock_releases_for_the_next_operation(tmp_path: Path) -> None:
     with bootstrap_lock(tmp_path, "first-operation"):
         pass
     with bootstrap_lock(tmp_path, "second-operation"):

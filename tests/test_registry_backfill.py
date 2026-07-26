@@ -764,7 +764,7 @@ def test_skopeo_backfill_transport_uses_exact_registry_digest_source() -> None:
                 "--all",
                 "--preserve-digests",
                 "--authfile",
-                "D:\\runner-temp\\auth.json",
+                str(Path("D:/runner-temp/auth.json")),
                 TCR_SOURCES["backend"],
                 "docker://" + GHCR_TARGETS["backend"],
             ],

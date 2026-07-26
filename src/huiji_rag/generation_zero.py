@@ -515,8 +515,6 @@ def inspect_generation_zero(
 
 @contextmanager
 def bootstrap_lock(project_root: Path, operation_id: str) -> Iterator[None]:
-    import msvcrt
-
     path = project_root / BOOTSTRAP_LOCK_RELATIVE
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch(exist_ok=True)
@@ -524,9 +522,29 @@ def bootstrap_lock(project_root: Path, operation_id: str) -> Iterator[None]:
         if path.stat().st_size == 0:
             handle.write(b"\0")
             os.fsync(handle.fileno())
-        os.lseek(handle.fileno(), 0, os.SEEK_SET)
+
+        if os.name == "nt":
+            import msvcrt
+
+            def lock() -> None:
+                os.lseek(handle.fileno(), 0, os.SEEK_SET)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+
+            def unlock() -> None:
+                os.lseek(handle.fileno(), 0, os.SEEK_SET)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+        else:
+            import fcntl
+
+            def lock() -> None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def unlock() -> None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            lock()
         except OSError as error:
             raise RuntimeError("generation-zero bootstrap lock is held") from error
         try:
@@ -541,8 +559,7 @@ def bootstrap_lock(project_root: Path, operation_id: str) -> Iterator[None]:
             os.fsync(handle.fileno())
             yield
         finally:
-            os.lseek(handle.fileno(), 0, os.SEEK_SET)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            unlock()
 
 
 def _reference_path(root: Path, value: Mapping[str, object]) -> Path:
