@@ -403,17 +403,37 @@ ops_retirement_matches_previous() {
 
 ops_exact_image_present() {
     local image="$1"
+    local image_tag
     local output
+    local repo_digests
+    if [[ \
+        "$image" =~ ^(ghcr\.io/ddomelette/1999wiki-(backend|frontend):sha-[0-9a-f]{7})@(sha256:[0-9a-f]{64})$ \
+    ]]; then
+        image_tag="${BASH_REMATCH[1]}"
+    else
+        return 2
+    fi
     output="$(
         docker image ls \
             --format '{{.Repository}}:{{.Tag}}' \
-            "$image"
+            "$image_tag"
     )" || return 2
     if [[ -z "$output" ]]; then
         return 1
     fi
-    [[ "$output" == "$image" ]] \
-        || ops_die "retirement image query returned an unexpected reference"
+    [[ "$output" == "$image_tag" ]] || return 2
+    repo_digests="$(mktemp "$DEPLOY_STATE_ROOT/.retirement-repo-digests.XXXXXX")"
+    if ! docker image inspect \
+        "$image_tag" \
+        --format '{{json .RepoDigests}}' >"$repo_digests" 2>/dev/null; then
+        rm -f -- "$repo_digests"
+        return 2
+    fi
+    if ! ops_helper validate-image-digests "$repo_digests" "$image"; then
+        rm -f -- "$repo_digests"
+        return 2
+    fi
+    rm -f -- "$repo_digests"
 }
 
 ops_remove_retirement_resources() {

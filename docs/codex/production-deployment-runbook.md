@@ -152,11 +152,12 @@ Place the contents of the active Huiji closure directly under:
 The selected closure is manifest-authoritative, not a hand-picked directory.
 It must contain exactly 11 files totaling 222,789,868 bytes. The closure is
 non-secret and mounted read-only. Its production permission contract is
-root-owned or otherwise administratively owned directories at mode `0755` and
-regular files at mode `0644`, so the image's unrelated non-root application
-identity can traverse and read the mount without write access. Verify the
-content, enforce the permission contract, and recheck it before starting an
-application slot:
+the root and necessary ancestor directories of the 11 selected files at mode
+`0755`, and those 11 regular files at mode `0644`, so the image's unrelated
+non-root application identity can traverse and read the mount without write
+access. Undeclared files and directories retain their existing modes. Verify
+the content, enforce the permission contract, and recheck it before starting
+an application slot:
 
 ```bash
 cd /srv/1999wiki/runtime-bundle
@@ -169,10 +170,12 @@ python3 deploy/bin/prepare-rag-permissions.py \
   --check
 ```
 
-The permission preparer rejects symlinks and non-regular closure entries.
-Preflight repeats both the byte/hash verification and the mode check. Never
-apply this public-read-only contract to protected environment files or database
-directories.
+The permission preparer derives its exact targets from a successful
+manifest-closure verification, requires the approved 11-file/222,789,868-byte
+result, and rejects symlinks and non-regular selected entries. Preflight repeats
+both the byte/hash verification and the selected mode check. Never apply this
+public-read-only contract to undeclared private entries, protected environment
+files, or database directories.
 
 ## 4. Start and inspect infrastructure
 
@@ -243,7 +246,16 @@ After the manual workflow succeeds, download its artifact named
 `release-sha-abcdef0`. It contains `release-manifest.json`; do not reconstruct
 digest values from the job summary or from an unprotected tag. On an operator
 workstation this can be downloaded from the workflow run's **Artifacts**
-section. Transfer that exact file with the reviewed runtime bundle to:
+section.
+
+Before transferring any release file, create its private destination directory
+on the server:
+
+```bash
+install -d -m 0700 /srv/1999wiki/releases/sha-abcdef0
+```
+
+Then transfer that exact manifest with the reviewed runtime bundle to:
 
 ```text
 /srv/1999wiki/releases/sha-abcdef0/release-manifest.json
@@ -260,10 +272,10 @@ python3 deploy/bin/release_manifest.py verify \
   --commit abcdef0123456789abcdef0123456789abcdef01
 ```
 
-For release `sha-abcdef0`, create both slot files. Use distinct ports:
+After manifest verification succeeds, create both slot files for release
+`sha-abcdef0`. Use distinct ports:
 
 ```bash
-install -d -m 0700 /srv/1999wiki/releases/sha-abcdef0
 install -m 0600 \
   deploy/env/release.env.example \
   /srv/1999wiki/releases/sha-abcdef0/blue.env
@@ -398,6 +410,12 @@ docker image rm \
   ghcr.io/ddomelette/1999wiki-backend:sha-deadbee@sha256:<backend-registry-digest> \
   ghcr.io/ddomelette/1999wiki-frontend:sha-deadbee@sha256:<frontend-registry-digest>
 ```
+
+Automated retirement resolves each protected digest-qualified identity to its
+exact local tag, verifies that tag's `RepoDigests` contains the protected digest,
+removes only that identity, and confirms absence before committing state. A
+mismatched tag or Docker query/inspection error fails closed without image
+removal.
 
 Do not perform a global prune.
 

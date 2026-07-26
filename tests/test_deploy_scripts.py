@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -78,7 +79,11 @@ def _run_linux_harness(tmp_path: Path, body: str) -> subprocess.CompletedProcess
     )
 
 
-def _rag_closure_setup(root_argument: str = '"$root/rag-artifacts"') -> str:
+def _rag_closure_setup(
+    root_argument: str = '"$root/rag-artifacts"',
+    *,
+    target_bytes: int = 222_789_868,
+) -> str:
     template = """\
         python3 - "$root/rag-artifacts" <<'PY'
         import hashlib
@@ -103,7 +108,11 @@ def _rag_closure_setup(root_argument: str = '"$root/rag-artifacts"') -> str:
             )
 
         def digest(path):
-            return hashlib.sha256(path.read_bytes()).hexdigest()
+            value = hashlib.sha256()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    value.update(chunk)
+            return value.hexdigest()
 
         payloads = {
             "parent_blocks": ("parent_blocks.jsonl", b'{"parent_id":"p1"}\\n'),
@@ -137,92 +146,115 @@ def _rag_closure_setup(root_argument: str = '"$root/rag-artifacts"') -> str:
             paths[name] = path
 
         build_manifest = root / build / "build_manifest.json"
-        write_json(
-            build_manifest,
-            {
-                "schema_version": "huiji.corpus-build/v2",
-                "artifact_schema_version": "evb.media-asset/v3",
-                "build_version": build,
-                "artifacts": [
-                    {
-                        "relative_path": path.relative_to(root / build).as_posix(),
-                        "sha256": digest(path),
-                        "size": path.stat().st_size,
-                    }
-                    for path in paths.values()
-                ],
-            },
-        )
         transaction = root / "activation" / "transactions" / activation
         collection = transaction / "collection_manifest.v1.json"
-        write_json(
-            collection,
-            {
-                "schema_version": "evb.collection-manifest/v1",
-                "artifact_schema_version": "evb.media-asset/v3",
-                "build_version": build,
-                "build_manifest": {
-                    "relative_path": (
-                        "data/processed/huiji/fixture-build/build_manifest.json"
-                    ),
-                    "sha256": digest(build_manifest),
-                    "size": build_manifest.stat().st_size,
+        inventory = transaction / "deployment_inventory.v1.json"
+        pointer = root / "active_build.v1.json"
+
+        def write_metadata():
+            write_json(
+                build_manifest,
+                {
+                    "schema_version": "huiji.corpus-build/v2",
+                    "artifact_schema_version": "evb.media-asset/v3",
+                    "build_version": build,
+                    "artifacts": [
+                        {
+                            "relative_path": path.relative_to(
+                                root / build
+                            ).as_posix(),
+                            "sha256": digest(path),
+                            "size": path.stat().st_size,
+                        }
+                        for path in paths.values()
+                    ],
                 },
-                "artifacts": {
-                    name: {
+            )
+            write_json(
+                collection,
+                {
+                    "schema_version": "evb.collection-manifest/v1",
+                    "artifact_schema_version": "evb.media-asset/v3",
+                    "build_version": build,
+                    "build_manifest": {
                         "relative_path": (
                             "data/processed/huiji/"
-                            + path.relative_to(root).as_posix()
+                            "fixture-build/build_manifest.json"
                         ),
-                        "sha256": digest(path),
-                        "size": path.stat().st_size,
-                    }
-                    for name, path in paths.items()
+                        "sha256": digest(build_manifest),
+                        "size": build_manifest.stat().st_size,
+                    },
+                    "artifacts": {
+                        name: {
+                            "relative_path": (
+                                "data/processed/huiji/"
+                                + path.relative_to(root).as_posix()
+                            ),
+                            "sha256": digest(path),
+                            "size": path.stat().st_size,
+                        }
+                        for name, path in paths.items()
+                    },
+                    "milvus": {
+                        "collection": "fixture-collection",
+                        "database": "fixture-db",
+                        "schema_sha256": "a" * 64,
+                    },
+                    "embedding": {
+                        "model_id": "fixture-model",
+                        "config_fingerprint": "b" * 64,
+                    },
                 },
-                "milvus": {
-                    "collection": "fixture-collection",
-                    "database": "fixture-db",
-                    "schema_sha256": "a" * 64,
+            )
+            write_json(
+                inventory,
+                {
+                    "schema_version": (
+                        "huiji.activation-deployment-inventory/v1"
+                    ),
+                    "activation_id": activation,
                 },
-                "embedding": {
-                    "model_id": "fixture-model",
-                    "config_fingerprint": "b" * 64,
+            )
+            write_json(
+                pointer,
+                {
+                    "schema_version": "evb.active-build/v1",
+                    "generation": 1,
+                    "build_version": build,
+                    "previous_build_version": "previous-build",
+                    "build_manifest_sha256": digest(build_manifest),
+                    "milvus_collection_name": "fixture-collection",
+                    "collection_schema_fingerprint": "a" * 64,
+                    "collection_manifest_sha256": digest(collection),
+                    "embedding_model_id": "fixture-model",
+                    "embedding_config_fingerprint": "b" * 64,
+                    "artifact_schema_version": "evb.media-asset/v3",
+                    "deployment_inventory_sha256": digest(inventory),
+                    "activation_epoch": 1,
+                    "activation_id": activation,
+                    "activated_at_utc": "2026-07-22T06:59:27Z",
                 },
-            },
-        )
-        inventory = transaction / "deployment_inventory.v1.json"
-        write_json(
-            inventory,
-            {
-                "schema_version": (
-                    "huiji.activation-deployment-inventory/v1"
-                ),
-                "activation_id": activation,
-            },
-        )
-        write_json(
-            root / "active_build.v1.json",
-            {
-                "schema_version": "evb.active-build/v1",
-                "generation": 1,
-                "build_version": build,
-                "previous_build_version": "previous-build",
-                "build_manifest_sha256": digest(build_manifest),
-                "milvus_collection_name": "fixture-collection",
-                "collection_schema_fingerprint": "a" * 64,
-                "collection_manifest_sha256": digest(collection),
-                "embedding_model_id": "fixture-model",
-                "embedding_config_fingerprint": "b" * 64,
-                "artifact_schema_version": "evb.media-asset/v3",
-                "deployment_inventory_sha256": digest(inventory),
-                "activation_epoch": 1,
-                "activation_id": activation,
-                "activated_at_utc": "2026-07-22T06:59:27Z",
-            },
-        )
+            )
+
+        target_bytes = TARGET_BYTES
+        large_artifact = paths["parent_blocks"]
+        with large_artifact.open("wb") as handle:
+            handle.truncate(target_bytes - 10_000)
+        write_metadata()
+        selected = [*paths.values(), build_manifest, collection, inventory, pointer]
+        correction = target_bytes - sum(path.stat().st_size for path in selected)
+        with large_artifact.open("r+b") as handle:
+            handle.truncate(large_artifact.stat().st_size + correction)
+        write_metadata()
+        assert len(selected) == 11
+        assert sum(path.stat().st_size for path in selected) == target_bytes
         PY
     """
-    return template.replace('"$root/rag-artifacts"', root_argument, 1)
+    return template.replace('"$root/rag-artifacts"', root_argument, 1).replace(
+        "TARGET_BYTES",
+        str(target_bytes),
+        1,
+    )
 
 
 def _preflight_harness(customize: str = "") -> str:
@@ -647,6 +679,7 @@ def _cleanup_harness(
     slot: str = "green",
     crash_phase: str = "",
     retry_after_failure: bool = False,
+    image_state: str = "exact",
 ) -> str:
     crash_assignment = (
         f"OPS_TEST_RETIREMENT_CRASH_PHASE={crash_phase} \\" if crash_phase else ""
@@ -760,14 +793,43 @@ def _cleanup_harness(
         set -Eeuo pipefail
         printf 'docker %s\\n' "$*" >>/tmp/calls
         if [[ "$1" == "image" && "$2" == "ls" ]]; then
-            image="${{@: -1}}"
-            if [[ ! -f /tmp/removed-images ]] \
-                || ! grep -Fxq "$image" /tmp/removed-images; then
-                printf '%s\\n' "$image"
+            query="${{@: -1}}"
+            if [[ "$query" == *@sha256:* ]]; then
+                exit 0
             fi
+            case "{image_state}" in
+                absent)
+                    exit 0
+                    ;;
+                list-error)
+                    exit 23
+                    ;;
+            esac
+            if [[ ! -f /tmp/removed-image-tags ]] \
+                || ! grep -Fxq "$query" /tmp/removed-image-tags; then
+                printf '%s\\n' "$query"
+            fi
+        elif [[ "$1" == "image" && "$2" == "inspect" ]]; then
+            [[ "{image_state}" != "inspect-error" ]] || exit 24
+            if [[ "$3" == *"1999wiki-backend"* ]]; then
+                repository=ghcr.io/ddomelette/1999wiki-backend
+                digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            else
+                repository=ghcr.io/ddomelette/1999wiki-frontend
+                digest=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+            fi
+            if [[ "{image_state}" == "mismatch" ]]; then
+                digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+            fi
+            printf '["%s@sha256:%s"]\\n' "$repository" "$digest"
         elif [[ "$1" == "image" && "$2" == "rm" ]]; then
             shift 2
-            printf '%s\\n' "$@" >>/tmp/removed-images
+            if [[ "{image_state}" != "remove-noop" ]]; then
+                for image in "$@"; do
+                    printf '%s\\n' \
+                        "${{image%@sha256:*}}" >>/tmp/removed-image-tags
+                done
+            fi
         fi
         exit 0
         EOF
@@ -960,16 +1022,18 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
             exit 0
         fi
         if [[ "$1" == "image" && "$2" == "ls" ]]; then
-            image="${{@: -1}}"
-            if [[ ! -f /tmp/removed-images ]] \
-                || ! grep -Fxq "$image" /tmp/removed-images; then
-                printf '%s\\n' "$image"
+            image_tag="${{@: -1}}"
+            if [[ ! -f /tmp/removed-image-tags ]] \
+                || ! grep -Fxq "$image_tag" /tmp/removed-image-tags; then
+                printf '%s\\n' "$image_tag"
             fi
             exit 0
         fi
         if [[ "$1" == "image" && "$2" == "rm" ]]; then
             shift 2
-            printf '%s\\n' "$@" >>/tmp/removed-images
+            for image in "$@"; do
+                printf '%s\\n' "${{image%@sha256:*}}" >>/tmp/removed-image-tags
+            done
             exit 0
         fi
         exit 0
@@ -1435,11 +1499,17 @@ def test_rag_permission_preparation_makes_nested_read_only_mount_non_root_readab
             SCRIPT_TEST_IMAGE,
             "/bin/bash",
             "-ceu",
-            (
-                "mkdir -p /closure/build/runtime; "
-                "printf nested-runtime-artifact >/closure/build/runtime/media.jsonl; "
-                "chmod 0750 /closure /closure/build /closure/build/runtime; "
-                "chmod 0640 /closure/build/runtime/media.jsonl"
+            textwrap.dedent(
+                f"""\
+                {_rag_closure_setup("/closure")}
+                find /closure -type d -exec chmod 0750 {{}} +
+                find /closure -type f -exec chmod 0640 {{}} +
+                printf undeclared-private >/closure/undeclared.txt
+                mkdir /closure/private
+                printf private-directory-content >/closure/private/secret.txt
+                chmod 0600 /closure/undeclared.txt /closure/private/secret.txt
+                chmod 0700 /closure/private
+                """
             ),
         )
         assert seeded.returncode == 0, seeded.stdout + seeded.stderr
@@ -1456,7 +1526,8 @@ def test_rag_permission_preparation_makes_nested_read_only_mount_non_root_readab
             "-c",
             (
                 "from pathlib import Path; "
-                "Path('/runtime/rag/huiji/build/runtime/media.jsonl').read_bytes()"
+                "Path('/runtime/rag/huiji/fixture-build/runtime/"
+                "media_assets.v3.jsonl').read_bytes()"
             ),
         )
         assert old_probe.returncode != 0, "old root-owned 0750/0640 state must fail"
@@ -1490,14 +1561,106 @@ def test_rag_permission_preparation_makes_nested_read_only_mount_non_root_readab
             "-c",
             (
                 "from pathlib import Path; "
-                "assert Path('/runtime/rag/huiji/build/runtime/media.jsonl')"
-                ".read_text() == 'nested-runtime-artifact'"
+                "assert Path('/runtime/rag/huiji/fixture-build/runtime/"
+                "media_assets.v3.jsonl').read_text() == "
+                "'{\"binding_id\":\"b1\"}\\n'; "
+                "Path('/runtime/rag/huiji/undeclared.txt').read_text()"
             ),
         )
-        assert new_probe.returncode == 0, new_probe.stdout + new_probe.stderr
+        assert new_probe.returncode != 0
+
+        selected_probe = run(
+            "run",
+            "--rm",
+            "--user",
+            "65534:65534",
+            "-v",
+            f"{volume}:/runtime/rag/huiji:ro",
+            SCRIPT_TEST_IMAGE,
+            "python",
+            "-c",
+            (
+                "from pathlib import Path; "
+                "assert Path('/runtime/rag/huiji/fixture-build/runtime/"
+                "media_assets.v3.jsonl').read_text() == "
+                "'{\"binding_id\":\"b1\"}\\n'"
+            ),
+        )
+        assert (
+            selected_probe.returncode == 0
+        ), selected_probe.stdout + selected_probe.stderr
+
+        preserved = run(
+            "run",
+            "--rm",
+            "--user",
+            "0:0",
+            "-v",
+            f"{volume}:/closure:ro",
+            SCRIPT_TEST_IMAGE,
+            "/bin/bash",
+            "-ceu",
+            (
+                "test \"$(stat -c %a /closure/undeclared.txt)\" = 600; "
+                "test \"$(stat -c %a /closure/private)\" = 700; "
+                "test \"$(stat -c %a /closure/private/secret.txt)\" = 600; "
+                "test \"$(cat /closure/undeclared.txt)\" = undeclared-private; "
+                "test \"$(cat /closure/private/secret.txt)\" = "
+                "private-directory-content"
+            ),
+        )
+        assert preserved.returncode == 0, preserved.stdout + preserved.stderr
+
+        checked = run(
+            "run",
+            "--rm",
+            "--user",
+            "0:0",
+            "-v",
+            f"{ROOT}:/repo:ro",
+            "-v",
+            f"{volume}:/closure",
+            SCRIPT_TEST_IMAGE,
+            "python",
+            "/repo/deploy/bin/prepare-rag-permissions.py",
+            "--root",
+            "/closure",
+            "--check",
+        )
+        assert checked.returncode == 0, checked.stdout + checked.stderr
     finally:
         removed = run("volume", "rm", volume)
         assert removed.returncode == 0, removed.stdout + removed.stderr
+
+
+def test_rag_permission_preparer_rejects_verified_wrong_total_before_chmod(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        f"""\
+        set -Eeuo pipefail
+        {_rag_closure_setup("/tmp/closure", target_bytes=222_789_867)}
+        find /tmp/closure -type d -exec chmod 0750 {{}} +
+        find /tmp/closure -type f -exec chmod 0640 {{}} +
+        set +e
+        python3 /repo/deploy/bin/prepare-rag-permissions.py \
+            --root /tmp/closure >/tmp/output 2>&1
+        status=$?
+        set -e
+        printf '__STATUS=%s\\n' "$status"
+        printf '__ROOT_MODE=%s\\n' "$(stat -c %a /tmp/closure)"
+        printf '__FILE_MODE=%s\\n' "$(
+            stat -c %a /tmp/closure/fixture-build/runtime/media_assets.v3.jsonl
+        )"
+        sed -n '1,20p' /tmp/output
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" not in result.stdout
+    assert "__ROOT_MODE=750" in result.stdout
+    assert "__FILE_MODE=640" in result.stdout
+    assert "222789868-byte" in result.stdout
 
 
 def test_mutating_operations_share_lock_snapshot_and_journal_controls() -> None:
@@ -1942,6 +2105,125 @@ def test_cleanup_stub_removes_only_named_inactive_project_and_exact_images(
     assert "PREVIOUS_AVAILABLE=0" in state
     assert "PREVIOUS_SLOT=\n" in state
     assert "__RETIREMENT=absent" in result.stdout
+
+
+@pytest.mark.parametrize("image_state", ("mismatch", "list-error", "inspect-error"))
+def test_cleanup_fails_closed_without_removing_or_committing_indeterminate_images(
+    tmp_path: Path,
+    image_state: str,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _cleanup_harness(
+            "remove-green-sha-abcdef0",
+            image_state=image_state,
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" not in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2].partition("__STATE__")[0]
+    assert "docker image rm" not in calls
+    state = result.stdout.partition("__STATE__")[2].partition("__RETIREMENT")[0]
+    assert "PREVIOUS_AVAILABLE=1" in state
+    assert "__RETIREMENT=present" in result.stdout
+
+
+def test_cleanup_accepts_true_image_absence_without_attempting_removal(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _cleanup_harness(
+            "remove-green-sha-abcdef0",
+            image_state="absent",
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2].partition("__STATE__")[0]
+    assert "docker image rm" not in calls
+    state = result.stdout.partition("__STATE__")[2].partition("__RETIREMENT")[0]
+    assert "PREVIOUS_AVAILABLE=0" in state
+    assert "__RETIREMENT=absent" in result.stdout
+
+
+def test_cleanup_does_not_commit_when_removed_image_remains_present(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _cleanup_harness(
+            "remove-green-sha-abcdef0",
+            image_state="remove-noop",
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" not in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2].partition("__STATE__")[0]
+    assert "docker image rm" in calls
+    state = result.stdout.partition("__STATE__")[2].partition("__RETIREMENT")[0]
+    assert "PREVIOUS_AVAILABLE=1" in state
+    assert "__RETIREMENT=present" in result.stdout
+
+
+def test_local_docker_lists_a_present_digest_qualified_image_only_by_its_tag() -> None:
+    docker = shutil.which("docker")
+    assert docker, "Docker CLI is required for the local image behavior probe"
+    inspected = subprocess.run(
+        [
+            docker,
+            "image",
+            "inspect",
+            SCRIPT_TEST_IMAGE,
+            "--format",
+            "{{json .RepoDigests}}",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert inspected.returncode == 0, inspected.stdout + inspected.stderr
+    repo_digests = json.loads(inspected.stdout)
+    assert isinstance(repo_digests, list) and repo_digests
+    _repository, digest = repo_digests[0].rsplit("@", 1)
+    qualified = f"{SCRIPT_TEST_IMAGE}@{digest}"
+
+    by_tag = subprocess.run(
+        [
+            docker,
+            "image",
+            "ls",
+            "--format",
+            "{{.Repository}}:{{.Tag}}",
+            SCRIPT_TEST_IMAGE,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    by_qualified_ref = subprocess.run(
+        [
+            docker,
+            "image",
+            "ls",
+            "--format",
+            "{{.Repository}}:{{.Tag}}",
+            qualified,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert by_tag.returncode == 0, by_tag.stdout + by_tag.stderr
+    assert by_tag.stdout.splitlines() == [SCRIPT_TEST_IMAGE]
+    assert by_qualified_ref.returncode == 0
+    assert by_qualified_ref.stdout == ""
 
 
 def test_cleanup_wrong_confirmation_issues_no_docker_command(tmp_path: Path) -> None:

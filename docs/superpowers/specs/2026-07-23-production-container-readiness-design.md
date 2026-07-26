@@ -251,13 +251,15 @@ scripts, evaluation tools/results, tests, local logs, backups, credentials,
 MySQL/Milvus/MinIO data, and RAG artifact payloads.
 
 The RAG closure is mounted read-only at `/runtime/rag/huiji`. It is non-secret:
-every directory in the mounted closure uses mode `0755` and every regular file
-uses mode `0644`, allowing the unrelated non-root Backend identity to traverse
-and read it without write access. Preparation rejects symlinks, and preflight
-checks this permission contract. The current closure contains exactly the
-active pointer, two activation evidence files, the build manifest,
-parent/child blocks, media rows, two BM25 indexes, and the media
-schema/manifest: 11 files totaling about 212.47 MiB.
+the root and necessary ancestors of the manifest-selected closure use mode
+`0755`, and exactly its 11 regular files use mode `0644`, allowing the unrelated
+non-root Backend identity to traverse and read them without write access.
+Undeclared files and directories retain their modes. Preparation consumes a
+successful verifier result, requires exactly 11 files totaling 222,789,868
+bytes, and rejects symlinks; preflight checks this permission contract. The
+current closure contains exactly the active pointer, two activation evidence
+files, the build manifest, parent/child blocks, media rows, two BM25 indexes,
+and the media schema/manifest: 11 files totaling about 212.47 MiB.
 
 ### 9.2 Frontend image
 
@@ -325,7 +327,9 @@ Release metadata contains the reviewed full commit and digest-qualified Backend
 and Frontend refs. Its seven-character tags must both match the full commit.
 After pull, operations validate each protected digest against local
 `RepoDigests`; snapshots and active/previous state retain the digest-qualified
-identity.
+identity. Retirement queries the exact tag, refuses a mismatched local digest or
+an indeterminate Docker result, removes only the verified identity, and confirms
+absence before committing retirement state.
 
 Scripts never run `docker compose down -v` and never run unrestricted
 `docker system prune -a`. They do not print secret-bearing environment files or
