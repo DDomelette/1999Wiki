@@ -497,6 +497,67 @@ def test_production_readiness_retries_transient_verifier_failure_after_cooldown(
     assert verifier_calls == 2
 
 
+def test_production_readiness_retries_when_repair_precedes_negative_cache_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closure = _closure_fixture(tmp_path)
+    target = closure[-1]
+    original = target.read_bytes()
+    target.unlink()
+    original_run = subprocess.run
+    verifier_calls = 0
+    monotonic = [0.0]
+
+    def invalid_then_repaired(*args, **kwargs):
+        nonlocal verifier_calls
+        verifier_calls += 1
+        if verifier_calls == 1:
+            target.write_bytes(original)
+            return SimpleNamespace(returncode=1)
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(main_mod, "_rag_monotonic", lambda: monotonic[0])
+    monkeypatch.setattr(main_mod.subprocess, "run", invalid_then_repaired)
+    with _production_client(monkeypatch, tmp_path) as client:
+        _assert_only_failure(client.get("/health/ready"), "rag_artifacts")
+        assert verifier_calls == 1
+        monotonic[0] = 61.0
+        assert client.get("/health/ready").status_code == 200
+    assert verifier_calls == 2
+
+
+def test_production_readiness_coalesces_unstable_transient_failure_until_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _closure_fixture(tmp_path)
+    verifier_calls = 0
+    tree_scans = 0
+
+    def transient_failure(*args, **kwargs):
+        nonlocal verifier_calls
+        verifier_calls += 1
+        return SimpleNamespace(returncode=75)
+
+    def unstable_tree_fingerprint(_root: Path):
+        nonlocal tree_scans
+        tree_scans += 1
+        return ((f"snapshot-{tree_scans}", "file"),)
+
+    monkeypatch.setattr(main_mod, "_rag_monotonic", lambda: 0.0)
+    monkeypatch.setattr(
+        main_mod,
+        "_rag_tree_fingerprint",
+        unstable_tree_fingerprint,
+    )
+    monkeypatch.setattr(main_mod.subprocess, "run", transient_failure)
+    with _production_client(monkeypatch, tmp_path) as client:
+        assert verifier_calls == 1
+        _assert_only_failure(client.get("/health/ready"), "rag_artifacts")
+    assert verifier_calls == 1
+
+
 def test_production_readiness_rejects_mutation_between_verification_and_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -620,6 +681,17 @@ def _run_verifier(root: Path) -> subprocess.CompletedProcess[str]:
         timeout=30,
         check=False,
     )
+
+
+def _load_verifier_module():
+    spec = importlib.util.spec_from_file_location(
+        "verify_rag_closure_test_module",
+        VERIFIER,
+    )
+    assert spec is not None and spec.loader is not None
+    verifier_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier_module)
+    return verifier_module
 
 
 def test_closure_verifier_reports_manifest_derived_count_and_bytes(
@@ -806,13 +878,7 @@ def test_closure_verifier_observation_race_uses_transient_exit_code(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    spec = importlib.util.spec_from_file_location(
-        "verify_rag_closure_test_module",
-        VERIFIER,
-    )
-    assert spec is not None and spec.loader is not None
-    verifier_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(verifier_module)
+    verifier_module = _load_verifier_module()
 
     def raise_observation_race(_root):
         raise verifier_module.TransientVerificationError(
@@ -825,6 +891,121 @@ def test_closure_verifier_observation_race_uses_transient_exit_code(
         raise_observation_race,
     )
     assert verifier_module.main(["--root", str(tmp_path)]) == 75
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "pre_read_lstat",
+        "json_read",
+        "post_read_lstat",
+        "hash_read",
+        "post_hash_lstat",
+        "resolve",
+        "reference_size_observation",
+        "total_size_observation",
+        "final_fingerprint_lstat",
+    ],
+)
+def test_closure_verifier_classifies_disappearance_races_as_transient(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+) -> None:
+    verifier_module = _load_verifier_module()
+    if stage == "total_size_observation":
+        closure = _closure_fixture(tmp_path)
+        target = closure[-1]
+    else:
+        target = tmp_path / "artifact.json"
+        target.write_text("{}\n", encoding="utf-8")
+    observed = {}
+
+    if stage in {"pre_read_lstat", "final_fingerprint_lstat"}:
+        target.unlink()
+    elif stage == "json_read":
+        original_read_bytes = Path.read_bytes
+
+        def disappearing_read(path: Path) -> bytes:
+            if path == target:
+                raise FileNotFoundError(path)
+            return original_read_bytes(path)
+
+        monkeypatch.setattr(Path, "read_bytes", disappearing_read)
+    elif stage == "hash_read":
+        original_open = Path.open
+
+        def disappearing_open(path: Path, *args, **kwargs):
+            if path == target:
+                raise FileNotFoundError(path)
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", disappearing_open)
+    elif stage == "resolve":
+        original_resolve = Path.resolve
+
+        def disappearing_resolve(path: Path, *args, **kwargs):
+            if path == target:
+                raise FileNotFoundError(path)
+            return original_resolve(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "resolve", disappearing_resolve)
+    elif stage in {"reference_size_observation", "total_size_observation"}:
+        original_stat = Path.stat
+        target_stat_calls = 0
+        failure_call = 2 if stage == "reference_size_observation" else 3
+
+        def disappearing_stat(path: Path, *args, **kwargs):
+            nonlocal target_stat_calls
+            if path == target and kwargs.get("follow_symlinks", True):
+                target_stat_calls += 1
+                if target_stat_calls == failure_call:
+                    raise FileNotFoundError(path)
+            return original_stat(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", disappearing_stat)
+    else:
+        original_lstat = Path.lstat
+        target_lstat_calls = 0
+
+        def disappearing_lstat(path: Path):
+            nonlocal target_lstat_calls
+            if path == target:
+                target_lstat_calls += 1
+                if target_lstat_calls == 2:
+                    raise FileNotFoundError(path)
+            return original_lstat(path)
+
+        monkeypatch.setattr(Path, "lstat", disappearing_lstat)
+
+    with pytest.raises(verifier_module.TransientVerificationError):
+        if stage == "pre_read_lstat":
+            verifier_module._file_signature(target, "artifact")
+        elif stage in {"json_read", "post_read_lstat"}:
+            verifier_module._json_object(target, "artifact", observed)
+        elif stage in {"hash_read", "post_hash_lstat"}:
+            verifier_module._sha256_file(target, "artifact", observed)
+        elif stage == "resolve":
+            verifier_module._regular_file(tmp_path, target, "artifact")
+        elif stage == "reference_size_observation":
+            verifier_module._verify_reference(
+                tmp_path,
+                {
+                    "relative_path": "artifact.json",
+                    "sha256": "0" * 64,
+                    "size": 3,
+                },
+                "artifact",
+                observed,
+            )
+        elif stage == "total_size_observation":
+            verifier_module._verified_closure(tmp_path)
+        else:
+            verifier_module._closure_fingerprint(
+                tmp_path,
+                {target},
+                observed,
+            )
 
 
 @pytest.mark.parametrize(

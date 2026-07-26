@@ -493,6 +493,14 @@ def _verify_rag_artifacts(*, force: bool = False) -> bool:
     with _RAG_CACHE_LOCK:
         same_root = _rag_cache["root"] == processed_root
         cached_paths = _rag_cache["paths"] if same_root else ()
+        if (
+            not force
+            and _rag_cache["initialized"]
+            and same_root
+            and _rag_cache["failure_kind"] == "transient"
+            and _rag_monotonic() < _rag_cache["retry_after"]
+        ):
+            return False
         try:
             current_fingerprint = (
                 _rag_closure_fingerprint(processed_root, cached_paths)
@@ -513,6 +521,8 @@ def _verify_rag_artifacts(*, force: bool = False) -> bool:
         ):
             return bool(_rag_cache["ready"])
 
+        first_input_fingerprint = _rag_tree_fingerprint(processed_root)
+        second_input_fingerprint = _rag_tree_fingerprint(processed_root)
         verification_status, verified_paths, verified_fingerprint = (
             _run_full_rag_verification(processed_root)
         )
@@ -527,16 +537,24 @@ def _verify_rag_artifacts(*, force: bool = False) -> bool:
             cached_paths = ()
             first_failure_fingerprint = _rag_tree_fingerprint(processed_root)
             second_failure_fingerprint = _rag_tree_fingerprint(processed_root)
+            stable_invalid_snapshot = (
+                verification_status == "invalid"
+                and first_input_fingerprint == second_input_fingerprint
+                and first_failure_fingerprint == second_failure_fingerprint
+                and second_input_fingerprint == second_failure_fingerprint
+            )
             fingerprint = (
                 second_failure_fingerprint
                 if first_failure_fingerprint == second_failure_fingerprint
                 else ()
             )
             fingerprint_kind = "tree"
-            failure_kind = verification_status
+            failure_kind = (
+                "invalid" if stable_invalid_snapshot else "transient"
+            )
             retry_after = (
                 _rag_monotonic() + _RAG_TRANSIENT_RETRY_SECONDS
-                if verification_status == "transient"
+                if failure_kind == "transient"
                 else 0.0
             )
         _rag_cache.update(

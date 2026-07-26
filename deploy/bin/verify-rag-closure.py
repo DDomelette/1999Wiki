@@ -34,7 +34,7 @@ def _file_signature(path: Path, label: str) -> FileSignature:
     try:
         info = path.lstat()
     except OSError as error:
-        raise VerificationError(f"{label} is missing") from error
+        raise TransientVerificationError(f"{label} disappeared") from error
     if not stat.S_ISREG(info.st_mode):
         raise VerificationError(f"{label} is not a regular file")
     return (
@@ -90,7 +90,11 @@ def _json_object(
         )
     except VerificationError:
         raise
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+    except OSError as error:
+        raise TransientVerificationError(
+            f"{label} disappeared while being read"
+        ) from error
+    except (UnicodeError, json.JSONDecodeError) as error:
         raise VerificationError(f"{label} is invalid JSON") from error
     if not isinstance(payload, dict):
         raise VerificationError(f"{label} must be a JSON object")
@@ -136,7 +140,10 @@ def _regular_file(root: Path, target: Path, label: str) -> Path:
         raise VerificationError(f"{label} is missing") from error
     if not stat.S_ISREG(mode):
         raise VerificationError(f"{label} is not a regular file")
-    resolved = target.resolve(strict=True)
+    try:
+        resolved = target.resolve(strict=True)
+    except OSError as error:
+        raise TransientVerificationError(f"{label} disappeared") from error
     if resolved != root and root not in resolved.parents:
         raise VerificationError(f"{label} path escape")
     return target
@@ -205,7 +212,9 @@ def _sha256_file(
                 digest.update(chunk)
         after = _file_signature(path, label)
     except OSError as error:
-        raise VerificationError(f"{path.name} could not be read") from error
+        raise TransientVerificationError(
+            f"{path.name} disappeared while being hashed"
+        ) from error
     _record_observation(path, label, before, after, observed)
     return digest.hexdigest()
 
@@ -230,7 +239,11 @@ def _verify_reference(
         raise VerificationError(f"{label} reference is invalid")
     target = _declared_path(root, reference.get("relative_path"), label)
     expected_size = _size_value(reference.get("size"), label)
-    if target.stat().st_size != expected_size:
+    try:
+        actual_size = target.stat().st_size
+    except OSError as error:
+        raise TransientVerificationError(f"{label} disappeared") from error
+    if actual_size != expected_size:
         raise VerificationError(f"{label} size mismatch")
     _verify_digest(target, reference.get("sha256"), label, observed)
     return target
@@ -245,7 +258,9 @@ def _closure_fingerprint(
     try:
         root_info = root.lstat()
     except OSError as error:
-        raise VerificationError("root directory is missing") from error
+        raise TransientVerificationError(
+            "root directory disappeared"
+        ) from error
     if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
         raise VerificationError("root contains a symlink")
     components["."] = (
@@ -267,7 +282,9 @@ def _closure_fingerprint(
             try:
                 info = current.lstat()
             except OSError as error:
-                raise VerificationError(f"{path.name} is missing") from error
+                raise TransientVerificationError(
+                    f"{path.name} disappeared"
+                ) from error
             is_leaf = index == len(relative.parts) - 1
             expected_kind = "file" if is_leaf else "directory"
             if stat.S_ISLNK(info.st_mode):
@@ -463,7 +480,12 @@ def _verified_closure(
             f"closure count mismatch: expected {EXPECTED_FILE_COUNT}, "
             f"found {len(verified_paths)}"
         )
-    total_bytes = sum(path.stat().st_size for path in verified_paths)
+    try:
+        total_bytes = sum(path.stat().st_size for path in verified_paths)
+    except OSError as error:
+        raise TransientVerificationError(
+            "closure changed during size observation"
+        ) from error
     fingerprint = _closure_fingerprint(root, verified_paths, observed)
     return root, verified_paths, total_bytes, fingerprint
 
