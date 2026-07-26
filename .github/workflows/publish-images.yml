@@ -78,6 +78,7 @@ jobs:
           file: docker/Dockerfile.backend
           platforms: linux/amd64
           push: false
+          provenance: false
           outputs: type=oci,dest=${{ runner.temp }}/backend.oci
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -88,6 +89,7 @@ jobs:
           file: docker/Dockerfile.frontend
           platforms: linux/amd64
           push: false
+          provenance: false
           outputs: type=oci,dest=${{ runner.temp }}/frontend.oci
           cache-from: type=gha
           cache-to: type=gha,mode=max

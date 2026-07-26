@@ -126,6 +126,7 @@ def test_publish_builds_once_after_independent_test_jobs() -> None:
         assert inputs["file"] == dockerfile
         assert inputs["platforms"] == "linux/amd64"
         assert inputs["push"] == "false"
+        assert inputs["provenance"] == "false"
         assert inputs["outputs"] == (
             f"type=oci,dest=${{{{ runner.temp }}}}/{component}.oci"
         )
