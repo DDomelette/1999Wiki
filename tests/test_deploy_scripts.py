@@ -1145,6 +1145,10 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
                     grep -Fxv "$canonical" /tmp/image-digests \
                         >/tmp/image-digests.next || true
                     mv /tmp/image-digests.next /tmp/image-digests
+                elif [[ "$image" =~ :sha-[0-9a-f]{{7}}$ ]]; then
+                    grep -Fxv "$image" /tmp/image-tags \
+                        >/tmp/image-tags.next || true
+                    mv /tmp/image-tags.next /tmp/image-tags
                 elif [[ "$image" == *@sha256:* ]]; then
                     grep -Fxv "$image" /tmp/image-digests \
                         >/tmp/image-digests.next || true
@@ -3383,17 +3387,18 @@ def test_full_retirement_lifecycle_makes_old_slot_preflight_reusable(
     assert "__JOURNAL=absent" in result.stdout
     assert "__RETIREMENT=absent" in result.stdout
     calls = result.stdout.partition("__CALLS__")[2]
+    call_lines = calls.splitlines()
     assert calls.count("docker image inspect") >= 2
     assert "1999wiki-blue" in calls
     assert " down --remove-orphans" in calls
     assert (
-        "image rm ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:"
-        + "c" * 64
-    ) in calls
+        "docker image rm ghcr.io/ddomelette/1999wiki-backend:sha-1234567"
+        in call_lines
+    )
     assert (
-        "image rm ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:"
-        + "d" * 64
-    ) in calls
+        "docker image rm ghcr.io/ddomelette/1999wiki-frontend:sha-1234567"
+        in call_lines
+    )
 
 
 def test_deploy_does_not_stop_candidate_when_child_committed_then_failed(
