@@ -233,43 +233,91 @@ against the migration manifest.
 
 ## 5. Create an immutable release
 
-Authenticate to GHCR with a token limited to `read:packages`:
+Before dispatching `.github/workflows/publish-images.yml`, configure these
+repository settings in GitHub without printing their secret values:
 
-```bash
-read -rsp 'GHCR token: ' GHCR_TOKEN
-printf '%s' "$GHCR_TOKEN" |
-  docker login ghcr.io -u DDomelette --password-stdin
-unset GHCR_TOKEN
+```text
+Secret:   TCR_USERNAME
+Secret:   TCR_PASSWORD
+Variable: TCR_REGISTRY=ccr.ccs.tencentyun.com
+Variable: TCR_NAMESPACE=1999wiki_code
 ```
 
-After the manual workflow succeeds, download its artifact named
-`release-sha-abcdef0`. It contains `release-manifest.json`; do not reconstruct
-digest values from the job summary or from an unprotected tag. On an operator
-workstation this can be downloaded from the workflow run's **Artifacts**
-section.
+GHCR uses the workflow's scoped `GITHUB_TOKEN`; do not create a replacement
+repository secret for it. Dispatch the workflow for the reviewed ref, confirm
+that the workflow's full commit is the reviewed full commit, and record its
+numeric run ID. TCR publication of both components is a hard release gate.
+`release_state=ready` means both original GHCR records are also `published`;
+`release_state=ready_with_deferred_ghcr` means TCR is complete but GHCR was
+deferred only after exactly five classified network failures. Authentication,
+permission, tag-conflict, manifest, digest, or other non-network failures are
+fatal and do not produce a deployable release.
 
-Before transferring any release file, create its private destination directory
-on the server:
+On the operator workstation, download the exact artifact from that run. Do not
+reconstruct digest values from a job summary or an unprotected tag:
+
+```bash
+REVIEWED_COMMIT=abcdef0123456789abcdef0123456789abcdef01
+RELEASE_TAG=sha-abcdef0
+RELEASE_RUN_ID=123456789
+install -d -m 0700 "release-input-${RELEASE_RUN_ID}"
+gh run download "$RELEASE_RUN_ID" \
+  --repo DDomelette/1999Wiki \
+  --name "release-${RELEASE_TAG}" \
+  --dir "release-input-${RELEASE_RUN_ID}"
+python3 deploy/bin/release_manifest.py verify \
+  --manifest "release-input-${RELEASE_RUN_ID}/release-manifest.json" \
+  --commit "$REVIEWED_COMMIT" \
+  --registry tcr \
+  > "release-input-${RELEASE_RUN_ID}/release.identity"
+sha256sum "release-input-${RELEASE_RUN_ID}/release-manifest.json"
+```
+
+The verification command accepts only the canonical v2 schema, exact full
+commit, two `published` TCR records, approved repositories, and shared
+component digests. Its three output lines are the release commit and
+digest-qualified TCR Backend and Frontend refs. Treat TCR as the default source.
+
+Create the private destination on the server, then copy the already-verified
+`release-manifest.json` there unchanged. Compare its SHA-256 with the
+workstation value after transfer:
 
 ```bash
 install -d -m 0700 /srv/1999wiki/releases/sha-abcdef0
 ```
 
-Then transfer that exact manifest with the reviewed runtime bundle to:
-
-```text
-/srv/1999wiki/releases/sha-abcdef0/release-manifest.json
+```bash
+scp \
+  "release-input-${RELEASE_RUN_ID}/release-manifest.json" \
+  root@production-host:/srv/1999wiki/releases/sha-abcdef0/release-manifest.json
 ```
 
-Verify the artifact against the reviewed full commit. This command validates
-the exact schema, full commit, both exact tags, both registry digests, and both
-digest-qualified refs, then prints only non-secret release identity:
+On the server, authenticate to TCR without placing the password in shell
+history or process arguments. Protect Docker's credential directory and file:
+
+```bash
+read -rsp 'TCR password: ' TCR_PASSWORD
+printf '%s' "$TCR_PASSWORD" |
+  docker login ccr.ccs.tencentyun.com \
+    --username 100017272217 \
+    --password-stdin
+unset TCR_PASSWORD
+chmod 0700 "$HOME/.docker"
+chmod 0600 "$HOME/.docker/config.json"
+```
+
+Re-run canonical verification from the reviewed runtime bundle and write only
+its non-secret TCR identity output:
 
 ```bash
 cd /srv/1999wiki/runtime-bundle
 python3 deploy/bin/release_manifest.py verify \
   --manifest /srv/1999wiki/releases/sha-abcdef0/release-manifest.json \
-  --commit abcdef0123456789abcdef0123456789abcdef01
+  --commit abcdef0123456789abcdef0123456789abcdef01 \
+  --registry tcr \
+  > /srv/1999wiki/releases/sha-abcdef0/release.identity
+chmod 0600 /srv/1999wiki/releases/sha-abcdef0/release.identity
+sha256sum /srv/1999wiki/releases/sha-abcdef0/release-manifest.json
 ```
 
 After manifest verification succeeds, create both slot files for release
@@ -290,15 +338,15 @@ slot's distinct ports:
 ```text
 blue:
   RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
-  BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest>
-  FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest>
+  BACKEND_IMAGE=ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest>
+  FRONTEND_IMAGE=ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest>
   BACKEND_PORT=18100
   FRONTEND_PORT=18180
 
 green:
   RELEASE_COMMIT=abcdef0123456789abcdef0123456789abcdef01
-  BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest>
-  FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest>
+  BACKEND_IMAGE=ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest>
+  FRONTEND_IMAGE=ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest>
   BACKEND_PORT=18200
   FRONTEND_PORT=18280
 ```
@@ -309,12 +357,12 @@ Pull both digest-qualified identities before the change window. Inspect
 
 ```bash
 docker pull \
-  ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest>
+  ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest>
 docker pull \
-  ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest>
+  ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest>
 docker image inspect \
-  ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest> \
-  ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest> \
+  ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:sha-abcdef0@sha256:<backend-registry-digest> \
+  ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:sha-abcdef0@sha256:<frontend-registry-digest> \
   --format '{{json .RepoDigests}}'
 ```
 
@@ -322,6 +370,64 @@ Deployment snapshots preserve the full commit and both digest-qualified refs.
 Preflight refuses tag-only metadata, mismatched seven-character tags, or refs
 from different commits. Candidate identity checks also compare the protected
 digests with the locally pulled images' `RepoDigests`.
+
+### Degraded release backfill
+
+A release labeled `ready_with_deferred_ghcr` is deployable from TCR but is not
+fully mirrored. Repair it only through `.github/workflows/backfill-ghcr.yml`
+using the exact original publish run, artifact name, release tag, and full
+commit:
+
+```bash
+gh workflow run backfill-ghcr.yml \
+  --repo DDomelette/1999Wiki \
+  --ref main \
+  --field release_run_id=123456789 \
+  --field release_tag=sha-abcdef0 \
+  --field expected_commit=abcdef0123456789abcdef0123456789abcdef01
+```
+
+The backfill workflow downloads `release-sha-abcdef0` from run `123456789`,
+verifies the original immutable manifest, reads each exact TCR digest, and
+copies that content to GHCR. It never checks out the old commit to rebuild an
+image and never edits `release-manifest.json`. Preserve the successful
+`mirror-<release-tag>-<backfill-run-id>` artifact and its
+`mirror-attestation.json` beside the original manifest when GHCR recovery is
+required.
+
+### Explicit GHCR recovery
+
+GHCR is an operator-selected recovery source, never a silent fallback. It may
+be selected only when both GHCR records in the original manifest are
+`published`, or when a completed backfill's matching attestation is supplied
+with the byte-identical original manifest. Authenticate with a token limited
+to `read:packages`, then emit GHCR metadata explicitly:
+
+```bash
+read -rsp 'GHCR token: ' GHCR_TOKEN
+printf '%s' "$GHCR_TOKEN" |
+  docker login ghcr.io -u DDomelette --password-stdin
+unset GHCR_TOKEN
+
+python3 deploy/bin/release_manifest.py verify \
+  --manifest /srv/1999wiki/releases/sha-abcdef0/release-manifest.json \
+  --commit abcdef0123456789abcdef0123456789abcdef01 \
+  --registry ghcr \
+  > /srv/1999wiki/releases/sha-abcdef0/release.identity.ghcr
+```
+
+For an originally deferred mirror, the last command must also include:
+
+```text
+--attestation /srv/1999wiki/releases/sha-abcdef0/mirror-attestation.json
+```
+
+Use the resulting digest-qualified GHCR refs in both slot files and repeat the
+normal pull, `RepoDigests`, preflight, and blue/green checks. A partial,
+unattested mirror is rejected.
+
+Neither the normal TCR path nor GHCR recovery introduces runtime COS access,
+server-side Docker builds, or automatic cross-registry failover.
 
 ## 6. Deploy a candidate and switch
 
@@ -407,8 +513,8 @@ are not referenced by the active or rollback deployment:
 
 ```bash
 docker image rm \
-  ghcr.io/ddomelette/1999wiki-backend:sha-deadbee@sha256:<backend-registry-digest> \
-  ghcr.io/ddomelette/1999wiki-frontend:sha-deadbee@sha256:<frontend-registry-digest>
+  ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-backend:sha-deadbee@sha256:<backend-registry-digest> \
+  ccr.ccs.tencentyun.com/1999wiki_code/1999wiki-frontend:sha-deadbee@sha256:<frontend-registry-digest>
 ```
 
 Automated retirement reconciles both the protected tag and its canonical

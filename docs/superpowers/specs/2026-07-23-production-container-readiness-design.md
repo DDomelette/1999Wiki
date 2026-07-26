@@ -292,6 +292,11 @@ in the developer's main checkout.
 
 ## 11. GHCR workflow
 
+> Registry publication and production pull selection are superseded by
+> [2026-07-26-dual-registry-release-design.md](2026-07-26-dual-registry-release-design.md).
+> TCR is primary; GHCR is the digest-identical mirror. All other container,
+> data, and blue/green boundaries in this document remain in force.
+
 `.github/workflows/publish-images.yml` uses `workflow_dispatch` and:
 
 1. checks out the selected commit with Git LFS enabled;
