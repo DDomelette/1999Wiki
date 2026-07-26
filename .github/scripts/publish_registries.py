@@ -10,9 +10,10 @@ import os
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 
@@ -57,6 +58,41 @@ _ENVIRONMENT_KEYS = (
     "TCR_REGISTRY",
     "TCR_NAMESPACE",
 )
+_MAX_OCI_MEMBERS = 4096
+_MAX_OCI_INDEX_BYTES = 256 * 1024
+_MAX_OCI_MANIFEST_BYTES = 4 * 1024 * 1024
+_HASH_CHUNK_BYTES = 64 * 1024
+_OCI_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
+_DOCKER_MANIFEST_MEDIA_TYPE = (
+    "application/vnd.docker.distribution.manifest.v2+json"
+)
+_MANIFEST_MEDIA_TYPES = {
+    _OCI_MANIFEST_MEDIA_TYPE,
+    _DOCKER_MANIFEST_MEDIA_TYPE,
+}
+_CONFIG_MEDIA_TYPES = {
+    _OCI_MANIFEST_MEDIA_TYPE: {
+        "application/vnd.oci.image.config.v1+json",
+    },
+    _DOCKER_MANIFEST_MEDIA_TYPE: {
+        "application/vnd.docker.container.image.v1+json",
+    },
+}
+_LAYER_MEDIA_TYPES = {
+    _OCI_MANIFEST_MEDIA_TYPE: {
+        "application/vnd.oci.image.layer.v1.tar",
+        "application/vnd.oci.image.layer.v1.tar+gzip",
+        "application/vnd.oci.image.layer.v1.tar+zstd",
+        "application/vnd.oci.image.layer.nondistributable.v1.tar",
+        "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip",
+        "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd",
+    },
+    _DOCKER_MANIFEST_MEDIA_TYPE: {
+        "application/vnd.docker.image.rootfs.diff.tar",
+        "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "application/vnd.docker.image.rootfs.foreign.diff.tar.gzip",
+    },
+}
 
 
 class PublicationError(RuntimeError):
@@ -92,43 +128,199 @@ class PublicationError(RuntimeError):
         }
 
 
-def _archive_digest(path: Path) -> str:
-    try:
-        with tarfile.open(path, "r:*") as archive:
-            member = archive.getmember("index.json")
-            extracted = archive.extractfile(member)
-            if extracted is None:
-                raise ValueError("OCI archive index is not a regular file")
-            payload = json.loads(extracted.read().decode("utf-8"))
-    except (OSError, tarfile.TarError, KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("OCI archive has no valid index.json") from exc
-    if not isinstance(payload, dict):
-        raise ValueError("OCI archive index must be an object")
-    manifests = payload.get("manifests")
-    if not isinstance(manifests, list) or len(manifests) != 1:
-        raise ValueError("OCI archive must contain exactly one manifest descriptor")
-    descriptor = manifests[0]
-    if not isinstance(descriptor, dict) or not isinstance(descriptor.get("digest"), str):
-        raise ValueError("OCI archive manifest descriptor has no digest")
-    digest = descriptor["digest"]
-    algorithm, separator, encoded = digest.partition(":")
+def _local_failure_code(error: Exception) -> str:
+    if isinstance(error, OSError):
+        return "local_io_failure"
+    if isinstance(error, ValueError):
+        return "local_validation_failure"
+    return "unexpected_local_failure"
+
+
+def _digest_hex(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} digest is invalid")
+    algorithm, separator, encoded = value.partition(":")
     if (
         algorithm != "sha256"
         or separator != ":"
         or len(encoded) != 64
         or any(character not in "0123456789abcdef" for character in encoded)
     ):
-        raise ValueError("OCI archive manifest descriptor digest is invalid")
+        raise ValueError(f"{label} digest is invalid")
+    return encoded
+
+
+def _checked_member_name(member: tarfile.TarInfo) -> str:
+    name = member.name.rstrip("/") if member.isdir() else member.name
+    candidate = PurePosixPath(name)
+    if (
+        not name
+        or "\\" in name
+        or candidate.is_absolute()
+        or ".." in candidate.parts
+        or "." in candidate.parts
+        or str(candidate) != name
+    ):
+        raise ValueError("OCI archive contains an unsafe member path")
+    if not (member.isfile() or member.isdir()):
+        raise ValueError("OCI archive contains a link or non-regular member")
+    return name
+
+
+def _read_member(
+    archive: tarfile.TarFile,
+    member: tarfile.TarInfo,
+    maximum: int,
+    label: str,
+) -> bytes:
+    if not member.isfile():
+        raise ValueError(f"{label} must be a regular file")
+    if member.size < 0 or member.size > maximum:
+        raise ValueError(f"{label} exceeds the permitted size")
+    extracted = archive.extractfile(member)
+    if extracted is None:
+        raise ValueError(f"{label} must be a regular file")
+    raw = extracted.read(member.size + 1)
+    if len(raw) != member.size:
+        raise ValueError(f"{label} size does not match its tar header")
+    return raw
+
+
+def _referenced_descriptor(
+    archive: tarfile.TarFile,
+    descriptor: object,
+    *,
+    media_types: set[str],
+    members: Mapping[str, tarfile.TarInfo],
+    label: str,
+) -> None:
+    if not isinstance(descriptor, dict):
+        raise ValueError(f"{label} descriptor must be an object")
+    media_type = descriptor.get("mediaType")
+    if not isinstance(media_type, str) or media_type not in media_types:
+        raise ValueError(f"{label} descriptor mediaType is invalid")
+    encoded = _digest_hex(descriptor.get("digest"), label)
+    size = descriptor.get("size")
+    if type(size) is not int or size < 0:
+        raise ValueError(f"{label} descriptor size is invalid")
+    member = members.get(f"blobs/sha256/{encoded}")
+    if member is None or not member.isfile() or member.size != size:
+        raise ValueError(f"{label} descriptor does not match its local blob")
+    extracted = archive.extractfile(member)
+    if extracted is None:
+        raise ValueError(f"{label} blob must be a regular file")
+    remaining = member.size
+    actual = hashlib.sha256()
+    while remaining:
+        chunk = extracted.read(min(_HASH_CHUNK_BYTES, remaining))
+        if not chunk:
+            raise ValueError(f"{label} blob size is incomplete")
+        actual.update(chunk)
+        remaining -= len(chunk)
+    if actual.hexdigest() != encoded:
+        raise ValueError(f"{label} blob digest does not match its descriptor")
+
+
+def _archive_digest(path: Path) -> str:
     try:
         with tarfile.open(path, "r:*") as archive:
-            manifest = archive.extractfile(archive.getmember(f"blobs/sha256/{encoded}"))
-            if manifest is None:
-                raise ValueError("OCI archive manifest blob is not a regular file")
-            actual = hashlib.sha256(manifest.read()).hexdigest()
-    except (OSError, tarfile.TarError, KeyError) as exc:
-        raise ValueError("OCI archive has no referenced manifest blob") from exc
-    if actual != encoded:
-        raise ValueError("OCI archive descriptor digest does not match manifest blob")
+            members: dict[str, tarfile.TarInfo] = {}
+            for count, member in enumerate(archive, start=1):
+                if count > _MAX_OCI_MEMBERS:
+                    raise ValueError("OCI archive contains too many members")
+                name = _checked_member_name(member)
+                if name in members:
+                    raise ValueError("OCI archive contains duplicate member paths")
+                members[name] = member
+
+            index_member = members.get("index.json")
+            if index_member is None:
+                raise ValueError("OCI archive has no index.json")
+            index_raw = _read_member(
+                archive,
+                index_member,
+                _MAX_OCI_INDEX_BYTES,
+                "OCI archive index",
+            )
+            try:
+                index = json.loads(index_raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("OCI archive index is not valid JSON") from exc
+            if not isinstance(index, dict) or type(index.get("schemaVersion")) is not int:
+                raise ValueError("OCI archive index schemaVersion is invalid")
+            if index["schemaVersion"] != 2:
+                raise ValueError("OCI archive index schemaVersion is invalid")
+            manifests = index.get("manifests")
+            if not isinstance(manifests, list) or len(manifests) != 1:
+                raise ValueError(
+                    "OCI archive must contain exactly one manifest descriptor"
+                )
+            descriptor = manifests[0]
+            if not isinstance(descriptor, dict):
+                raise ValueError("OCI archive manifest descriptor must be an object")
+            media_type = descriptor.get("mediaType")
+            if media_type not in _MANIFEST_MEDIA_TYPES:
+                raise ValueError("OCI archive manifest mediaType is invalid")
+            digest = descriptor.get("digest")
+            encoded = _digest_hex(digest, "OCI archive manifest")
+            declared_size = descriptor.get("size")
+            if (
+                type(declared_size) is not int
+                or declared_size < 1
+                or declared_size > _MAX_OCI_MANIFEST_BYTES
+            ):
+                raise ValueError("OCI archive manifest size is invalid")
+            manifest_member = members.get(f"blobs/sha256/{encoded}")
+            if (
+                manifest_member is None
+                or not manifest_member.isfile()
+                or manifest_member.size != declared_size
+            ):
+                raise ValueError(
+                    "OCI archive manifest descriptor does not match its blob"
+                )
+            manifest_raw = _read_member(
+                archive,
+                manifest_member,
+                _MAX_OCI_MANIFEST_BYTES,
+                "OCI archive manifest",
+            )
+            if hashlib.sha256(manifest_raw).hexdigest() != encoded:
+                raise ValueError(
+                    "OCI archive descriptor digest does not match manifest blob"
+                )
+            try:
+                manifest = json.loads(manifest_raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError("OCI archive manifest is not valid JSON") from exc
+            if (
+                not isinstance(manifest, dict)
+                or type(manifest.get("schemaVersion")) is not int
+                or manifest["schemaVersion"] != 2
+                or manifest.get("mediaType") != media_type
+            ):
+                raise ValueError("OCI archive manifest schema is invalid")
+            _referenced_descriptor(
+                archive,
+                manifest.get("config"),
+                media_types=_CONFIG_MEDIA_TYPES[media_type],
+                members=members,
+                label="OCI image config",
+            )
+            layers = manifest.get("layers")
+            if not isinstance(layers, list):
+                raise ValueError("OCI image layers must be a list")
+            for layer in layers:
+                _referenced_descriptor(
+                    archive,
+                    layer,
+                    media_types=_LAYER_MEDIA_TYPES[media_type],
+                    members=members,
+                    label="OCI image layer",
+                )
+    except (OSError, tarfile.TarError) as exc:
+        raise ValueError("OCI archive is not a readable tar file") from exc
+    assert isinstance(digest, str)
     return digest
 
 
@@ -215,6 +407,8 @@ def publish_release(
             raise fatal(phase, "network_failure") from None
         except RegistryFailure as exc:
             raise fatal(phase, exc.code) from None
+        except Exception as exc:
+            raise fatal(phase, _local_failure_code(exc)) from None
 
     def login(registry: str, *, allow_deferred: bool) -> None:
         budget = tcr_budget if registry == "tcr" else ghcr_budget
@@ -274,11 +468,14 @@ def publish_release(
                     budget,
                 )
             except _TransientRegistryFailure as transient:
-                _sleep_after_transient(
-                    transient.failure_number,
-                    time.sleep,
-                    transport.jitter,
-                )
+                try:
+                    _sleep_after_transient(
+                        transient.failure_number,
+                        time.sleep,
+                        transport.jitter,
+                    )
+                except Exception as exc:
+                    raise fatal(copy_phase, _local_failure_code(exc)) from None
                 state = call(
                     lambda: transport.probe(
                         targets[registry][component],
@@ -301,6 +498,8 @@ def publish_release(
                 raise fatal(copy_phase, "network_failure") from None
             except RegistryFailure as exc:
                 raise fatal(copy_phase, exc.code) from None
+            except Exception as exc:
+                raise fatal(copy_phase, _local_failure_code(exc)) from None
             break
         if reconciled:
             state = ProbeState.PRESENT_EXPECTED
@@ -343,7 +542,10 @@ def publish_release(
                 break
             ghcr_statuses[component] = "published"
 
-    return create_release_manifest(commit, digests, ghcr_statuses)
+    try:
+        return create_release_manifest(commit, digests, ghcr_statuses)
+    except Exception as exc:
+        raise fatal("manifest_build", _local_failure_code(exc)) from None
 
 
 def _run_skopeo(argv: list[str], stdin: bytes | None) -> CommandResult:
@@ -383,13 +585,93 @@ def _parser() -> argparse.ArgumentParser:
 
 def _write_canonical(path: Path, payload: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(canonical_json(payload))
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(canonical_json(payload))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _validate_distinct_paths(paths: tuple[Path, ...]) -> None:
+    resolved = tuple(path.resolve(strict=False) for path in paths)
+    for index, left in enumerate(resolved):
+        for right in resolved[index + 1 :]:
+            if left == right:
+                raise ValueError("publication paths must be pairwise distinct")
+            try:
+                equivalent = os.path.samefile(left, right)
+            except OSError:
+                equivalent = False
+            if equivalent:
+                raise ValueError("publication paths must be pairwise distinct")
+
+
+def _remove_output(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _emit_failure(
+    error: PublicationError,
+    manifest_output: Path,
+    failure_output: Path,
+) -> None:
+    _remove_output(manifest_output)
+    try:
+        _write_canonical(failure_output, error.report())
+    except Exception:
+        _remove_output(failure_output)
+
+
+def _verified_tcr_from_manifest(
+    manifest: Mapping[str, object],
+) -> dict[str, str]:
+    images = manifest["images"]
+    assert isinstance(images, Mapping)
+    verified: dict[str, str] = {}
+    for component in COMPONENTS:
+        image = images[component]
+        assert isinstance(image, Mapping)
+        registries = image["registries"]
+        assert isinstance(registries, Mapping)
+        tcr = registries["tcr"]
+        assert isinstance(tcr, Mapping)
+        reference = tcr["ref"]
+        assert isinstance(reference, str)
+        verified[component] = reference
+    return verified
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    args.manifest_output.unlink(missing_ok=True)
-    args.failure_output.unlink(missing_ok=True)
+    try:
+        _validate_distinct_paths(
+            (
+                args.backend_archive,
+                args.frontend_archive,
+                args.authfile,
+                args.manifest_output,
+                args.failure_output,
+            )
+        )
+    except (OSError, ValueError):
+        return 2
+    try:
+        args.manifest_output.unlink(missing_ok=True)
+        args.failure_output.unlink(missing_ok=True)
+    except OSError:
+        return 2
 
     environment = {key: os.environ.get(key) for key in _ENVIRONMENT_KEYS}
     if (
@@ -415,24 +697,67 @@ def main(argv: list[str] | None = None) -> int:
         "frontend": args.frontend_archive,
     }
 
+    manifest: dict[str, object] | None = None
+    publication_error: PublicationError | None = None
     try:
         with secure_authfile(args.authfile):
             transport = _make_transport(args.authfile, credentials["tcr"])
-            manifest = publish_release(
-                args.commit,
-                archives,
-                transport,
-                credentials,
-                args.workflow_run_id,
+            try:
+                manifest = publish_release(
+                    args.commit,
+                    archives,
+                    transport,
+                    credentials,
+                    args.workflow_run_id,
+                )
+            except PublicationError as exc:
+                publication_error = exc
+    except Exception as exc:
+        if publication_error is None and manifest is not None:
+            cleanup_error = PublicationError(
+                commit=args.commit,
+                workflow_run_id=args.workflow_run_id,
+                phase="authfile_cleanup",
+                code=_local_failure_code(exc),
+                mutated=True,
+                verified_tcr=_verified_tcr_from_manifest(manifest),
             )
-    except PublicationError as exc:
-        if exc.mutated:
-            _write_canonical(args.failure_output, exc.report())
-        return 1
-    except (OSError, ValueError):
-        return 2
+            _emit_failure(
+                cleanup_error,
+                args.manifest_output,
+                args.failure_output,
+            )
+            return 1
+        if publication_error is None:
+            return 2
 
-    _write_canonical(args.manifest_output, manifest)
+    if publication_error is not None:
+        if publication_error.mutated:
+            _emit_failure(
+                publication_error,
+                args.manifest_output,
+                args.failure_output,
+            )
+        return 1
+
+    assert manifest is not None
+    try:
+        _write_canonical(args.manifest_output, manifest)
+    except Exception as exc:
+        write_error = PublicationError(
+            commit=args.commit,
+            workflow_run_id=args.workflow_run_id,
+            phase="manifest_write",
+            code=_local_failure_code(exc),
+            mutated=True,
+            verified_tcr=_verified_tcr_from_manifest(manifest),
+        )
+        _emit_failure(
+            write_error,
+            args.manifest_output,
+            args.failure_output,
+        )
+        return 1
     return 0
 
 

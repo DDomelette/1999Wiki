@@ -9,6 +9,7 @@ import sys
 import tarfile
 from collections import defaultdict, deque
 from collections.abc import Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -33,8 +34,89 @@ from registry_transport import (  # noqa: E402
 
 COMMIT = "abcdef0123456789abcdef0123456789abcdef01"
 WORKFLOW_RUN_ID = "123456789"
-BACKEND_MANIFEST = b'{"schemaVersion":2,"component":"backend"}'
-FRONTEND_MANIFEST = b'{"schemaVersion":2,"component":"frontend"}'
+OCI_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
+DOCKER_MANIFEST_MEDIA_TYPE = (
+    "application/vnd.docker.distribution.manifest.v2+json"
+)
+OCI_CONFIG_MEDIA_TYPE = "application/vnd.oci.image.config.v1+json"
+OCI_LAYER_MEDIA_TYPE = "application/vnd.oci.image.layer.v1.tar"
+DOCKER_CONFIG_MEDIA_TYPE = "application/vnd.docker.container.image.v1+json"
+DOCKER_LAYER_MEDIA_TYPE = (
+    "application/vnd.docker.image.rootfs.diff.tar"
+)
+
+
+def _minimal_layer_blob() -> bytes:
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w") as layer:
+        content = b"minimal OCI layer\n"
+        member = tarfile.TarInfo("fixture.txt")
+        member.size = len(content)
+        layer.addfile(member, io.BytesIO(content))
+    return output.getvalue()
+
+
+LAYER_BLOB = _minimal_layer_blob()
+LAYER_DIGEST = "sha256:" + hashlib.sha256(LAYER_BLOB).hexdigest()
+CONFIG_BLOB = json.dumps(
+    {
+        "architecture": "amd64",
+        "config": {},
+        "os": "linux",
+        "rootfs": {
+            "type": "layers",
+            "diff_ids": [LAYER_DIGEST],
+        },
+    },
+    separators=(",", ":"),
+    sort_keys=True,
+).encode("utf-8")
+CONFIG_DIGEST = "sha256:" + hashlib.sha256(CONFIG_BLOB).hexdigest()
+
+
+def _manifest_bytes(
+    component: str,
+    *,
+    schema_version: int = 2,
+    media_type: str = OCI_MANIFEST_MEDIA_TYPE,
+    config: object | None = None,
+    layers: object | None = None,
+    padding: int = 0,
+) -> bytes:
+    docker = media_type == DOCKER_MANIFEST_MEDIA_TYPE
+    payload = {
+        "schemaVersion": schema_version,
+        "mediaType": media_type,
+        "config": config
+        if config is not None
+        else {
+            "mediaType": (
+                DOCKER_CONFIG_MEDIA_TYPE if docker else OCI_CONFIG_MEDIA_TYPE
+            ),
+            "digest": CONFIG_DIGEST,
+            "size": len(CONFIG_BLOB),
+        },
+        "layers": layers
+        if layers is not None
+        else [
+            {
+                "mediaType": (
+                    DOCKER_LAYER_MEDIA_TYPE if docker else OCI_LAYER_MEDIA_TYPE
+                ),
+                "digest": LAYER_DIGEST,
+                "size": len(LAYER_BLOB),
+            }
+        ],
+        "annotations": {
+            "org.opencontainers.image.title": component,
+            "test.padding": "x" * padding,
+        },
+    }
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+BACKEND_MANIFEST = _manifest_bytes("backend")
+FRONTEND_MANIFEST = _manifest_bytes("frontend")
 BACKEND_DIGEST = "sha256:" + hashlib.sha256(BACKEND_MANIFEST).hexdigest()
 FRONTEND_DIGEST = "sha256:" + hashlib.sha256(FRONTEND_MANIFEST).hexdigest()
 DIGESTS = {"backend": BACKEND_DIGEST, "frontend": FRONTEND_DIGEST}
@@ -64,26 +146,88 @@ CREDENTIALS = {
 }
 
 
-def _oci_archive(path: Path, digest: str, manifest: bytes) -> Path:
+def _add_tar_member(
+    archive: tarfile.TarFile,
+    name: str,
+    content: bytes,
+    *,
+    member_type: bytes = tarfile.REGTYPE,
+    linkname: str = "",
+) -> None:
+    info = tarfile.TarInfo(name)
+    info.type = member_type
+    info.linkname = linkname
+    if info.isreg():
+        info.size = len(content)
+        archive.addfile(info, io.BytesIO(content))
+    else:
+        archive.addfile(info)
+
+
+def _oci_archive(
+    path: Path,
+    digest: str,
+    manifest: bytes,
+    *,
+    descriptor_media_type: str = OCI_MANIFEST_MEDIA_TYPE,
+    descriptor_size: int | None = None,
+    index_schema_version: int = 2,
+    index_padding: int = 0,
+    manifest_member_type: bytes = tarfile.REGTYPE,
+    config_blob: bytes = CONFIG_BLOB,
+    layer_blob: bytes = LAYER_BLOB,
+) -> Path:
     index = json.dumps(
         {
-            "schemaVersion": 2,
+            "schemaVersion": index_schema_version,
             "manifests": [
                 {
-                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "mediaType": descriptor_media_type,
                     "digest": digest,
-                    "size": 1,
+                    "size": (
+                        len(manifest)
+                        if descriptor_size is None
+                        else descriptor_size
+                    ),
                 }
             ],
+            "padding": "x" * index_padding,
         }
     ).encode("utf-8")
     with tarfile.open(path, "w") as archive:
-        info = tarfile.TarInfo("index.json")
-        info.size = len(index)
-        archive.addfile(info, io.BytesIO(index))
-        blob = tarfile.TarInfo(f"blobs/sha256/{digest.removeprefix('sha256:')}")
-        blob.size = len(manifest)
-        archive.addfile(blob, io.BytesIO(manifest))
+        _add_tar_member(
+            archive,
+            "oci-layout",
+            b'{"imageLayoutVersion":"1.0.0"}',
+        )
+        _add_tar_member(archive, "index.json", index)
+        blob_name = f"blobs/sha256/{digest.removeprefix('sha256:')}"
+        if manifest_member_type in {tarfile.SYMTYPE, tarfile.LNKTYPE}:
+            _add_tar_member(archive, "manifest-target", manifest)
+            _add_tar_member(
+                archive,
+                blob_name,
+                b"",
+                member_type=manifest_member_type,
+                linkname="manifest-target",
+            )
+        else:
+            _add_tar_member(
+                archive,
+                blob_name,
+                manifest,
+                member_type=manifest_member_type,
+            )
+        _add_tar_member(
+            archive,
+            f"blobs/sha256/{CONFIG_DIGEST.removeprefix('sha256:')}",
+            config_blob,
+        )
+        _add_tar_member(
+            archive,
+            f"blobs/sha256/{LAYER_DIGEST.removeprefix('sha256:')}",
+            layer_blob,
+        )
     return path
 
 
@@ -230,6 +374,153 @@ def test_each_archive_descriptor_must_match_its_referenced_blob_before_login(
         digest,
         b"tampered-manifest",
     )
+    transport = StatefulTransport()
+
+    with pytest.raises(ValueError, match="digest"):
+        _publish(candidates, transport)
+
+    assert transport.calls == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "index_schema",
+        "descriptor_media_type",
+        "descriptor_size",
+        "manifest_non_json",
+        "manifest_schema",
+        "manifest_media_type",
+        "config_structure",
+        "layers_structure",
+        "unsafe_config_digest",
+        "referenced_blob_size",
+        "symlink_manifest",
+        "hardlink_manifest",
+        "non_regular_manifest",
+        "oversized_index",
+        "oversized_manifest",
+    ],
+)
+def test_oci_preflight_rejects_invalid_or_unbounded_archives_before_login(
+    tmp_path: Path,
+    archives: Mapping[str, Path],
+    case: str,
+) -> None:
+    manifest = BACKEND_MANIFEST
+    options: dict[str, object] = {}
+    if case == "index_schema":
+        options["index_schema_version"] = 1
+    elif case == "descriptor_media_type":
+        options["descriptor_media_type"] = (
+            "application/vnd.oci.image.index.v1+json"
+        )
+    elif case == "descriptor_size":
+        options["descriptor_size"] = len(manifest) + 1
+    elif case == "manifest_non_json":
+        manifest = b"not-json"
+    elif case == "manifest_schema":
+        manifest = _manifest_bytes("backend", schema_version=1)
+    elif case == "manifest_media_type":
+        manifest = _manifest_bytes(
+            "backend",
+            media_type=DOCKER_MANIFEST_MEDIA_TYPE,
+        )
+    elif case == "config_structure":
+        manifest = _manifest_bytes("backend", config=[])
+    elif case == "layers_structure":
+        manifest = _manifest_bytes("backend", layers={})
+    elif case == "unsafe_config_digest":
+        manifest = _manifest_bytes(
+            "backend",
+            config={
+                "mediaType": OCI_CONFIG_MEDIA_TYPE,
+                "digest": "sha256:../../outside",
+                "size": len(CONFIG_BLOB),
+            },
+        )
+    elif case == "referenced_blob_size":
+        manifest = _manifest_bytes(
+            "backend",
+            config={
+                "mediaType": OCI_CONFIG_MEDIA_TYPE,
+                "digest": CONFIG_DIGEST,
+                "size": len(CONFIG_BLOB) + 1,
+            },
+        )
+    elif case == "symlink_manifest":
+        options["manifest_member_type"] = tarfile.SYMTYPE
+    elif case == "hardlink_manifest":
+        options["manifest_member_type"] = tarfile.LNKTYPE
+    elif case == "non_regular_manifest":
+        options["manifest_member_type"] = tarfile.FIFOTYPE
+    elif case == "oversized_index":
+        options["index_padding"] = 300_000
+    elif case == "oversized_manifest":
+        manifest = _manifest_bytes("backend", padding=4 * 1024 * 1024)
+    digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
+    invalid = _oci_archive(
+        tmp_path / f"{case}.oci",
+        digest,
+        manifest,
+        **options,  # type: ignore[arg-type]
+    )
+    candidates = dict(archives)
+    candidates["backend"] = invalid
+    transport = StatefulTransport()
+
+    with pytest.raises(ValueError):
+        _publish(candidates, transport)
+
+    assert transport.calls == []
+
+
+def test_oci_preflight_accepts_the_allowed_docker_image_manifest_type(
+    tmp_path: Path,
+    archives: Mapping[str, Path],
+) -> None:
+    manifest = _manifest_bytes(
+        "backend",
+        media_type=DOCKER_MANIFEST_MEDIA_TYPE,
+    )
+    digest = "sha256:" + hashlib.sha256(manifest).hexdigest()
+    docker_archive = _oci_archive(
+        tmp_path / "docker-manifest.oci",
+        digest,
+        manifest,
+        descriptor_media_type=DOCKER_MANIFEST_MEDIA_TYPE,
+    )
+    candidates = dict(archives)
+    candidates["backend"] = docker_archive
+
+    published, transport = _publish(candidates)
+
+    assert published["release_state"] == "ready"
+    assert transport.calls[0] == "login:tcr"
+
+
+@pytest.mark.parametrize(
+    ("blob_name", "replacement"),
+    [
+        ("config_blob", b"X" + CONFIG_BLOB[1:]),
+        ("layer_blob", b"X" + LAYER_BLOB[1:]),
+    ],
+    ids=["config", "layer"],
+)
+def test_oci_preflight_hashes_each_referenced_blob_before_login(
+    tmp_path: Path,
+    archives: Mapping[str, Path],
+    blob_name: str,
+    replacement: bytes,
+) -> None:
+    tampered = _oci_archive(
+        tmp_path / f"tampered-{blob_name}.oci",
+        BACKEND_DIGEST,
+        BACKEND_MANIFEST,
+        **{blob_name: replacement},
+    )
+    candidates = dict(archives)
+    candidates["backend"] = tampered
     transport = StatefulTransport()
 
     with pytest.raises(ValueError, match="digest"):
@@ -495,6 +786,12 @@ def _cli_args(tmp_path: Path, archives: Mapping[str, Path]) -> list[str]:
     ]
 
 
+def _override_arg(args: list[str], option: str, value: Path) -> list[str]:
+    overridden = list(args)
+    overridden[overridden.index(option) + 1] = str(value)
+    return overridden
+
+
 def _set_cli_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in (
         "TCR_USERNAME",
@@ -511,6 +808,91 @@ def _set_cli_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GHCR_PASSWORD", "ghcr-secret")
     monkeypatch.setenv("TCR_REGISTRY", TCR_REGISTRY)
     monkeypatch.setenv("TCR_NAMESPACE", TCR_NAMESPACE)
+
+
+@pytest.mark.parametrize(
+    "collision",
+    [
+        "manifest_is_backend_alias",
+        "authfile_is_backend",
+        "backend_is_frontend",
+        "success_is_failure",
+    ],
+)
+def test_cli_rejects_colliding_paths_before_io_and_preserves_every_file(
+    tmp_path: Path,
+    archives: Mapping[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    collision: str,
+) -> None:
+    _set_cli_environment(monkeypatch)
+    args = _cli_args(tmp_path, archives)
+    shared_output = tmp_path / "shared-output.json"
+    shared_output.write_bytes(b"preexisting-output")
+    if collision == "manifest_is_backend_alias":
+        (tmp_path / "nested").mkdir()
+        args = _override_arg(
+            args,
+            "--manifest-output",
+            tmp_path / "nested" / ".." / archives["backend"].name,
+        )
+    elif collision == "authfile_is_backend":
+        args = _override_arg(args, "--authfile", archives["backend"])
+    elif collision == "backend_is_frontend":
+        args = _override_arg(args, "--frontend-archive", archives["backend"])
+    else:
+        args = _override_arg(args, "--manifest-output", shared_output)
+        args = _override_arg(args, "--failure-output", shared_output)
+    watched = {
+        path: path.read_bytes()
+        for path in {
+            archives["backend"],
+            archives["frontend"],
+            shared_output,
+        }
+    }
+    transport = StatefulTransport()
+    monkeypatch.setattr(
+        publish_registries,
+        "_make_transport",
+        lambda authfile, credential: transport,
+    )
+
+    assert main(args) == 2
+
+    assert transport.calls == []
+    for path, contents in watched.items():
+        assert path.is_file()
+        assert path.read_bytes() == contents
+
+
+def test_cli_rejects_hardlink_equivalent_paths_without_touching_the_archive(
+    tmp_path: Path,
+    archives: Mapping[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_cli_environment(monkeypatch)
+    authfile_hardlink = tmp_path / "auth-hardlink.json"
+    os.link(archives["backend"], authfile_hardlink)
+    before = archives["backend"].read_bytes()
+    transport = StatefulTransport()
+    monkeypatch.setattr(
+        publish_registries,
+        "_make_transport",
+        lambda authfile, credential: transport,
+    )
+    args = _override_arg(
+        _cli_args(tmp_path, archives),
+        "--authfile",
+        authfile_hardlink,
+    )
+
+    assert main(args) == 2
+
+    assert transport.calls == []
+    assert archives["backend"].read_bytes() == before
+    assert authfile_hardlink.is_file()
+    assert authfile_hardlink.read_bytes() == before
 
 
 def test_cli_writes_only_canonical_manifest_on_success_and_removes_authfile(
@@ -586,6 +968,228 @@ def test_cli_fatal_mutation_writes_exact_sanitized_failure_and_no_manifest(
         assert forbidden not in raw
     assert not (tmp_path / "release-manifest.json").exists()
     assert not (tmp_path / "auth.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code"),
+    [
+        (OSError("disk full at D:/secret/auth.json tcr-secret"), "local_io_failure"),
+        (ValueError("invalid D:/secret/auth.json tcr-secret"), "local_validation_failure"),
+        (RuntimeError("unknown D:/secret/auth.json tcr-secret"), "unexpected_local_failure"),
+    ],
+)
+def test_cli_sanitizes_local_or_unknown_fatal_after_backend_was_verified(
+    tmp_path: Path,
+    archives: Mapping[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    expected_code: str,
+) -> None:
+    _set_cli_environment(monkeypatch)
+    transport = StatefulTransport({"copy:tcr:frontend": [error]})
+    monkeypatch.setattr(
+        publish_registries,
+        "_make_transport",
+        lambda authfile, credential: transport,
+    )
+
+    try:
+        result = main(_cli_args(tmp_path, archives))
+    except Exception as exc:
+        pytest.fail(f"local fatal escaped the CLI: {type(exc).__name__}")
+
+    assert result == 1
+    failure_path = tmp_path / "publication-failure.json"
+    assert json.loads(failure_path.read_bytes()) == {
+        "schema_version": "1999wiki.publication-failure/v1",
+        "commit": COMMIT,
+        "release_tag": "sha-abcdef0",
+        "phase": "tcr_frontend_copy",
+        "code": expected_code,
+        "workflow_run_id": WORKFLOW_RUN_ID,
+        "verified_tcr": {"backend": TCR_REFS["backend"]},
+    }
+    raw = failure_path.read_text(encoding="utf-8")
+    for forbidden in ("disk full", "invalid D:/", "unknown D:/", "tcr-secret"):
+        assert forbidden not in raw
+    assert not (tmp_path / "release-manifest.json").exists()
+    assert not (tmp_path / "auth.json").exists()
+
+
+def _secure_authfile_with_failing_cleanup(path: Path):
+    @contextmanager
+    def managed():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+        try:
+            yield path
+        finally:
+            path.unlink(missing_ok=True)
+            raise OSError("cleanup-secret D:/secret/auth.json")
+
+    return managed()
+
+
+def test_authfile_cleanup_failure_does_not_mask_the_primary_publication_error(
+    tmp_path: Path,
+    archives: Mapping[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_cli_environment(monkeypatch)
+    transport = StatefulTransport(
+        {
+            "copy:tcr:frontend": [
+                RegistryFailure(
+                    "copy",
+                    TCR_REGISTRY,
+                    "fatal_registry_failure",
+                )
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        publish_registries,
+        "_make_transport",
+        lambda authfile, credential: transport,
+    )
+    monkeypatch.setattr(
+        publish_registries,
+        "secure_authfile",
+        _secure_authfile_with_failing_cleanup,
+    )
+
+    assert main(_cli_args(tmp_path, archives)) == 1
+
+    failure_path = tmp_path / "publication-failure.json"
+    assert json.loads(failure_path.read_bytes()) == {
+        "schema_version": "1999wiki.publication-failure/v1",
+        "commit": COMMIT,
+        "release_tag": "sha-abcdef0",
+        "phase": "tcr_frontend_copy",
+        "code": "fatal_registry_failure",
+        "workflow_run_id": WORKFLOW_RUN_ID,
+        "verified_tcr": {"backend": TCR_REFS["backend"]},
+    }
+    assert "cleanup-secret" not in failure_path.read_text(encoding="utf-8")
+    assert not (tmp_path / "release-manifest.json").exists()
+    assert not (tmp_path / "auth.json").exists()
+
+
+def test_authfile_cleanup_only_failure_after_mutation_has_stable_local_artifact(
+    tmp_path: Path,
+    archives: Mapping[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_cli_environment(monkeypatch)
+    transport = StatefulTransport()
+    monkeypatch.setattr(
+        publish_registries,
+        "_make_transport",
+        lambda authfile, credential: transport,
+    )
+    monkeypatch.setattr(
+        publish_registries,
+        "secure_authfile",
+        _secure_authfile_with_failing_cleanup,
+    )
+
+    assert main(_cli_args(tmp_path, archives)) == 1
+
+    failure_path = tmp_path / "publication-failure.json"
+    failure = json.loads(failure_path.read_bytes())
+    assert failure["phase"] == "authfile_cleanup"
+    assert failure["code"] == "local_io_failure"
+    assert failure["verified_tcr"] == TCR_REFS
+    assert "cleanup-secret" not in failure_path.read_text(encoding="utf-8")
+    assert not (tmp_path / "release-manifest.json").exists()
+    assert not (tmp_path / "auth.json").exists()
+
+
+def test_cli_manifest_write_failure_after_all_mutations_writes_failure_artifact(
+    tmp_path: Path,
+    archives: Mapping[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_cli_environment(monkeypatch)
+    transport = StatefulTransport()
+    monkeypatch.setattr(
+        publish_registries,
+        "_make_transport",
+        lambda authfile, credential: transport,
+    )
+    original_write = publish_registries._write_canonical
+    manifest_path = tmp_path / "release-manifest.json"
+
+    def fail_manifest_write(path: Path, payload: Mapping[str, object]) -> None:
+        if path == manifest_path:
+            raise OSError("disk full D:/secret/auth.json ghcr-secret")
+        original_write(path, payload)
+
+    monkeypatch.setattr(
+        publish_registries,
+        "_write_canonical",
+        fail_manifest_write,
+    )
+
+    try:
+        result = main(_cli_args(tmp_path, archives))
+    except Exception as exc:
+        pytest.fail(f"manifest write fatal escaped the CLI: {type(exc).__name__}")
+
+    assert result == 1
+    assert not manifest_path.exists()
+    failure_path = tmp_path / "publication-failure.json"
+    assert json.loads(failure_path.read_bytes()) == {
+        "schema_version": "1999wiki.publication-failure/v1",
+        "commit": COMMIT,
+        "release_tag": "sha-abcdef0",
+        "phase": "manifest_write",
+        "code": "local_io_failure",
+        "workflow_run_id": WORKFLOW_RUN_ID,
+        "verified_tcr": TCR_REFS,
+    }
+    assert "disk full" not in failure_path.read_text(encoding="utf-8")
+    assert "ghcr-secret" not in failure_path.read_text(encoding="utf-8")
+
+
+def test_cli_failure_artifact_write_failure_returns_safely_without_false_output(
+    tmp_path: Path,
+    archives: Mapping[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _set_cli_environment(monkeypatch)
+    transport = StatefulTransport(
+        {"copy:tcr:frontend": [OSError("source-secret tcr-secret")]}
+    )
+    monkeypatch.setattr(
+        publish_registries,
+        "_make_transport",
+        lambda authfile, credential: transport,
+    )
+
+    def fail_artifact_write(path: Path, payload: Mapping[str, object]) -> None:
+        raise OSError("failure-secret D:/secret/auth.json")
+
+    monkeypatch.setattr(
+        publish_registries,
+        "_write_canonical",
+        fail_artifact_write,
+    )
+
+    try:
+        result = main(_cli_args(tmp_path, archives))
+    except Exception as exc:
+        pytest.fail(f"failure write fatal escaped the CLI: {type(exc).__name__}")
+
+    assert result == 1
+    assert not (tmp_path / "release-manifest.json").exists()
+    assert not (tmp_path / "publication-failure.json").exists()
+    assert not (tmp_path / "auth.json").exists()
+    captured = capsys.readouterr()
+    assert "source-secret" not in captured.out + captured.err
+    assert "failure-secret" not in captured.out + captured.err
+    assert "tcr-secret" not in captured.out + captured.err
 
 
 @pytest.mark.parametrize(
