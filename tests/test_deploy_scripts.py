@@ -887,6 +887,10 @@ def _cleanup_harness(
                         grep -Fxv "$canonical" /tmp/image-digests \
                             >/tmp/image-digests.next || true
                         mv /tmp/image-digests.next /tmp/image-digests
+                    elif [[ "$image" =~ :sha-[0-9a-f]{{7}}$ ]]; then
+                        grep -Fxv "$image" /tmp/image-tags \
+                            >/tmp/image-tags.next || true
+                        mv /tmp/image-tags.next /tmp/image-tags
                     elif [[ "$image" == *@sha256:* ]]; then
                         grep -Fxv "$image" /tmp/image-digests \
                             >/tmp/image-digests.next || true
@@ -2468,20 +2472,19 @@ def test_cleanup_stub_removes_only_named_inactive_project_and_exact_images(
     assert result.returncode == 0, result.stderr
     assert "__STATUS=0" in result.stdout
     calls = result.stdout.partition("__CALLS__")[2]
+    call_lines = calls.splitlines()
     assert "docker compose -p 1999wiki-green" in calls
     assert " down --remove-orphans" in calls
     assert "1999wiki-infra" not in calls
     assert "--volumes" not in calls
     assert (
-        "docker image rm "
-        "ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@sha256:"
-        + "a" * 64
-    ) in calls
+        "docker image rm ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"
+        in call_lines
+    )
     assert (
-        "docker image rm "
-        "ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:"
-        + "b" * 64
-    ) in calls
+        "docker image rm ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"
+        in call_lines
+    )
     assert (
         "docker image inspect "
         "ghcr.io/ddomelette/1999wiki-backend@sha256:"
@@ -2594,7 +2597,7 @@ def test_cleanup_does_not_commit_when_removed_image_remains_present(
 @pytest.mark.parametrize(
     ("image_state", "should_succeed", "removal_identity"),
     [
-        ("exact", True, ":sha-abcdef0@sha256:"),
+        ("exact", True, ":sha-abcdef0"),
         ("digest-only", True, "@sha256:"),
         ("mismatch", False, None),
         ("inspect-error", False, None),
@@ -2756,8 +2759,6 @@ def test_real_docker_registry_retirement_reconciles_tag_and_digest_identities() 
         )
         assert digest_match is not None
         digest_ref = f"{repository}@{digest_match.group(1)}"
-        tag_digest_ref = f"{tag_ref}@{digest_match.group(1)}"
-
         removed_seed_tag = run("image", "rm", tag_ref)
         assert (
             removed_seed_tag.returncode == 0
@@ -2767,11 +2768,14 @@ def test_real_docker_registry_retirement_reconciles_tag_and_digest_identities() 
         assert run("image", "inspect", tag_ref).returncode == 0
         assert run("image", "inspect", digest_ref).returncode == 0
 
-        removed_tag_digest = run("image", "rm", tag_digest_ref)
-        assert (
-            removed_tag_digest.returncode == 0
-        ), removed_tag_digest.stdout + removed_tag_digest.stderr
+        removed_tag = run("image", "rm", tag_ref)
+        assert removed_tag.returncode == 0, removed_tag.stdout + removed_tag.stderr
         assert run("image", "inspect", tag_ref).returncode != 0
+        if run("image", "inspect", digest_ref).returncode == 0:
+            removed_digest = run("image", "rm", digest_ref)
+            assert (
+                removed_digest.returncode == 0
+            ), removed_digest.stdout + removed_digest.stderr
         assert run("image", "inspect", digest_ref).returncode != 0
 
         pulled_tag = run("pull", tag_ref, timeout=120)

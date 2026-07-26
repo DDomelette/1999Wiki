@@ -536,7 +536,16 @@ ops_remove_retirement_resources() {
         if (( tag_status == 0 )); then
             (( digest_status == 0 )) \
                 || ops_die "retirement image identities are inconsistent"
-            docker image rm "$image"
+            docker image rm "$image_tag"
+            set +e
+            ops_exact_retirement_digest_status "$image" "$image_digest"
+            digest_status=$?
+            set -e
+            if (( digest_status > 1 )); then
+                ops_die "could not reconcile retirement image digest after tag removal"
+            elif (( digest_status == 0 )); then
+                docker image rm "$image_digest"
+            fi
         elif (( digest_status == 0 )); then
             docker image rm "$image_digest"
         fi
