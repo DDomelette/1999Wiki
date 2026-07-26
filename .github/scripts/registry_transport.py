@@ -9,7 +9,7 @@ import hashlib
 import os
 import random
 import re
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +24,14 @@ for _directory in (SCRIPT_DIRECTORY, DEPLOY_BIN):
     if str(_directory) not in sys.path:
         sys.path.insert(0, str(_directory))
 
-from release_identity import COMPONENTS, REPOSITORIES  # noqa: E402
+from release_identity import (  # noqa: E402
+    COMPONENTS,
+    REPOSITORIES,
+    ManifestError,
+    _release_tag,
+    _validate_commit,
+    _validate_digest as _validate_release_digest,
+)
 
 
 class FailureKind(enum.Enum):
@@ -55,7 +62,10 @@ class MirrorDeferred(RuntimeError):
 
 
 class _TransientRegistryFailure(RuntimeError):
-    pass
+    def __init__(self, operation: str, failure_number: int) -> None:
+        self.operation = operation
+        self.failure_number = failure_number
+        super().__init__(operation)
 
 
 @dataclass(frozen=True)
@@ -76,43 +86,70 @@ class RetryBudget:
     max_failures: int = 5
     failures: int = 0
 
+    def ensure_available(self) -> None:
+        if self.failures >= self.max_failures:
+            raise MirrorDeferred("deferred_after_5_network_failures")
+
     def consume(self) -> None:
+        self.ensure_available()
         self.failures += 1
         if self.failures >= self.max_failures:
             raise MirrorDeferred("deferred_after_5_network_failures")
 
 
-_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}\Z")
-_TAG_RE = re.compile(r"sha-[0-9a-f]{7}\Z")
 _FATAL_MARKERS = (
     "unauthorized",
-    "authentication required",
-    "denied:",
-    "requested access",
-    "status code: 429",
+    "forbidden",
+    "authentication",
+    "permission",
+    "access denied",
+    "denied",
+    "tag conflict",
+    "tag already exists",
+    "already exists",
     "manifest invalid",
+    "invalid manifest",
+    "manifest rejected",
     "unsupported media type",
+    "media type",
     "digest mismatch",
+    "digest",
 )
 _TRANSIENT_MARKERS = (
     "no such host",
     "connection reset by peer",
+    "connection refused",
+    "network is unreachable",
+    "dial tcp",
     "i/o timeout",
     "timeout",
-    "status code: 500",
-    "status code: 502",
-    "status code: 503",
-    "status code: 504",
 )
 _ABSENT_MARKERS = ("manifest unknown", "name unknown", "no such manifest")
+_STATUS_CODE_RE = re.compile(
+    r"\b(?:status[-_\s]*code|http(?:/\d(?:\.\d)?)?)\s*:?\s*(\d+)\b",
+    re.IGNORECASE,
+)
+
+
+def _status_codes(stderr: str) -> set[int]:
+    return {int(match.group(1)) for match in _STATUS_CODE_RE.finditer(stderr)}
+
+
+def _has_fatal_evidence(stderr: str) -> bool:
+    evidence = stderr.casefold()
+    return any(marker in evidence for marker in _FATAL_MARKERS) or any(
+        400 <= status <= 499 for status in _status_codes(stderr)
+    )
 
 
 def classify_failure(stderr: str) -> FailureKind:
     """Classify only known network failures as transient, after fatal evidence."""
-    evidence = stderr.casefold()
-    if any(marker in evidence for marker in _FATAL_MARKERS):
+    if _has_fatal_evidence(stderr):
         return FailureKind.FATAL
+    evidence = stderr.casefold()
     if any(marker in evidence for marker in _TRANSIENT_MARKERS):
+        return FailureKind.TRANSIENT
+    if any(status in {500, 502, 503, 504} for status in _status_codes(stderr)):
         return FailureKind.TRANSIENT
     return FailureKind.FATAL
 
@@ -128,8 +165,14 @@ def _registry(reference: str) -> str:
 
 def _validate_target(reference: str) -> None:
     repository, separator, tag = reference.rpartition(":")
-    if not separator or _TAG_RE.fullmatch(tag) is None:
-        raise ValueError("target must use the release sha-<seven-hex> tag grammar")
+    canonical_prefix = _release_tag("0" * 40)[:-7]
+    candidate_commit = tag.removeprefix(canonical_prefix) + "0" * 33
+    try:
+        _validate_commit(candidate_commit)
+    except ManifestError as exc:
+        raise ValueError("target must use the canonical release tag grammar") from exc
+    if not separator or _release_tag(candidate_commit) != tag:
+        raise ValueError("target must use the canonical release tag grammar")
     permitted = {
         registered
         for registry in REPOSITORIES.values()
@@ -141,8 +184,19 @@ def _validate_target(reference: str) -> None:
 
 
 def _validate_digest(digest: str) -> None:
-    if _DIGEST_RE.fullmatch(digest) is None:
-        raise ValueError("expected digest must use the sha256:<64-hex> grammar")
+    try:
+        _validate_release_digest(digest, "expected")
+    except ManifestError as exc:
+        raise ValueError("expected digest must use the canonical sha256 grammar") from exc
+
+
+def _fatal_code(stderr: str) -> str:
+    evidence = stderr.casefold()
+    if any(marker in evidence for marker in ("unauthorized", "forbidden", "authentication", "permission", "denied")) or any(
+        status in {401, 403} for status in _status_codes(stderr)
+    ):
+        return "authentication_failed"
+    return "fatal_registry_failure"
 
 
 @contextmanager
@@ -176,18 +230,14 @@ class SkopeoTransport:
         stdin: bytes | None,
         budget: RetryBudget,
     ) -> CommandResult:
+        budget.ensure_available()
         result = self.runner(argv, stdin)
         if result.returncode == 0:
             return result
         if classify_failure(result.stderr) is FailureKind.TRANSIENT:
             budget.consume()
-            raise _TransientRegistryFailure(operation)
-        code = (
-            "authentication_failed"
-            if any(marker in result.stderr.casefold() for marker in ("unauthorized", "authentication", "denied"))
-            else "fatal_registry_failure"
-        )
-        raise RegistryFailure(operation, registry, code)
+            raise _TransientRegistryFailure(operation, budget.failures)
+        raise RegistryFailure(operation, registry, _fatal_code(result.stderr))
 
     def login(self, registry: str, budget: RetryBudget) -> None:
         self._run(
@@ -213,6 +263,7 @@ class SkopeoTransport:
         _validate_target(target)
         _validate_digest(expected_digest)
         registry = _registry(target)
+        budget.ensure_available()
         result = self.runner(
             [
                 "skopeo",
@@ -225,17 +276,14 @@ class SkopeoTransport:
             None,
         )
         if result.returncode != 0:
+            if _has_fatal_evidence(result.stderr):
+                raise RegistryFailure("probe", registry, _fatal_code(result.stderr))
             if _is_explicit_absence(result.stderr):
                 return ProbeState.ABSENT
             if classify_failure(result.stderr) is FailureKind.TRANSIENT:
                 budget.consume()
-                raise _TransientRegistryFailure("probe")
-            code = (
-                "authentication_failed"
-                if any(marker in result.stderr.casefold() for marker in ("unauthorized", "authentication", "denied"))
-                else "fatal_registry_failure"
-            )
-            raise RegistryFailure("probe", registry, code)
+                raise _TransientRegistryFailure("probe", budget.failures)
+            raise RegistryFailure("probe", registry, _fatal_code(result.stderr))
         actual_digest = "sha256:" + hashlib.sha256(result.stdout).hexdigest()
         if actual_digest == expected_digest:
             return ProbeState.PRESENT_EXPECTED
@@ -263,9 +311,9 @@ class SkopeoTransport:
 
 
 def _sleep_after_transient(
-    budget: RetryBudget, sleep: Callable[[float], None], jitter: Callable[[], float]
+    failure_number: int, sleep: Callable[[float], None], jitter: Callable[[], float]
 ) -> None:
-    delay = min(2 ** (budget.failures - 1), 8)
+    delay = min(2 ** (failure_number - 1), 8)
     extra = jitter()
     if not 0.0 <= extra <= 0.5:
         raise ValueError("jitter must be in [0.0, 0.5]")
@@ -281,8 +329,8 @@ def _retry_transient(
     while True:
         try:
             return operation()
-        except _TransientRegistryFailure:
-            _sleep_after_transient(budget, sleep, jitter)
+        except _TransientRegistryFailure as transient:
+            _sleep_after_transient(transient.failure_number, sleep, jitter)
 
 
 def _raise_conflict(target: str) -> None:
@@ -320,7 +368,8 @@ def ensure_mirror_copy(
     while True:
         try:
             transport.copy(source, target, budget)
-        except _TransientRegistryFailure:
+        except _TransientRegistryFailure as transient:
+            _sleep_after_transient(transient.failure_number, sleep, transport.jitter)
             reconciled = _retry_transient(
                 lambda: transport.probe(target, expected_digest, budget),
                 budget,
@@ -332,7 +381,6 @@ def ensure_mirror_copy(
                 return "published"
             if reconciled is ProbeState.PRESENT_CONFLICT:
                 _raise_conflict(target)
-            _sleep_after_transient(budget, sleep, transport.jitter)
             continue
 
         verified = _retry_transient(

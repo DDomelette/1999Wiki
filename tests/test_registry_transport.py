@@ -61,6 +61,25 @@ def test_failure_classification(stderr: str, expected: FailureKind) -> None:
     assert classify_failure(stderr) is expected
 
 
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        ("StatusCode: 500", FailureKind.TRANSIENT),
+        ("status-code: 502", FailureKind.TRANSIENT),
+        ("HTTP 504 gateway timeout", FailureKind.TRANSIENT),
+        ("StatusCode: 5000", FailureKind.FATAL),
+        ("status code: 401; i/o timeout", FailureKind.FATAL),
+        ("forbidden: access denied; timeout", FailureKind.FATAL),
+        ("status code: 409 tag conflict; timeout", FailureKind.FATAL),
+        ("unauthorized: authentication required; manifest unknown", FailureKind.FATAL),
+    ],
+)
+def test_failure_classification_gives_exact_fatal_evidence_priority(
+    stderr: str, expected: FailureKind
+) -> None:
+    assert classify_failure(stderr) is expected
+
+
 class ScriptedRunner:
     def __init__(self, results: list[CommandResult]) -> None:
         self.results = iter(results)
@@ -118,6 +137,28 @@ def test_probe_distinguishes_explicit_absence_expected_digest_and_conflict(
     assert transport.probe(TARGET, EXPECTED_DIGEST, budget) is ProbeState.ABSENT
     assert transport.probe(TARGET, EXPECTED_DIGEST, budget) is ProbeState.PRESENT_EXPECTED
     assert transport.probe(TARGET, EXPECTED_DIGEST, budget) is ProbeState.PRESENT_CONFLICT
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        ("manifest unknown", ProbeState.ABSENT),
+        ("name unknown", ProbeState.ABSENT),
+        ("no such manifest", ProbeState.ABSENT),
+        ("manifest unavailable", None),
+        ("unauthorized: authentication required; manifest unknown", None),
+    ],
+)
+def test_probe_only_accepts_strict_absence_after_fatal_evidence(
+    tmp_path: Path, stderr: str, expected: ProbeState | None
+) -> None:
+    transport = _transport(ScriptedRunner([_failed(stderr)]), tmp_path / "auth.json")
+
+    if expected is None:
+        with pytest.raises(RegistryFailure):
+            transport.probe(TARGET, EXPECTED_DIGEST, RetryBudget())
+    else:
+        assert transport.probe(TARGET, EXPECTED_DIGEST, RetryBudget()) is expected
 
 
 @pytest.mark.parametrize(
@@ -198,6 +239,67 @@ def test_uncertain_copy_retries_only_after_reconciliation_proves_absence(
         transport, SOURCE, TARGET, EXPECTED_DIGEST, RetryBudget(), lambda _: None
     ) == "published"
     assert [call[0][1] for call in runner.calls].count("copy") == 2
+
+
+def test_interleaved_copy_and_probe_failures_back_off_once_in_global_order(
+    tmp_path: Path,
+) -> None:
+    runner = ScriptedRunner(
+        [
+            _ok(),
+            _failed("manifest unknown"),
+            _failed("i/o timeout"),
+            _failed("i/o timeout"),
+            _failed("name unknown"),
+            _ok(),
+            _ok(EXPECTED_RAW),
+        ]
+    )
+    transport = _transport(runner, tmp_path / "auth.json")
+    delays: list[float] = []
+
+    assert ensure_mirror_copy(
+        transport, SOURCE, TARGET, EXPECTED_DIGEST, RetryBudget(), delays.append
+    ) == "published"
+
+    assert delays == [1.0, 2.0]
+
+
+def test_shared_budget_spans_login_probe_copy_and_verify_and_blocks_reuse(
+    tmp_path: Path,
+) -> None:
+    runner = ScriptedRunner(
+        [
+            _failed("i/o timeout"),
+            _ok(),
+            _failed("i/o timeout"),
+            _failed("manifest unknown"),
+            _failed("i/o timeout"),
+            _failed("name unknown"),
+            _ok(),
+            _failed("i/o timeout"),
+            _ok(EXPECTED_RAW),
+            _failed("i/o timeout"),
+        ]
+    )
+    transport = _transport(runner, tmp_path / "auth.json")
+    budget = RetryBudget()
+    delays: list[float] = []
+
+    assert ensure_mirror_copy(
+        transport, SOURCE, TARGET, EXPECTED_DIGEST, budget, delays.append
+    ) == "published"
+    assert budget.failures == 4
+    assert delays == [1.0, 2.0, 4.0, 8.0]
+
+    with pytest.raises(MirrorDeferred, match="deferred_after_5_network_failures"):
+        ensure_mirror_copy(transport, SOURCE, TARGET, EXPECTED_DIGEST, budget, delays.append)
+    calls_after_deferred = len(runner.calls)
+
+    with pytest.raises(MirrorDeferred, match="deferred_after_5_network_failures"):
+        transport.probe(TARGET, EXPECTED_DIGEST, budget)
+    assert len(runner.calls) == calls_after_deferred
+    assert delays == [1.0, 2.0, 4.0, 8.0]
 
 
 def test_exact_digest_conflict_fails_without_copying(tmp_path: Path) -> None:
