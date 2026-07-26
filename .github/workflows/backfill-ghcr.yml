@@ -1,0 +1,102 @@
+name: Backfill GHCR from a verified release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Workflow run ID that produced the release manifest
+        required: true
+        type: string
+      release_tag:
+        description: Immutable release tag recorded by the source run
+        required: true
+        type: string
+      expected_commit:
+        description: Full commit bound to the release manifest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+concurrency:
+  group: publish-images-${{ inputs.expected_commit }}-ghcr-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Validate release identity inputs
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^sha-[0-9a-f]{7}$ ]]; then
+            echo "release_tag must match sha- plus seven lowercase hexadecimal characters" >&2
+            exit 2
+          fi
+          if [[ ! "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_commit must be a full lowercase hexadecimal commit" >&2
+            exit 2
+          fi
+          if [[ "$RELEASE_TAG" != "sha-${EXPECTED_COMMIT:0:7}" ]]; then
+            echo "release_tag does not match expected_commit" >&2
+            exit 2
+          fi
+      - name: Download original release manifest
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.release_run_id }}
+          name: release-${{ inputs.release_tag }}
+          path: release-input
+      - name: Install Skopeo
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+          skopeo --version
+      - id: backfill
+        name: Verify release and backfill GHCR
+        shell: bash
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
+          TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
+          TCR_REGISTRY: ${{ vars.TCR_REGISTRY }}
+          TCR_NAMESPACE: ${{ vars.TCR_NAMESPACE }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          completed_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python3 .github/scripts/backfill_ghcr.py \
+            --manifest release-input/release-manifest.json \
+            --commit "$EXPECTED_COMMIT" \
+            --authfile "${RUNNER_TEMP}/1999wiki-backfill-auth.json" \
+            --attestation-output mirror-attestation.json \
+            --failure-output mirror-failure.json \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --completed-at "$completed_at"
+      - name: Upload mirror attestation
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirror-${{ inputs.release_tag }}-${{ github.run_id }}
+          path: mirror-attestation.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload mirror failure
+        if: ${{ failure() && hashFiles('mirror-failure.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirror-failure-${{ inputs.release_tag }}-${{ github.run_id }}
+          path: mirror-failure.json
+          if-no-files-found: error
+          retention-days: 30

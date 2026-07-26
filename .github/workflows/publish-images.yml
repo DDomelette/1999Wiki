@@ -62,30 +62,20 @@ jobs:
       - name: Pull LFS objects
         run: git lfs pull
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: tag
+      - name: Install Skopeo
         shell: bash
         run: |
-          short_sha="${GITHUB_SHA::7}"
-          echo "tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
-      - id: immutability
-        name: Refuse existing release tags
-        shell: bash
-        run: |
-          bash .github/scripts/refuse-existing-image-tags.sh \
-            "ghcr.io/ddomelette/1999wiki-backend:${{ steps.tag.outputs.tag }}" \
-            "ghcr.io/ddomelette/1999wiki-frontend:${{ steps.tag.outputs.tag }}"
+          sudo apt-get update
+          sudo apt-get install --yes skopeo
+          skopeo --version
       - id: backend
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile.backend
-          push: true
-          tags: ghcr.io/ddomelette/1999wiki-backend:${{ steps.tag.outputs.tag }}
+          platforms: linux/amd64
+          push: false
+          outputs: type=oci,dest=${{ runner.temp }}/backend.oci
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - id: frontend
@@ -93,36 +83,76 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile.frontend
-          push: true
-          tags: ghcr.io/ddomelette/1999wiki-frontend:${{ steps.tag.outputs.tag }}
+          platforms: linux/amd64
+          push: false
+          outputs: type=oci,dest=${{ runner.temp }}/frontend.oci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - id: manifest
-        name: Create release identity manifest
+      - id: tag
+        name: Derive immutable release tag
         shell: bash
         run: |
-          python3 deploy/bin/release_manifest.py create \
+          short_sha="${GITHUB_SHA::7}"
+          echo "tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
+      - id: publisher
+        name: Publish and verify registry images
+        shell: bash
+        env:
+          TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
+          TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
+          TCR_REGISTRY: ${{ vars.TCR_REGISTRY }}
+          TCR_NAMESPACE: ${{ vars.TCR_NAMESPACE }}
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 .github/scripts/publish_registries.py \
             --commit "$GITHUB_SHA" \
-            --backend-tag "ghcr.io/ddomelette/1999wiki-backend:${{ steps.tag.outputs.tag }}" \
-            --backend-digest "${{ steps.backend.outputs.digest }}" \
-            --frontend-tag "ghcr.io/ddomelette/1999wiki-frontend:${{ steps.tag.outputs.tag }}" \
-            --frontend-digest "${{ steps.frontend.outputs.digest }}" \
-            --output release-manifest.json
-      - name: Upload release identity manifest
+            --backend-archive "${RUNNER_TEMP}/backend.oci" \
+            --frontend-archive "${RUNNER_TEMP}/frontend.oci" \
+            --authfile "${RUNNER_TEMP}/1999wiki-auth.json" \
+            --manifest-output release-manifest.json \
+            --failure-output publication-failure.json \
+            --workflow-run-id "$GITHUB_RUN_ID"
+      - name: Upload release manifest
+        if: ${{ success() }}
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ steps.tag.outputs.tag }}
           path: release-manifest.json
           if-no-files-found: error
           retention-days: 90
+      - name: Upload publication failure
+        if: ${{ failure() && hashFiles('publication-failure.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: publication-failure-${{ steps.tag.outputs.tag }}-${{ github.run_id }}
+          path: publication-failure.json
+          if-no-files-found: error
+          retention-days: 30
       - id: summary
-        name: Write published image digests
+        name: Write canonical release summary
+        if: ${{ success() }}
         shell: bash
         run: |
-          {
-            echo "## Published images"
-            echo "- Commit: ${GITHUB_SHA}"
-            echo "- Backend: ghcr.io/ddomelette/1999wiki-backend:${{ steps.tag.outputs.tag }}@${{ steps.backend.outputs.digest }}"
-            echo "- Frontend: ghcr.io/ddomelette/1999wiki-frontend:${{ steps.tag.outputs.tag }}@${{ steps.frontend.outputs.digest }}"
-            echo "- Artifact: release-${{ steps.tag.outputs.tag }}/release-manifest.json"
-          } >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+
+          with open("release-manifest.json", encoding="utf-8") as stream:
+              manifest = json.load(stream)
+
+          state = manifest["release_state"]
+          if state not in {"ready", "ready_with_deferred_ghcr"}:
+              raise SystemExit("release manifest is not ready")
+
+          print("## Published images")
+          print(f"- Commit: {manifest['commit']}")
+          print(f"- Release tag: {manifest['release_tag']}")
+          print(f"- Release state: {state}")
+          for component in ("backend", "frontend"):
+              registries = manifest["images"][component]["registries"]
+              tcr = registries["tcr"]
+              ghcr = registries["ghcr"]
+              print(f"- {component.title()} TCR: {tcr['status']} — {tcr['ref']}")
+              ghcr_detail = ghcr["ref"] if ghcr["ref"] else ghcr["status"]
+              print(f"- {component.title()} GHCR: {ghcr_detail}")
+          PY
