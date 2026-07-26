@@ -106,14 +106,11 @@ _FATAL_MARKERS = (
     "denied",
     "tag conflict",
     "tag already exists",
-    "already exists",
     "manifest invalid",
     "invalid manifest",
     "manifest rejected",
     "unsupported media type",
-    "media type",
     "digest mismatch",
-    "digest",
 )
 _TRANSIENT_MARKERS = (
     "no such host",
@@ -121,6 +118,7 @@ _TRANSIENT_MARKERS = (
     "connection refused",
     "network is unreachable",
     "dial tcp",
+    "temporary failure in name resolution",
     "i/o timeout",
     "timeout",
 )
