@@ -78,7 +78,7 @@ def _ref(registry: str, component: str, commit: str, digest: str) -> str:
 
 def _release_state(ghcr_statuses: Mapping[str, str]) -> str:
     return (
-        "fully_mirrored"
+        "ready"
         if all(ghcr_statuses[component] == "published" for component in COMPONENTS)
         else "ready_with_deferred_ghcr"
     )

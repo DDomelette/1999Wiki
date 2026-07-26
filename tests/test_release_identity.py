@@ -210,6 +210,16 @@ def test_fully_mirrored_manifest_emits_ghcr_without_attestation() -> None:
         {"backend": BACKEND_DIGEST, "frontend": FRONTEND_DIGEST},
         {"backend": "published", "frontend": "published"},
     )
+    assert manifest["release_state"] == "ready"
+    assert (
+        verify_release_manifest_bytes(canonical_json(manifest), COMMIT)
+        == manifest
+    )
+    noncanonical = copy.deepcopy(manifest)
+    noncanonical["release_state"] = "fully_mirrored"
+    with pytest.raises(ManifestError):
+        verify_release_manifest_bytes(canonical_json(noncanonical), COMMIT)
+
     lines = emit_release_env(manifest, "ghcr")
     assert lines[1] == (
         "BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0@"
@@ -225,3 +235,20 @@ def test_attestation_hash_binds_the_exact_manifest_bytes() -> None:
     raw = canonical_deferred_manifest_bytes()
     attestation = completed_attestation(raw)
     assert attestation["manifest_sha256"] == "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda attestation: attestation.pop("status"),
+        lambda attestation: attestation["images"]["backend"].pop("source"),
+    ],
+)
+def test_attestation_verification_rejects_independent_missing_required_fields(
+    mutate,
+) -> None:
+    raw = canonical_deferred_manifest_bytes()
+    attestation = copy.deepcopy(completed_attestation(raw))
+    mutate(attestation)
+    with pytest.raises(ManifestError):
+        verify_mirror_attestation(raw, attestation, COMMIT)
