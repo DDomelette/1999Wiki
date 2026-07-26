@@ -411,11 +411,12 @@ docker image rm \
   ghcr.io/ddomelette/1999wiki-frontend:sha-deadbee@sha256:<frontend-registry-digest>
 ```
 
-Automated retirement resolves each protected digest-qualified identity to its
-exact local tag, verifies that tag's `RepoDigests` contains the protected digest,
-removes only that identity, and confirms absence before committing state. A
-mismatched tag or Docker query/inspection error fails closed without image
-removal.
+Automated retirement reconciles both the protected tag and its canonical
+repository-at-digest identity. A present tag must advertise the protected
+digest in `RepoDigests`; a mismatched tag is never removed. Retirement removes
+only the exact tag-at-digest and/or canonical digest reference that is present,
+then confirms both identities are absent before committing state. Docker
+query/inspection errors fail closed without state commit.
 
 Do not perform a global prune.
 

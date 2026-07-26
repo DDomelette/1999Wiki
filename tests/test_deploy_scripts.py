@@ -5,6 +5,9 @@ import re
 import shutil
 import subprocess
 import textwrap
+import time
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -744,8 +747,8 @@ def _cleanup_harness(
         EOF
         cat >"$root/releases/sha-1234567/blue.env" <<'EOF'
         RELEASE_COMMIT=1234567890abcdef1234567890abcdef12345678
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
         BACKEND_PORT=18000
         FRONTEND_PORT=18080
         EOF
@@ -773,8 +776,8 @@ def _cleanup_harness(
         ACTIVE_FRONTEND_PORT=18080
         ACTIVE_RELEASE_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-1234567/blue/release.env
         ACTIVE_APP_SNAPSHOT=/tmp/1999wiki/deploy-state/snapshots/sha-1234567/blue/app.env
-        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
         PREVIOUS_AVAILABLE=1
         PREVIOUS_SLOT=green
         PREVIOUS_RELEASE=sha-abcdef0
@@ -788,30 +791,60 @@ def _cleanup_harness(
         EOF
         chmod 600 "$root/deploy-state/active.env"
         {textwrap.dedent(customize)}
+        : >/tmp/image-tags
+        : >/tmp/image-digests
+        case "{image_state}" in
+            exact|remove-noop|inspect-error|list-error|mismatch)
+                printf '%s\\n' \
+                    ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0 \
+                    ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0 \
+                    >/tmp/image-tags
+                ;;
+        esac
+        case "{image_state}" in
+            exact|remove-noop|digest-only)
+                printf '%s\\n' \
+                    ghcr.io/ddomelette/1999wiki-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+                    ghcr.io/ddomelette/1999wiki-frontend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+                    >/tmp/image-digests
+                ;;
+        esac
         cat >"$stub/docker" <<'EOF'
         #!/usr/bin/env bash
         set -Eeuo pipefail
         printf 'docker %s\\n' "$*" >>/tmp/calls
         if [[ "$1" == "image" && "$2" == "ls" ]]; then
             query="${{@: -1}}"
-            if [[ "$query" == *@sha256:* ]]; then
-                exit 0
-            fi
-            case "{image_state}" in
-                absent)
-                    exit 0
-                    ;;
-                list-error)
-                    exit 23
-                    ;;
-            esac
-            if [[ ! -f /tmp/removed-image-tags ]] \
-                || ! grep -Fxq "$query" /tmp/removed-image-tags; then
+            [[ "{image_state}" != "list-error" ]] || exit 23
+            if grep -Fxq "$query" /tmp/image-tags; then
                 printf '%s\\n' "$query"
             fi
         elif [[ "$1" == "image" && "$2" == "inspect" ]]; then
-            [[ "{image_state}" != "inspect-error" ]] || exit 24
-            if [[ "$3" == *"1999wiki-backend"* ]]; then
+            query="$3"
+            if [[ "$query" == *@sha256:* ]] \
+                && [[ "$query" != *:sha-???????@sha256:* ]]; then
+                [[ "{image_state}" != "digest-inspect-error" ]] || {{
+                    printf 'Error response from daemon: fixture daemon error\\n' >&2
+                    exit 24
+                }}
+                if grep -Fxq "$query" /tmp/image-digests; then
+                    printf '["%s"]\\n' "$query"
+                    exit 0
+                fi
+                printf 'Error response from daemon: No such image: %s\\n' \
+                    "$query" >&2
+                exit 1
+            fi
+            [[ "{image_state}" != "inspect-error" ]] || {{
+                printf 'Error response from daemon: fixture daemon error\\n' >&2
+                exit 24
+            }}
+            if ! grep -Fxq "$query" /tmp/image-tags; then
+                printf 'Error response from daemon: No such image: %s\\n' \
+                    "$query" >&2
+                exit 1
+            fi
+            if [[ "$query" == *"1999wiki-backend"* ]]; then
                 repository=ghcr.io/ddomelette/1999wiki-backend
                 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
             else
@@ -826,8 +859,21 @@ def _cleanup_harness(
             shift 2
             if [[ "{image_state}" != "remove-noop" ]]; then
                 for image in "$@"; do
-                    printf '%s\\n' \
-                        "${{image%@sha256:*}}" >>/tmp/removed-image-tags
+                    if [[ "$image" =~ :sha-[0-9a-f]{{7}}@sha256: ]]; then
+                        tag_ref="${{image%@sha256:*}}"
+                        repository="${{tag_ref%:sha-*}}"
+                        canonical="$repository@sha256:${{image##*@sha256:}}"
+                        grep -Fxv "$tag_ref" /tmp/image-tags \
+                            >/tmp/image-tags.next || true
+                        mv /tmp/image-tags.next /tmp/image-tags
+                        grep -Fxv "$canonical" /tmp/image-digests \
+                            >/tmp/image-digests.next || true
+                        mv /tmp/image-digests.next /tmp/image-digests
+                    elif [[ "$image" == *@sha256:* ]]; then
+                        grep -Fxv "$image" /tmp/image-digests \
+                            >/tmp/image-digests.next || true
+                        mv /tmp/image-digests.next /tmp/image-digests
+                    fi
                 done
             fi
         fi
@@ -940,8 +986,8 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
         EOF
         cat >"$root/releases/sha-1234567/blue.env" <<'EOF'
         RELEASE_COMMIT=1234567890abcdef1234567890abcdef12345678
-        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+        FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
         BACKEND_PORT=18000
         FRONTEND_PORT=18080
         EOF
@@ -975,8 +1021,8 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
         ACTIVE_FRONTEND_PORT=18080
         ACTIVE_RELEASE_SNAPSHOT=/tmp/lifecycle/state/snapshots/sha-1234567/blue/release.env
         ACTIVE_APP_SNAPSHOT=/tmp/lifecycle/state/snapshots/sha-1234567/blue/app.env
-        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        ACTIVE_BACKEND_IMAGE=ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+        ACTIVE_FRONTEND_IMAGE=ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
         PREVIOUS_AVAILABLE=0
         PREVIOUS_SLOT=
         PREVIOUS_RELEASE=
@@ -994,6 +1040,18 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
             import $root/active.caddy
         }}
         EOF
+        printf '%s\\n' \
+            ghcr.io/ddomelette/1999wiki-backend:sha-1234567 \
+            ghcr.io/ddomelette/1999wiki-frontend:sha-1234567 \
+            ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0 \
+            ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0 \
+            >/tmp/image-tags
+        printf '%s\\n' \
+            ghcr.io/ddomelette/1999wiki-backend@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+            ghcr.io/ddomelette/1999wiki-frontend@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
+            ghcr.io/ddomelette/1999wiki-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            ghcr.io/ddomelette/1999wiki-frontend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+            >/tmp/image-digests
         cat >"$stub/docker" <<'EOF'
         #!/usr/bin/env bash
         set -Eeuo pipefail
@@ -1006,11 +1064,34 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
             exit 0
         fi
         if [[ "$1" == "image" && "$2" == "inspect" ]]; then
-            if [[ "$3" == *"1999wiki-backend"* ]]; then
-                printf '%s\\n' '["ghcr.io/ddomelette/1999wiki-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]'
-            else
-                printf '%s\\n' '["ghcr.io/ddomelette/1999wiki-frontend@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]'
+            query="$3"
+            if [[ "$query" == *@sha256:* ]] \
+                && [[ "$query" != *:sha-???????@sha256:* ]]; then
+                if grep -Fxq "$query" /tmp/image-digests; then
+                    printf '["%s"]\\n' "$query"
+                    exit 0
+                fi
+                printf 'Error response from daemon: No such image: %s\\n' \
+                    "$query" >&2
+                exit 1
             fi
+            if [[ "$query" == *"1999wiki-backend"* ]]; then
+                repository=ghcr.io/ddomelette/1999wiki-backend
+            else
+                repository=ghcr.io/ddomelette/1999wiki-frontend
+            fi
+            if [[ "$query" == *"sha-1234567"* ]]; then
+                if [[ "$query" == *"1999wiki-backend"* ]]; then
+                    digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+                else
+                    digest=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+                fi
+            elif [[ "$query" == *"1999wiki-backend"* ]]; then
+                digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+            else
+                digest=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+            fi
+            printf '["%s@sha256:%s"]\\n' "$repository" "$digest"
             exit 0
         fi
         if [[ " $* " == *" ps --format json backend frontend "* ]]; then
@@ -1023,8 +1104,7 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
         fi
         if [[ "$1" == "image" && "$2" == "ls" ]]; then
             image_tag="${{@: -1}}"
-            if [[ ! -f /tmp/removed-image-tags ]] \
-                || ! grep -Fxq "$image_tag" /tmp/removed-image-tags; then
+            if grep -Fxq "$image_tag" /tmp/image-tags; then
                 printf '%s\\n' "$image_tag"
             fi
             exit 0
@@ -1032,7 +1112,21 @@ def _lifecycle_harness(*, fail_child_after_commit: bool = False) -> str:
         if [[ "$1" == "image" && "$2" == "rm" ]]; then
             shift 2
             for image in "$@"; do
-                printf '%s\\n' "${{image%@sha256:*}}" >>/tmp/removed-image-tags
+                if [[ "$image" =~ :sha-[0-9a-f]{{7}}@sha256: ]]; then
+                    tag_ref="${{image%@sha256:*}}"
+                    repository="${{tag_ref%:sha-*}}"
+                    canonical="$repository@sha256:${{image##*@sha256:}}"
+                    grep -Fxv "$tag_ref" /tmp/image-tags \
+                        >/tmp/image-tags.next || true
+                    mv /tmp/image-tags.next /tmp/image-tags
+                    grep -Fxv "$canonical" /tmp/image-digests \
+                        >/tmp/image-digests.next || true
+                    mv /tmp/image-digests.next /tmp/image-digests
+                elif [[ "$image" == *@sha256:* ]]; then
+                    grep -Fxv "$image" /tmp/image-digests \
+                        >/tmp/image-digests.next || true
+                    mv /tmp/image-digests.next /tmp/image-digests
+                fi
             done
             exit 0
         fi
@@ -1663,6 +1757,140 @@ def test_rag_permission_preparer_rejects_verified_wrong_total_before_chmod(
     assert "222789868-byte" in result.stdout
 
 
+def test_rag_permission_preparer_rejects_selected_file_replacement_before_mutation(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        f"""\
+        set -Eeuo pipefail
+        {_rag_closure_setup("/tmp/closure")}
+        find /tmp/closure -type d -exec chmod 0750 {{}} +
+        find /tmp/closure -type f -exec chmod 0640 {{}} +
+        python3 - <<'PY'
+        import importlib.util
+        import pathlib
+
+        module_path = pathlib.Path("/repo/deploy/bin/prepare-rag-permissions.py")
+        spec = importlib.util.spec_from_file_location(
+            "prepare_rag_permissions",
+            module_path,
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        target = pathlib.Path(
+            "/tmp/closure/fixture-build/runtime/media_assets.v3.jsonl"
+        )
+        real_run = module.subprocess.run
+        raced = False
+
+        def replace_after_verification(*args, **kwargs):
+            global raced
+            result = real_run(*args, **kwargs)
+            if result.returncode == 0 and "--metadata-json" in args[0]:
+                assert not raced
+                raced = True
+                target.unlink()
+                target.write_text("undeclared replacement\\n", encoding="utf-8")
+                target.chmod(0o600)
+            return result
+
+        module.subprocess.run = replace_after_verification
+        try:
+            module.enforce(pathlib.Path("/tmp/closure"), check_only=False)
+        except module.PermissionContractError:
+            pass
+        else:
+            raise AssertionError("selected-file replacement was accepted")
+
+        assert raced
+        assert target.read_text(encoding="utf-8") == "undeclared replacement\\n"
+        assert target.stat().st_mode & 0o777 == 0o600
+        assert pathlib.Path("/tmp/closure").stat().st_mode & 0o777 == 0o750
+        PY
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_rag_permission_preparer_holds_ancestors_through_mutation(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        f"""\
+        set -Eeuo pipefail
+        {_rag_closure_setup("/tmp/closure")}
+        find /tmp/closure -type d -exec chmod 0750 {{}} +
+        find /tmp/closure -type f -exec chmod 0640 {{}} +
+        python3 - <<'PY'
+        import importlib.util
+        import os
+        import pathlib
+        import shutil
+
+        module_path = pathlib.Path("/repo/deploy/bin/prepare-rag-permissions.py")
+        spec = importlib.util.spec_from_file_location(
+            "prepare_rag_permissions",
+            module_path,
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        runtime = pathlib.Path("/tmp/closure/fixture-build/runtime")
+        retained = runtime.with_name("runtime-retained")
+        outside = pathlib.Path("/tmp/outside-runtime")
+        shutil.copytree(runtime, outside)
+        outside.chmod(0o700)
+        for path in outside.iterdir():
+            path.chmod(0o600)
+
+        real_chmod = os.chmod
+        real_fchmod = os.fchmod
+        raced = False
+
+        def replace_ancestor():
+            global raced
+            if raced:
+                return
+            raced = True
+            runtime.rename(retained)
+            runtime.symlink_to(outside, target_is_directory=True)
+
+        def raced_chmod(path, mode, *args, **kwargs):
+            if mode == module.FILE_MODE:
+                replace_ancestor()
+            return real_chmod(path, mode, *args, **kwargs)
+
+        def raced_fchmod(fd, mode):
+            if mode == module.FILE_MODE:
+                replace_ancestor()
+            return real_fchmod(fd, mode)
+
+        module.os.chmod = raced_chmod
+        module.os.fchmod = raced_fchmod
+        try:
+            module.enforce(pathlib.Path("/tmp/closure"), check_only=False)
+        except module.PermissionContractError:
+            pass
+        else:
+            raise AssertionError("ancestor replacement escaped post-verification")
+
+        assert raced
+        assert runtime.is_symlink()
+        assert retained.stat().st_mode & 0o777 == 0o755
+        assert all(path.stat().st_mode & 0o777 == 0o644 for path in retained.iterdir())
+        assert outside.stat().st_mode & 0o777 == 0o700
+        assert all(path.stat().st_mode & 0o777 == 0o600 for path in outside.iterdir())
+        PY
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_mutating_operations_share_lock_snapshot_and_journal_controls() -> None:
     common = _read(OPS_COMMON)
     helper = _read(OPS_HELPER)
@@ -2098,6 +2326,16 @@ def test_cleanup_stub_removes_only_named_inactive_project_and_exact_images(
         "ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0@sha256:"
         + "b" * 64
     ) in calls
+    assert (
+        "docker image inspect "
+        "ghcr.io/ddomelette/1999wiki-backend@sha256:"
+        + "a" * 64
+    ) in calls
+    assert (
+        "docker image inspect "
+        "ghcr.io/ddomelette/1999wiki-frontend@sha256:"
+        + "b" * 64
+    ) in calls
     assert "--volumes" not in calls
     assert "prune" not in calls
     assert "1999wiki-infra" not in calls
@@ -2107,7 +2345,10 @@ def test_cleanup_stub_removes_only_named_inactive_project_and_exact_images(
     assert "__RETIREMENT=absent" in result.stdout
 
 
-@pytest.mark.parametrize("image_state", ("mismatch", "list-error", "inspect-error"))
+@pytest.mark.parametrize(
+    "image_state",
+    ("mismatch", "list-error", "inspect-error", "digest-inspect-error"),
+)
 def test_cleanup_fails_closed_without_removing_or_committing_indeterminate_images(
     tmp_path: Path,
     image_state: str,
@@ -2147,6 +2388,34 @@ def test_cleanup_accepts_true_image_absence_without_attempting_removal(
     assert "__RETIREMENT=absent" in result.stdout
 
 
+def test_cleanup_removes_digest_only_identity_before_committing_absence(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _cleanup_harness(
+            "remove-green-sha-abcdef0",
+            image_state="digest-only",
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2].partition("__STATE__")[0]
+    assert (
+        "docker image rm "
+        "ghcr.io/ddomelette/1999wiki-backend@sha256:"
+        + "a" * 64
+    ) in calls
+    assert (
+        "docker image rm "
+        "ghcr.io/ddomelette/1999wiki-frontend@sha256:"
+        + "b" * 64
+    ) in calls
+    state = result.stdout.partition("__STATE__")[2].partition("__RETIREMENT")[0]
+    assert "PREVIOUS_AVAILABLE=0" in state
+    assert "__RETIREMENT=absent" in result.stdout
+
+
 def test_cleanup_does_not_commit_when_removed_image_remains_present(
     tmp_path: Path,
 ) -> None:
@@ -2166,64 +2435,156 @@ def test_cleanup_does_not_commit_when_removed_image_remains_present(
     assert "__RETIREMENT=present" in result.stdout
 
 
-def test_local_docker_lists_a_present_digest_qualified_image_only_by_its_tag() -> None:
+def test_real_docker_registry_retirement_reconciles_tag_and_digest_identities() -> None:
     docker = shutil.which("docker")
-    assert docker, "Docker CLI is required for the local image behavior probe"
-    inspected = subprocess.run(
-        [
-            docker,
-            "image",
-            "inspect",
-            SCRIPT_TEST_IMAGE,
-            "--format",
-            "{{json .RepoDigests}}",
-        ],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    assert inspected.returncode == 0, inspected.stdout + inspected.stderr
-    repo_digests = json.loads(inspected.stdout)
-    assert isinstance(repo_digests, list) and repo_digests
-    _repository, digest = repo_digests[0].rsplit("@", 1)
-    qualified = f"{SCRIPT_TEST_IMAGE}@{digest}"
+    assert docker, "Docker CLI is required for the local Registry regression"
+    fixture = uuid.uuid4().hex
+    container = f"1999wiki-retirement-registry-{fixture}"
+    repository = ""
+    tag_ref = ""
+    digest_ref = ""
+    registry_started = False
 
-    by_tag = subprocess.run(
-        [
-            docker,
+    def run(
+        *arguments: str,
+        timeout: int = 60,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [docker, *arguments],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
+    try:
+        source = run("image", "inspect", SCRIPT_TEST_IMAGE)
+        assert source.returncode == 0, source.stdout + source.stderr
+        started = run(
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            container,
+            "-p",
+            "127.0.0.1:5000:5000",
+            "registry:2",
+            timeout=120,
+        )
+        assert started.returncode == 0, started.stdout + started.stderr
+        registry_started = True
+        port = "5000"
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/v2/",
+                    timeout=0.5,
+                ) as response:
+                    assert response.status == 200
+                break
+            except (OSError, urllib.error.URLError):
+                if time.monotonic() >= deadline:
+                    logs = run("logs", container)
+                    pytest.fail(
+                        "local Registry did not become ready: "
+                        + logs.stdout
+                        + logs.stderr
+                    )
+                time.sleep(0.1)
+
+        repository = f"localhost:{port}/1999wiki-retirement-{fixture}/fixture"
+        tag_ref = f"{repository}:sha-{fixture[:7]}"
+        tagged = run("tag", SCRIPT_TEST_IMAGE, tag_ref)
+        assert tagged.returncode == 0, tagged.stdout + tagged.stderr
+        pushed = run("push", tag_ref, timeout=120)
+        assert pushed.returncode == 0, re.sub(
+            r"\x1b\[[0-9;]*m",
+            "",
+            pushed.stdout + pushed.stderr,
+        )
+        digest_match = re.search(
+            r"digest: (sha256:[0-9a-f]{64})",
+            pushed.stdout + pushed.stderr,
+        )
+        assert digest_match is not None
+        digest_ref = f"{repository}@{digest_match.group(1)}"
+        tag_digest_ref = f"{tag_ref}@{digest_match.group(1)}"
+
+        removed_seed_tag = run("image", "rm", tag_ref)
+        assert (
+            removed_seed_tag.returncode == 0
+        ), removed_seed_tag.stdout + removed_seed_tag.stderr
+        pulled_tag = run("pull", tag_ref, timeout=120)
+        assert pulled_tag.returncode == 0, pulled_tag.stdout + pulled_tag.stderr
+        assert run("image", "inspect", tag_ref).returncode == 0
+        assert run("image", "inspect", digest_ref).returncode == 0
+        digest_list = run(
             "image",
             "ls",
             "--format",
             "{{.Repository}}:{{.Tag}}",
-            SCRIPT_TEST_IMAGE,
-        ],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    by_qualified_ref = subprocess.run(
-        [
-            docker,
-            "image",
-            "ls",
+            digest_ref,
+        )
+        assert digest_list.returncode == 0
+        assert digest_list.stdout == ""
+
+        removed_tag_digest = run("image", "rm", tag_digest_ref)
+        assert (
+            removed_tag_digest.returncode == 0
+        ), removed_tag_digest.stdout + removed_tag_digest.stderr
+        assert run("image", "inspect", tag_ref).returncode != 0
+        assert run("image", "inspect", digest_ref).returncode != 0
+
+        pulled_tag = run("pull", tag_ref, timeout=120)
+        assert pulled_tag.returncode == 0, pulled_tag.stdout + pulled_tag.stderr
+        removed_tag = run("image", "rm", tag_ref)
+        assert removed_tag.returncode == 0, removed_tag.stdout + removed_tag.stderr
+        assert run("image", "inspect", tag_ref).returncode != 0
+        assert run("image", "inspect", digest_ref).returncode != 0
+
+        pulled_digest = run("pull", digest_ref, timeout=120)
+        assert (
+            pulled_digest.returncode == 0
+        ), pulled_digest.stdout + pulled_digest.stderr
+        assert run("image", "inspect", tag_ref).returncode != 0
+        assert run("image", "inspect", digest_ref).returncode == 0
+        removed_digest = run("image", "rm", digest_ref)
+        assert (
+            removed_digest.returncode == 0
+        ), removed_digest.stdout + removed_digest.stderr
+        assert run("image", "inspect", digest_ref).returncode != 0
+    finally:
+        for reference in (tag_ref, digest_ref):
+            if reference:
+                run("image", "rm", "--force", reference)
+                assert run("image", "inspect", reference).returncode != 0
+        if registry_started:
+            removed_registry = run("rm", "-f", container)
+            assert (
+                removed_registry.returncode == 0
+            ), removed_registry.stdout + removed_registry.stderr
+        remaining_container = run(
+            "ps",
+            "-a",
+            "--filter",
+            f"name={container}",
             "--format",
-            "{{.Repository}}:{{.Tag}}",
-            qualified,
-        ],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    assert by_tag.returncode == 0, by_tag.stdout + by_tag.stderr
-    assert by_tag.stdout.splitlines() == [SCRIPT_TEST_IMAGE]
-    assert by_qualified_ref.returncode == 0
-    assert by_qualified_ref.stdout == ""
+            "{{.Names}}",
+        )
+        assert remaining_container.returncode == 0
+        assert remaining_container.stdout == ""
+        if repository:
+            remaining_images = run(
+                "image",
+                "ls",
+                "--format",
+                "{{.Repository}}:{{.Tag}}",
+                repository,
+            )
+            assert remaining_images.returncode == 0
+            assert remaining_images.stdout == ""
 
 
 def test_cleanup_wrong_confirmation_issues_no_docker_command(tmp_path: Path) -> None:
@@ -2652,11 +3013,11 @@ def test_full_retirement_lifecycle_makes_old_slot_preflight_reusable(
     assert " down --remove-orphans" in calls
     assert (
         "image rm ghcr.io/ddomelette/1999wiki-backend:sha-1234567@sha256:"
-        + "a" * 64
+        + "c" * 64
     ) in calls
     assert (
         "image rm ghcr.io/ddomelette/1999wiki-frontend:sha-1234567@sha256:"
-        + "b" * 64
+        + "d" * 64
     ) in calls
 
 

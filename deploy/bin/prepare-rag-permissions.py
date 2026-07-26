@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack, contextmanager
 import json
 import os
 import stat
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
+from typing import Iterator
 
 
 DIRECTORY_MODE = 0o755
@@ -22,27 +24,50 @@ class PermissionContractError(ValueError):
     pass
 
 
+FingerprintEntry = tuple[str, str, int, int, int, int, int, int]
+
+
 def _absolute(path: Path) -> Path:
     return Path(os.path.abspath(os.fspath(path)))
 
 
-def _checked_entry(path: Path, *, expect_directory: bool | None = None) -> os.stat_result:
-    try:
-        info = os.lstat(path)
-    except OSError as exc:
-        raise PermissionContractError(f"cannot inspect closure path: {path}") from exc
-    if stat.S_ISLNK(info.st_mode):
-        raise PermissionContractError(f"closure path is a forbidden symlink: {path}")
-    if expect_directory is True and not stat.S_ISDIR(info.st_mode):
-        raise PermissionContractError(f"closure root is not a directory: {path}")
-    if expect_directory is False and not stat.S_ISREG(info.st_mode):
-        raise PermissionContractError(f"closure entry is not a regular file: {path}")
-    return info
+def _relative_parts(value: str) -> tuple[str, ...]:
+    if not value or "\\" in value or "\x00" in value:
+        raise PermissionContractError(
+            "closure verifier returned a noncanonical path"
+        )
+    relative = PurePosixPath(value)
+    if (
+        relative.is_absolute()
+        or relative.as_posix() != value
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise PermissionContractError(
+            "closure verifier returned a noncanonical path"
+        )
+    return relative.parts
 
 
-def _verified_entries(root: Path) -> tuple[list[Path], list[Path]]:
+def _expected_components(relative_files: list[str]) -> dict[str, str]:
+    components = {".": "directory"}
+    for value in relative_files:
+        parts = _relative_parts(value)
+        for index in range(len(parts)):
+            path = PurePosixPath(*parts[: index + 1]).as_posix()
+            kind = "file" if index == len(parts) - 1 else "directory"
+            existing = components.get(path)
+            if existing is not None and existing != kind:
+                raise PermissionContractError(
+                    "closure verifier returned conflicting path metadata"
+                )
+            components[path] = kind
+    return components
+
+
+def _verified_entries(
+    root: Path,
+) -> tuple[Path, list[str], dict[str, FingerprintEntry]]:
     root = _absolute(root)
-    _checked_entry(root, expect_directory=True)
     verifier = Path(__file__).with_name("verify-rag-closure.py")
     result = subprocess.run(
         [
@@ -86,58 +111,198 @@ def _verified_entries(root: Path) -> tuple[list[Path], list[Path]]:
             "closure verifier returned invalid file metadata"
         )
 
-    directories = {root}
-    files: list[Path] = []
-    for value in relative_files:
-        if not value or "\\" in value or "\x00" in value:
-            raise PermissionContractError(
-                "closure verifier returned a noncanonical path"
-            )
-        relative = PurePosixPath(value)
+    expected_components = _expected_components(relative_files)
+    raw_fingerprint = metadata.get("fingerprint")
+    if (
+        not isinstance(raw_fingerprint, list)
+        or len(raw_fingerprint) != len(expected_components)
+    ):
+        raise PermissionContractError(
+            "closure verifier returned invalid fingerprint metadata"
+        )
+    fingerprint: dict[str, FingerprintEntry] = {}
+    for raw_entry in raw_fingerprint:
         if (
-            relative.is_absolute()
-            or relative.as_posix() != value
-            or any(part in {"", ".", ".."} for part in relative.parts)
+            not isinstance(raw_entry, list)
+            or len(raw_entry) != 8
+            or not isinstance(raw_entry[0], str)
+            or not isinstance(raw_entry[1], str)
+            or any(type(value) is not int for value in raw_entry[2:])
         ):
             raise PermissionContractError(
-                "closure verifier returned a noncanonical path"
+                "closure verifier returned invalid fingerprint metadata"
             )
-        current = root
-        for part in relative.parts[:-1]:
-            current = current / part
-            _checked_entry(current, expect_directory=True)
-            directories.add(current)
-        target = root.joinpath(*relative.parts)
-        _checked_entry(target, expect_directory=False)
-        files.append(target)
-    return sorted(directories), sorted(files)
+        path = raw_entry[0]
+        kind = raw_entry[1]
+        if path != ".":
+            _relative_parts(path)
+        if path in fingerprint or expected_components.get(path) != kind:
+            raise PermissionContractError(
+                "closure verifier returned invalid fingerprint metadata"
+            )
+        fingerprint[path] = tuple(raw_entry)  # type: ignore[assignment]
+    if set(fingerprint) != set(expected_components):
+        raise PermissionContractError(
+            "closure verifier returned incomplete fingerprint metadata"
+        )
+    return root, sorted(relative_files), fingerprint
+
+
+def _require_linux_fd_primitives() -> tuple[int, int]:
+    supports_dir_fd = getattr(os, "supports_dir_fd", ())
+    if (
+        sys.platform != "linux"
+        or not hasattr(os, "O_NOFOLLOW")
+        or not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "fchmod")
+        or os.open not in supports_dir_fd
+    ):
+        raise PermissionContractError(
+            "required Linux no-follow descriptor primitives are unavailable"
+        )
+    close_on_exec = getattr(os, "O_CLOEXEC", 0)
+    directory_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY | close_on_exec
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | close_on_exec
+    return directory_flags, file_flags
+
+
+def _compare_fingerprint(
+    fd: int,
+    entry: FingerprintEntry,
+) -> None:
+    path, kind, *expected_signature = entry
+    try:
+        info = os.fstat(fd)
+    except OSError as exc:
+        raise PermissionContractError(
+            f"cannot inspect opened closure component: {path}"
+        ) from exc
+    if (
+        kind == "directory"
+        and not stat.S_ISDIR(info.st_mode)
+    ) or (
+        kind == "file"
+        and not stat.S_ISREG(info.st_mode)
+    ):
+        raise PermissionContractError(
+            f"opened closure component has the wrong type: {path}"
+        )
+    actual_signature = (
+        info.st_dev,
+        info.st_ino,
+        info.st_mode,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+    if actual_signature != tuple(expected_signature):
+        raise PermissionContractError(
+            f"opened closure component changed after verification: {path}"
+        )
+
+
+@contextmanager
+def _opened_verified_entries(
+    root: Path,
+    fingerprint: dict[str, FingerprintEntry],
+) -> Iterator[dict[str, int]]:
+    directory_flags, file_flags = _require_linux_fd_primitives()
+    with ExitStack() as stack:
+        try:
+            root_fd = os.open(root, directory_flags)
+        except OSError as exc:
+            raise PermissionContractError(
+                "cannot open verified closure root without following links"
+            ) from exc
+        stack.callback(os.close, root_fd)
+        opened = {".": root_fd}
+        _compare_fingerprint(root_fd, fingerprint["."])
+        ordered_paths = sorted(
+            (path for path in fingerprint if path != "."),
+            key=lambda path: (len(PurePosixPath(path).parts), path),
+        )
+        for path in ordered_paths:
+            relative = PurePosixPath(path)
+            parent = relative.parent.as_posix()
+            if parent == ".":
+                parent = "."
+            flags = (
+                directory_flags
+                if fingerprint[path][1] == "directory"
+                else file_flags
+            )
+            try:
+                fd = os.open(relative.name, flags, dir_fd=opened[parent])
+            except OSError as exc:
+                raise PermissionContractError(
+                    f"cannot open verified closure component without "
+                    f"following links: {path}"
+                ) from exc
+            stack.callback(os.close, fd)
+            opened[path] = fd
+            _compare_fingerprint(fd, fingerprint[path])
+        yield opened
+
+
+def _expected_mode(kind: str) -> int:
+    return DIRECTORY_MODE if kind == "directory" else FILE_MODE
+
+
+def _check_open_modes(
+    opened: dict[str, int],
+    fingerprint: dict[str, FingerprintEntry],
+) -> None:
+    for path, entry in fingerprint.items():
+        expected_mode = _expected_mode(entry[1])
+        actual_mode = stat.S_IMODE(os.fstat(opened[path]).st_mode)
+        if actual_mode != expected_mode:
+            raise PermissionContractError(
+                f"closure permission mismatch at {path}: "
+                f"expected {expected_mode:04o}, got {actual_mode:04o}"
+            )
+
+
+def _check_post_verification_modes(
+    fingerprint: dict[str, FingerprintEntry],
+) -> None:
+    for path, entry in fingerprint.items():
+        expected_mode = _expected_mode(entry[1])
+        actual_mode = stat.S_IMODE(entry[4])
+        if actual_mode != expected_mode:
+            raise PermissionContractError(
+                f"failed to set {entry[1]} mode: {path}"
+            )
 
 
 def enforce(root: Path, *, check_only: bool) -> tuple[int, int]:
-    directories, files = _verified_entries(root)
-    expected = (
-        *((path, DIRECTORY_MODE) for path in directories),
-        *((path, FILE_MODE) for path in files),
-    )
-    for path, mode in expected:
-        actual = stat.S_IMODE(os.lstat(path).st_mode)
+    root, files, fingerprint = _verified_entries(root)
+    with _opened_verified_entries(root, fingerprint) as opened:
         if check_only:
-            if actual != mode:
-                raise PermissionContractError(
-                    f"closure permission mismatch at {path}: "
-                    f"expected {mode:04o}, got {actual:04o}"
-                )
+            _check_open_modes(opened, fingerprint)
         else:
-            os.chmod(path, mode, follow_symlinks=False)
-    if not check_only:
-        directories, files = _verified_entries(root)
-        for path in directories:
-            if stat.S_IMODE(os.lstat(path).st_mode) != DIRECTORY_MODE:
-                raise PermissionContractError(f"failed to set directory mode: {path}")
-        for path in files:
-            if stat.S_IMODE(os.lstat(path).st_mode) != FILE_MODE:
-                raise PermissionContractError(f"failed to set file mode: {path}")
-    return len(directories), len(files)
+            ordered = sorted(
+                fingerprint,
+                key=lambda path: (
+                    fingerprint[path][1] == "file",
+                    path,
+                ),
+            )
+            for path in ordered:
+                os.fchmod(
+                    opened[path],
+                    _expected_mode(fingerprint[path][1]),
+                )
+            _check_open_modes(opened, fingerprint)
+            _, post_files, post_fingerprint = _verified_entries(root)
+            if post_files != files:
+                raise PermissionContractError(
+                    "verified closure changed after permission preparation"
+                )
+            _check_post_verification_modes(post_fingerprint)
+    directory_count = sum(
+        entry[1] == "directory" for entry in fingerprint.values()
+    )
+    return directory_count, len(files)
 
 
 def main() -> int:

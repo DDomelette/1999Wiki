@@ -401,18 +401,24 @@ ops_retirement_matches_previous() {
     ]]
 }
 
-ops_exact_image_present() {
+ops_set_retirement_image_refs() {
     local image="$1"
-    local image_tag
-    local output
-    local repo_digests
     if [[ \
         "$image" =~ ^(ghcr\.io/ddomelette/1999wiki-(backend|frontend):sha-[0-9a-f]{7})@(sha256:[0-9a-f]{64})$ \
     ]]; then
-        image_tag="${BASH_REMATCH[1]}"
-    else
-        return 2
+        OPS_RETIREMENT_IMAGE_TAG="${BASH_REMATCH[1]}"
+        OPS_RETIREMENT_IMAGE_DIGEST="${OPS_RETIREMENT_IMAGE_TAG%:sha-*}"
+        OPS_RETIREMENT_IMAGE_DIGEST+="@${BASH_REMATCH[3]}"
+        return 0
     fi
+    return 1
+}
+
+ops_exact_retirement_tag_status() {
+    local image="$1"
+    local image_tag="$2"
+    local output
+    local repo_digests
     output="$(
         docker image ls \
             --format '{{.Repository}}:{{.Tag}}' \
@@ -436,6 +442,40 @@ ops_exact_image_present() {
     rm -f -- "$repo_digests"
 }
 
+ops_exact_retirement_digest_status() {
+    local image="$1"
+    local image_digest="$2"
+    local inspect_error
+    local repo_digests
+    local diagnostic
+    repo_digests="$(
+        mktemp "$DEPLOY_STATE_ROOT/.retirement-repo-digests.XXXXXX"
+    )"
+    inspect_error="$(
+        mktemp "$DEPLOY_STATE_ROOT/.retirement-image-error.XXXXXX"
+    )"
+    if docker image inspect \
+        "$image_digest" \
+        --format '{{json .RepoDigests}}' \
+        >"$repo_digests" 2>"$inspect_error"; then
+        if ops_helper validate-image-digests "$repo_digests" "$image"; then
+            rm -f -- "$repo_digests" "$inspect_error"
+            return 0
+        fi
+        rm -f -- "$repo_digests" "$inspect_error"
+        return 2
+    fi
+    diagnostic="$(<"$inspect_error")"
+    rm -f -- "$repo_digests" "$inspect_error"
+    if [[ \
+        "$diagnostic" == \
+        "Error response from daemon: No such image: $image_digest" \
+    ]]; then
+        return 1
+    fi
+    return 2
+}
+
 ops_remove_retirement_resources() {
     ops_load_snapshot "$RETIREMENT_SLOT" "$RETIREMENT_RELEASE_SNAPSHOT"
     [[ \
@@ -446,16 +486,30 @@ ops_remove_retirement_resources() {
     ]] || ops_die "retirement snapshot no longer matches the journal"
     ops_compose "$RETIREMENT_PROJECT" down --remove-orphans
     local image
-    local present_status
+    local digest_status
+    local image_digest
+    local image_tag
+    local tag_status
     for image in "$RETIREMENT_BACKEND_IMAGE" "$RETIREMENT_FRONTEND_IMAGE"; do
+        ops_set_retirement_image_refs "$image" \
+            || ops_die "retirement image identity is invalid"
+        image_tag="$OPS_RETIREMENT_IMAGE_TAG"
+        image_digest="$OPS_RETIREMENT_IMAGE_DIGEST"
         set +e
-        ops_exact_image_present "$image"
-        present_status=$?
+        ops_exact_retirement_tag_status "$image" "$image_tag"
+        tag_status=$?
+        ops_exact_retirement_digest_status "$image" "$image_digest"
+        digest_status=$?
         set -e
-        if (( present_status == 0 )); then
-            docker image rm "$image"
-        elif (( present_status != 1 )); then
+        if (( tag_status > 1 || digest_status > 1 )); then
             ops_die "could not reconcile retirement image presence"
+        fi
+        if (( tag_status == 0 )); then
+            (( digest_status == 0 )) \
+                || ops_die "retirement image identities are inconsistent"
+            docker image rm "$image"
+        elif (( digest_status == 0 )); then
+            docker image rm "$image_digest"
         fi
     done
 }
@@ -465,15 +519,24 @@ ops_verify_retirement_resources_absent() {
     [[ -z "$(ops_compose "$RETIREMENT_PROJECT" ps -a -q)" ]] \
         || ops_die "retirement project still has containers after removal phase"
     local image
-    local present_status
+    local digest_status
+    local image_digest
+    local image_tag
+    local tag_status
     for image in "$RETIREMENT_BACKEND_IMAGE" "$RETIREMENT_FRONTEND_IMAGE"; do
+        ops_set_retirement_image_refs "$image" \
+            || ops_die "retirement image identity is invalid"
+        image_tag="$OPS_RETIREMENT_IMAGE_TAG"
+        image_digest="$OPS_RETIREMENT_IMAGE_DIGEST"
         set +e
-        ops_exact_image_present "$image"
-        present_status=$?
+        ops_exact_retirement_tag_status "$image" "$image_tag"
+        tag_status=$?
+        ops_exact_retirement_digest_status "$image" "$image_digest"
+        digest_status=$?
         set -e
-        if (( present_status == 0 )); then
+        if (( tag_status == 0 || digest_status == 0 )); then
             ops_die "retirement image reappeared after removal phase"
-        elif (( present_status != 1 )); then
+        elif (( tag_status > 1 || digest_status > 1 )); then
             ops_die "could not verify retired image absence"
         fi
     done
