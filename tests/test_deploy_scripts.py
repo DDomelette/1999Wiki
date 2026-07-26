@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import socket
 import subprocess
 import textwrap
 import time
@@ -1815,6 +1816,142 @@ def test_rag_permission_preparer_rejects_selected_file_replacement_before_mutati
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_rag_permission_check_rejects_replacement_after_descriptor_open(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        f"""\
+        set -Eeuo pipefail
+        {_rag_closure_setup("/tmp/closure")}
+        find /tmp/closure -type d -exec chmod 0755 {{}} +
+        find /tmp/closure -type f -exec chmod 0644 {{}} +
+        python3 - <<'PY'
+        import importlib.util
+        import pathlib
+
+        module_path = pathlib.Path("/repo/deploy/bin/prepare-rag-permissions.py")
+        spec = importlib.util.spec_from_file_location(
+            "prepare_rag_permissions",
+            module_path,
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        target = pathlib.Path(
+            "/tmp/closure/fixture-build/runtime/media_assets.v3.jsonl"
+        )
+        original_content = target.read_bytes()
+        original_inode = target.stat().st_ino
+        real_check_open_modes = module._check_open_modes
+        real_fchmod = module.os.fchmod
+        fchmod_calls = []
+        raced = False
+
+        def replace_after_mode_check(opened, fingerprint):
+            global raced
+            real_check_open_modes(opened, fingerprint)
+            assert not raced
+            raced = True
+            target.unlink()
+            target.write_bytes(original_content)
+            target.chmod(0o644)
+
+        def track_fchmod(fd, mode):
+            fchmod_calls.append((fd, mode))
+            return real_fchmod(fd, mode)
+
+        module._check_open_modes = replace_after_mode_check
+        module.os.fchmod = track_fchmod
+        try:
+            module.enforce(pathlib.Path("/tmp/closure"), check_only=True)
+        except module.PermissionContractError:
+            pass
+        else:
+            raise AssertionError("check-only replacement was accepted")
+
+        assert raced
+        assert fchmod_calls == []
+        assert target.read_bytes() == original_content
+        assert target.stat().st_mode & 0o777 == 0o644
+        assert target.stat().st_ino != original_inode
+        PY
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_rag_permission_mutation_rejects_replacement_before_post_verification(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        f"""\
+        set -Eeuo pipefail
+        {_rag_closure_setup("/tmp/closure")}
+        find /tmp/closure -type d -exec chmod 0750 {{}} +
+        find /tmp/closure -type f -exec chmod 0640 {{}} +
+        python3 - <<'PY'
+        import importlib.util
+        import pathlib
+
+        module_path = pathlib.Path("/repo/deploy/bin/prepare-rag-permissions.py")
+        spec = importlib.util.spec_from_file_location(
+            "prepare_rag_permissions",
+            module_path,
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+
+        target = pathlib.Path(
+            "/tmp/closure/fixture-build/runtime/media_assets.v3.jsonl"
+        )
+        original_content = target.read_bytes()
+        original_inode = target.stat().st_ino
+        real_run = module.subprocess.run
+        real_fchmod = module.os.fchmod
+        verifier_calls = 0
+        fchmod_inodes = []
+        replacement_inode = None
+
+        def replace_before_post_verification(*args, **kwargs):
+            global verifier_calls, replacement_inode
+            if "--metadata-json" in args[0]:
+                verifier_calls += 1
+                if verifier_calls == 2:
+                    target.unlink()
+                    target.write_bytes(original_content)
+                    target.chmod(0o644)
+                    replacement_inode = target.stat().st_ino
+            return real_run(*args, **kwargs)
+
+        def track_fchmod(fd, mode):
+            fchmod_inodes.append(module.os.fstat(fd).st_ino)
+            return real_fchmod(fd, mode)
+
+        module.subprocess.run = replace_before_post_verification
+        module.os.fchmod = track_fchmod
+        try:
+            module.enforce(pathlib.Path("/tmp/closure"), check_only=False)
+        except module.PermissionContractError:
+            pass
+        else:
+            raise AssertionError("post-fchmod replacement was accepted")
+
+        assert verifier_calls == 2
+        assert replacement_inode is not None
+        assert replacement_inode != original_inode
+        assert replacement_inode not in fchmod_inodes
+        assert target.read_bytes() == original_content
+        assert target.stat().st_mode & 0o777 == 0o644
+        PY
+        """,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_rag_permission_preparer_holds_ancestors_through_mutation(
     tmp_path: Path,
 ) -> None:
@@ -2438,6 +2575,21 @@ def test_cleanup_does_not_commit_when_removed_image_remains_present(
 def test_real_docker_registry_retirement_reconciles_tag_and_digest_identities() -> None:
     docker = shutil.which("docker")
     assert docker, "Docker CLI is required for the local Registry regression"
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_probe:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            port_probe.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_EXCLUSIVEADDRUSE,
+                1,
+            )
+        try:
+            port_probe.bind(("127.0.0.1", 5000))
+        except OSError as exc:
+            pytest.skip(
+                "local Registry regression requires the fixed Docker Desktop "
+                "insecure Registry endpoint localhost:5000, but IPv4 host "
+                f"port 127.0.0.1:5000 is unavailable: {exc}"
+            )
     fixture = uuid.uuid4().hex
     container = f"1999wiki-retirement-registry-{fixture}"
     repository = ""
@@ -2472,7 +2624,12 @@ def test_real_docker_registry_retirement_reconciles_tag_and_digest_identities() 
             "registry:2",
             timeout=120,
         )
-        assert started.returncode == 0, started.stdout + started.stderr
+        assert started.returncode == 0, (
+            "local Registry preflight found 127.0.0.1:5000 free, but Docker "
+            "could not bind the required localhost:5000 insecure endpoint: "
+            + started.stdout
+            + started.stderr
+        )
         registry_started = True
         port = "5000"
         deadline = time.monotonic() + 10

@@ -274,6 +274,25 @@ def _check_post_verification_modes(
             )
 
 
+def _verify_opened_namespace(
+    root: Path,
+    files: list[str],
+    fingerprint: dict[str, FingerprintEntry],
+    opened: dict[str, int],
+) -> None:
+    _, post_files, post_fingerprint = _verified_entries(root)
+    if (
+        post_files != files
+        or set(post_fingerprint) != set(fingerprint)
+    ):
+        raise PermissionContractError(
+            "verified closure changed after permission preparation"
+        )
+    for path in sorted(post_fingerprint):
+        _compare_fingerprint(opened[path], post_fingerprint[path])
+    _check_post_verification_modes(post_fingerprint)
+
+
 def enforce(root: Path, *, check_only: bool) -> tuple[int, int]:
     root, files, fingerprint = _verified_entries(root)
     with _opened_verified_entries(root, fingerprint) as opened:
@@ -293,12 +312,7 @@ def enforce(root: Path, *, check_only: bool) -> tuple[int, int]:
                     _expected_mode(fingerprint[path][1]),
                 )
             _check_open_modes(opened, fingerprint)
-            _, post_files, post_fingerprint = _verified_entries(root)
-            if post_files != files:
-                raise PermissionContractError(
-                    "verified closure changed after permission preparation"
-                )
-            _check_post_verification_modes(post_fingerprint)
+        _verify_opened_namespace(root, files, fingerprint, opened)
     directory_count = sum(
         entry[1] == "directory" for entry in fingerprint.values()
     )
