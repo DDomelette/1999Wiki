@@ -35,9 +35,14 @@ jobs:
       - name: Validate release identity inputs
         shell: bash
         env:
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           EXPECTED_COMMIT: ${{ inputs.expected_commit }}
         run: |
+          if [[ ! "$RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "release_run_id must be a positive decimal integer" >&2
+            exit 2
+          fi
           if [[ ! "$RELEASE_TAG" =~ ^sha-[0-9a-f]{7}$ ]]; then
             echo "release_tag must match sha- plus seven lowercase hexadecimal characters" >&2
             exit 2

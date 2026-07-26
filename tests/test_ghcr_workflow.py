@@ -142,6 +142,21 @@ def test_publish_builds_once_after_independent_test_jobs() -> None:
     assert not any(path.endswith(".oci") for path in uploaded_paths)
 
 
+def test_publish_grants_package_write_only_to_the_publish_job() -> None:
+    workflow = _workflow(PUBLISH_WORKFLOW)
+    jobs = _jobs(workflow)
+
+    assert workflow["permissions"] == {"contents": "read"}
+    for test_job in ("python-tests", "frontend-tests"):
+        effective = jobs[test_job].get("permissions", workflow["permissions"])
+        assert effective == {"contents": "read"}
+        assert "packages" not in effective
+    assert jobs["publish"]["permissions"] == {
+        "contents": "read",
+        "packages": "write",
+    }
+
+
 def test_publish_passes_registry_credentials_only_through_environment() -> None:
     workflow = _workflow(PUBLISH_WORKFLOW)
     publish = _jobs(workflow)["publish"]
@@ -252,12 +267,37 @@ def test_backfill_downloads_exact_release_and_calls_validating_cli() -> None:
 
     validation = _step_running(backfill, "^sha-[0-9a-f]{7}$")
     validation_command = str(validation["run"])
+    assert _steps(backfill).index(validation) < _steps(backfill).index(download)
+    assert (
+        '[[ ! "$RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]'
+        in validation_command
+    )
     assert "^[0-9a-f]{40}$" in validation_command
     assert 'sha-${EXPECTED_COMMIT:0:7}' in validation_command
     assert validation["env"] == {
+        "RELEASE_RUN_ID": "${{ inputs.release_run_id }}",
         "RELEASE_TAG": "${{ inputs.release_tag }}",
         "EXPECTED_COMMIT": "${{ inputs.expected_commit }}",
     }
+    assert "inputs.release_run_id" not in validation_command
+
+    run_id_pattern = re.compile(r"[1-9][0-9]*", flags=re.ASCII)
+    for accepted in ("1", "9", "10", "123456790"):
+        assert run_id_pattern.fullmatch(accepted)
+    for rejected in (
+        "",
+        "0",
+        "+1",
+        "-1",
+        " 1",
+        "1 ",
+        "01",
+        "123abc",
+        "1e3",
+        "１２３",
+        "١٢٣",
+    ):
+        assert run_id_pattern.fullmatch(rejected) is None
 
     skopeo = _step_running(backfill, "apt-get install --yes skopeo")
     assert "skopeo --version" in str(skopeo["run"])
