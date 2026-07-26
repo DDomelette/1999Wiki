@@ -57,7 +57,14 @@ def _cfg(processed_root: Path, *, collection: str = "fixture-collection"):
     )
 
 
-def _pointer(processed_root: Path, build: str, schema: str, collection: str) -> None:
+def _pointer(
+    processed_root: Path,
+    build: str,
+    schema: str,
+    collection: str,
+    *,
+    artifact_prefix: str = "data/processed/huiji",
+) -> None:
     manifest = processed_root / build / "build_manifest.json"
     collection_sha = "b" * 64
     inventory_sha = "d" * 64
@@ -78,13 +85,12 @@ def _pointer(processed_root: Path, build: str, schema: str, collection: str) -> 
             "media_schema": "runtime/media_assets.v3.schema.json",
             "media_manifest": "runtime/media_assets.v3.manifest.json",
         }
-        project_root = processed_root.parents[2]
         artifacts = {
             name: {
-                "relative_path": (processed_root / build / relative)
-                .resolve()
-                .relative_to(project_root)
-                .as_posix(),
+                "relative_path": (
+                    f"{artifact_prefix.rstrip('/')}/"
+                    f"{(processed_root / build / relative).relative_to(processed_root).as_posix()}"
+                ),
                 "sha256": _sha(processed_root / build / relative),
                 "size": (processed_root / build / relative).stat().st_size,
             }
@@ -232,6 +238,22 @@ def test_runtime_loader_uses_explicit_legacy_v2_and_v3_capabilities(tmp_path):
     assert set(v3.artifact_sha256) >= {
         "parent_blocks", "child_blocks", "media_assets", "child_bm25", "media_bm25"
     }
+
+
+def test_v3_snapshot_accepts_production_relocated_runtime_root(tmp_path):
+    processed_root = tmp_path / "runtime" / "rag" / "huiji"
+    _v3_build(processed_root)
+    _pointer(
+        processed_root,
+        "v3-build",
+        MEDIA_V3_ROW_SCHEMA_VERSION,
+        "fixture-collection",
+        artifact_prefix="data/processed/huiji",
+    )
+
+    snapshot = resolve_runtime_artifact_snapshot(_cfg(processed_root))
+
+    assert snapshot.build_root == (processed_root / "v3-build").resolve()
 
 
 def test_v3_snapshot_rejects_bm25_drift_and_collection_mismatch(tmp_path, monkeypatch):

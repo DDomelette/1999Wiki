@@ -271,15 +271,16 @@ def _validate_activation_collection_manifest(
     entries = collection.get("artifacts")
     if not isinstance(entries, Mapping):
         raise ValueError("activation artifact map is invalid")
-    project_root = processed_root.parents[2]
+    artifact_prefix = "data/processed/huiji"
     for name, digest in hashes.items():
         evidence = entries.get(name)
         path = paths.get(name)
         if not isinstance(evidence, Mapping) or path is None:
             raise ValueError(f"activation artifact is missing: {name}")
+        relative = path.resolve().relative_to(processed_root.resolve()).as_posix()
         if (
             evidence.get("relative_path")
-            != path.resolve().relative_to(project_root).as_posix()
+            != f"{artifact_prefix}/{relative}"
             or evidence.get("sha256") != digest
             or evidence.get("size") != path.stat().st_size
         ):
