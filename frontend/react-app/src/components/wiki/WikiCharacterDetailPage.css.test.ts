@@ -53,7 +53,8 @@ describe('Stitch character dossier visual contract', () => {
     expect(indexHtml).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com|cdn\.jsdelivr\.net/)
     expect(main).toMatch(/import '\.\/styles\/fonts\.css'[\s\S]*import '\.\/styles\/themes\.css'/)
     expect(fontsCss.match(/@font-face/g)).toHaveLength(5)
-    expect(fontsCss.match(/font-display:\s*swap/g)).toHaveLength(5)
+    expect(fontsCss.match(/font-display:\s*swap/g)).toHaveLength(3)
+    expect(fontsCss.match(/font-display:\s*optional/g)).toHaveLength(2)
     expect(fontsCss).toContain("font-family: 'Libre Caslon Text'")
     expect(fontsCss).toContain("font-family: 'JetBrains Mono'")
     expect(fontsCss).toContain("font-family: 'Noto Serif SC'")
@@ -62,8 +63,8 @@ describe('Stitch character dossier visual contract', () => {
       'fonts/libre-caslon-text-variable.ttf',
       'fonts/libre-caslon-text-italic-variable.ttf',
       'fonts/jetbrains-mono-variable.ttf',
-      'fonts/noto-serif-sc-regular.otf',
-      'fonts/noto-serif-sc-bold.otf',
+      'fonts/noto-serif-sc-regular.woff2',
+      'fonts/noto-serif-sc-bold.woff2',
     ]) {
       expect(existsSync(new URL(path, publicUrl)), `missing public/${path}`).toBe(true)
     }
