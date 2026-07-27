@@ -2668,6 +2668,46 @@ def test_cleanup_fails_closed_before_image_removal_for_cross_registry_same_diges
     assert "__RETIREMENT=present" in result.stdout
 
 
+def test_cleanup_preserves_digest_shared_by_active_tag_in_same_repository(
+    tmp_path: Path,
+) -> None:
+    result = _run_linux_harness(
+        tmp_path,
+        _cleanup_harness(
+            "remove-green-sha-abcdef0",
+            customize="""\
+            sed -i \
+                -e 's/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/g' \
+                -e 's/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/g' \
+                "$root/deploy-state/active.env" \
+                "$root/deploy-state/snapshots/sha-1234567/blue/release.env"
+            """,
+        ),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "__STATUS=0" in result.stdout
+    calls = result.stdout.partition("__CALLS__")[2].partition("__STATE__")[0]
+    assert (
+        "docker image rm ghcr.io/ddomelette/1999wiki-backend:sha-abcdef0"
+        in calls
+    )
+    assert (
+        "docker image rm ghcr.io/ddomelette/1999wiki-frontend:sha-abcdef0"
+        in calls
+    )
+    assert (
+        "docker image rm ghcr.io/ddomelette/1999wiki-backend@sha256:"
+        + "a" * 64
+    ) not in calls
+    assert (
+        "docker image rm ghcr.io/ddomelette/1999wiki-frontend@sha256:"
+        + "b" * 64
+    ) not in calls
+    state = result.stdout.partition("__STATE__")[2].partition("__RETIREMENT")[0]
+    assert "PREVIOUS_AVAILABLE=0" in state
+    assert "__RETIREMENT=absent" in result.stdout
+
+
 def test_real_docker_registry_retirement_reconciles_tag_and_digest_identities() -> None:
     docker = shutil.which("docker")
     assert docker, "Docker CLI is required for the local Registry regression"

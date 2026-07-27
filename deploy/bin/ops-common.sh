@@ -437,6 +437,29 @@ ops_reject_cross_repository_digest_alias() {
     fi
 }
 
+ops_retirement_digest_is_active() {
+    local retirement_image="$1"
+    local retirement_output
+    local active_image
+    local active_output
+    local -a retirement_refs
+    local -a active_refs
+    retirement_output="$(ops_helper emit-image-identity "$retirement_image")" \
+        || return 1
+    mapfile -t retirement_refs <<<"$retirement_output"
+    [[ "${#retirement_refs[@]}" -eq 2 ]] || return 1
+    for active_image in "$ACTIVE_BACKEND_IMAGE" "$ACTIVE_FRONTEND_IMAGE"; do
+        active_output="$(ops_helper emit-image-identity "$active_image")" \
+            || return 1
+        mapfile -t active_refs <<<"$active_output"
+        [[ "${#active_refs[@]}" -eq 2 ]] || return 1
+        if [[ "${active_refs[1]}" == "${retirement_refs[1]}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 ops_exact_retirement_tag_status() {
     local image="$1"
     local image_tag="$2"
@@ -518,12 +541,17 @@ ops_remove_retirement_resources() {
     local digest_status
     local image_digest
     local image_tag
+    local digest_is_active
     local tag_status
     for image in "$RETIREMENT_BACKEND_IMAGE" "$RETIREMENT_FRONTEND_IMAGE"; do
         ops_set_retirement_image_refs "$image" \
             || ops_die "retirement image identity is invalid"
         image_tag="$OPS_RETIREMENT_IMAGE_TAG"
         image_digest="$OPS_RETIREMENT_IMAGE_DIGEST"
+        digest_is_active=0
+        if ops_retirement_digest_is_active "$image"; then
+            digest_is_active=1
+        fi
         set +e
         ops_exact_retirement_tag_status "$image" "$image_tag"
         tag_status=$?
@@ -543,10 +571,10 @@ ops_remove_retirement_resources() {
             set -e
             if (( digest_status > 1 )); then
                 ops_die "could not reconcile retirement image digest after tag removal"
-            elif (( digest_status == 0 )); then
+            elif (( digest_status == 0 && digest_is_active == 0 )); then
                 docker image rm "$image_digest"
             fi
-        elif (( digest_status == 0 )); then
+        elif (( digest_status == 0 && digest_is_active == 0 )); then
             docker image rm "$image_digest"
         fi
     done
@@ -560,19 +588,24 @@ ops_verify_retirement_resources_absent() {
     local digest_status
     local image_digest
     local image_tag
+    local digest_is_active
     local tag_status
     for image in "$RETIREMENT_BACKEND_IMAGE" "$RETIREMENT_FRONTEND_IMAGE"; do
         ops_set_retirement_image_refs "$image" \
             || ops_die "retirement image identity is invalid"
         image_tag="$OPS_RETIREMENT_IMAGE_TAG"
         image_digest="$OPS_RETIREMENT_IMAGE_DIGEST"
+        digest_is_active=0
+        if ops_retirement_digest_is_active "$image"; then
+            digest_is_active=1
+        fi
         set +e
         ops_exact_retirement_tag_status "$image" "$image_tag"
         tag_status=$?
         ops_exact_retirement_digest_status "$image" "$image_digest"
         digest_status=$?
         set -e
-        if (( tag_status == 0 || digest_status == 0 )); then
+        if (( tag_status == 0 || (digest_status == 0 && digest_is_active == 0) )); then
             ops_die "retirement image reappeared after removal phase"
         elif (( tag_status > 1 || digest_status > 1 )); then
             ops_die "could not verify retired image absence"
