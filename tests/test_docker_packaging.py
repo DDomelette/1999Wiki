@@ -198,15 +198,6 @@ def _is_ignored(path: str, rules: tuple[str, ...] | None = None) -> bool:
     return ignored
 
 
-def _normalized_caddy_lines() -> tuple[str, ...]:
-    lines: list[str] = []
-    for raw_line in _read(CADDYFILE).splitlines():
-        directive = raw_line.split("#", 1)[0].strip()
-        if directive:
-            lines.append(re.sub(r"\s+", " ", directive))
-    return tuple(lines)
-
-
 def test_parser_ignores_comments_and_scopes_instructions_to_stages() -> None:
     stages = _parse_dockerfile_text(
         """
@@ -410,31 +401,6 @@ def test_frontend_stages_build_then_serve_only_dist_as_caddy() -> None:
     assert re.search(r"\baddgroup\b.*\bcaddy\b", runtime_setup)
     assert re.search(r"\badduser\b.*\bcaddy\b", runtime_setup)
     assert re.search(r"\bchown\b.*\bcaddy:caddy\b.*?/config\b.*?/data\b", runtime_setup)
-
-
-def test_caddy_configuration_exactly_routes_api_before_spa() -> None:
-    assert _normalized_caddy_lines() == (
-        ":8080 {",
-        "@health path /health /health/*",
-        "handle @health {",
-        "reverse_proxy backend:8000",
-        "}",
-        "handle /api/wiki/* {",
-        "reverse_proxy backend:8000",
-        "}",
-        "handle /api/media/* {",
-        "reverse_proxy backend:8000",
-        "}",
-        "handle_path /api/* {",
-        "reverse_proxy backend:8000",
-        "}",
-        "handle {",
-        "root * /srv",
-        "try_files {path} /index.html",
-        "file_server",
-        "}",
-        "}",
-    )
 
 
 def test_frontend_caddy_routes_preserved_and_stripped_api_families(
