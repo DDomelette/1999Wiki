@@ -11,6 +11,14 @@ const titleVariants = {
   }),
 }
 
+type IdleScheduler = {
+  requestIdleCallback?: (
+    callback: IdleRequestCallback,
+    options?: IdleRequestOptions,
+  ) => number
+  cancelIdleCallback?: (handle: number) => void
+}
+
 export function HomeSection() {
   const [showToast, setShowToast] = useState(false)
   const [videoEnabled, setVideoEnabled] = useState(false)
@@ -20,16 +28,17 @@ export function HomeSection() {
   useEffect(() => {
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
 
-    if ('requestIdleCallback' in window) {
-      const idleId = window.requestIdleCallback(
+    const idleScheduler = window as unknown as IdleScheduler
+    if (idleScheduler.requestIdleCallback) {
+      const idleId = idleScheduler.requestIdleCallback(
         () => setVideoEnabled(true),
         { timeout: 2000 },
       )
-      return () => window.cancelIdleCallback(idleId)
+      return () => idleScheduler.cancelIdleCallback?.(idleId)
     }
 
-    const timeoutId = window.setTimeout(() => setVideoEnabled(true), 1500)
-    return () => window.clearTimeout(timeoutId)
+    const timeoutId = globalThis.setTimeout(() => setVideoEnabled(true), 1500)
+    return () => globalThis.clearTimeout(timeoutId)
   }, [])
 
   return (
