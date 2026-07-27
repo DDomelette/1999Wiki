@@ -1,4 +1,6 @@
 :8080 {
+	encode zstd gzip
+
 	@health path /health /health/*
 	handle @health {
 		reverse_proxy backend:8000
@@ -12,8 +14,24 @@
 	handle_path /api/* {
 		reverse_proxy backend:8000
 	}
+
+	@immutable path /assets/*
+	handle @immutable {
+		root * /srv
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	@retained_media path /fonts/* /images/* /videos/*
+	handle @retained_media {
+		root * /srv
+		header Cache-Control "public, max-age=604800"
+		file_server
+	}
+
 	handle {
 		root * /srv
+		header Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}
