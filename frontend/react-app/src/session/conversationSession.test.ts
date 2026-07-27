@@ -71,6 +71,28 @@ function storageWith(id: string) {
 }
 
 describe('ConversationSession', () => {
+  it('generates a valid UUID when crypto.randomUUID is unavailable on HTTP', () => {
+    const randomUuidDescriptor = Object.getOwnPropertyDescriptor(crypto, 'randomUUID')
+    Object.defineProperty(crypto, 'randomUUID', {
+      configurable: true,
+      value: undefined,
+    })
+
+    try {
+      const session = new ConversationSession(new MemoryStorage(), channelFactory(), undefined, 1)
+      expect(session.currentId()).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      )
+      session.close()
+    } finally {
+      if (randomUuidDescriptor) {
+        Object.defineProperty(crypto, 'randomUUID', randomUuidDescriptor)
+      } else {
+        Reflect.deleteProperty(crypto, 'randomUUID')
+      }
+    }
+  })
+
   it('reuses the same id after refresh-like reconstruction', async () => {
     const storage = new MemoryStorage()
     const channels = channelFactory()
