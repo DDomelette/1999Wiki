@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { GLOBAL_BACKGROUND_IMAGE_SRC, HOME_VIDEO_SRC } from '../../media/assets'
 import './HomeSection.css'
 
@@ -13,8 +13,24 @@ const titleVariants = {
 
 export function HomeSection() {
   const [showToast, setShowToast] = useState(false)
+  const [videoEnabled, setVideoEnabled] = useState(false)
   const [videoFailed, setVideoFailed] = useState(false)
   const [videoReady, setVideoReady] = useState(false)
+
+  useEffect(() => {
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+
+    if ('requestIdleCallback' in window) {
+      const idleId = window.requestIdleCallback(
+        () => setVideoEnabled(true),
+        { timeout: 2000 },
+      )
+      return () => window.cancelIdleCallback(idleId)
+    }
+
+    const timeoutId = window.setTimeout(() => setVideoEnabled(true), 1500)
+    return () => window.clearTimeout(timeoutId)
+  }, [])
 
   return (
     <section
@@ -30,13 +46,14 @@ export function HomeSection() {
           filter: videoFailed ? 'none' : 'brightness(0.76)',
         }}
       />
-      {!videoFailed && (
+      {videoEnabled && !videoFailed && (
         <video
           className="home-section__video"
           autoPlay
           muted
           loop
           playsInline
+          preload="none"
           poster={GLOBAL_BACKGROUND_IMAGE_SRC}
           onError={() => setVideoFailed(true)}
           onCanPlay={() => setVideoReady(true)}
