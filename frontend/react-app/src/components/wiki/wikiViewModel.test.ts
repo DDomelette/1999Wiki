@@ -4,7 +4,7 @@ import {
   buildFallbackBlocks,
   buildWikiIndexItem,
   buildWikiPageViewModel,
-  isPublicHttpUrl,
+  isPublicMediaUrl,
 } from './wikiViewModel'
 
 const block = (id: string, section: string): WikiContentBlock => ({
@@ -67,6 +67,65 @@ function detail(): WikiPageDetail {
 }
 
 describe('wikiViewModel', () => {
+  it('retains production same-origin media for index thumbnails', () => {
+    const thumbnail = '/media/reverse1999-assets/reverse1999/portrait/aa/example.webp'
+    const page: WikiPageListItem = {
+      pageId: 'char:3003',
+      pageType: 'character',
+      title: 'Druvis III',
+      subtitle: 'Data:Char/3003.json',
+      category: 'Character',
+      route: '/wiki/character/3003',
+      thumbnail,
+    }
+
+    expect(buildWikiIndexItem(page).thumbnail).toBe(thumbnail)
+  })
+
+  it('retains production same-origin media in the page view model', () => {
+    const url = '/media/reverse1999-assets/reverse1999/portrait/aa/example.webp'
+    const page = detail()
+    page.mediaLinks = [{
+      mediaId: 'same-origin-portrait',
+      role: 'stage_portrait',
+      assetType: 'portrait',
+      mime: 'image/webp',
+      variant: 'initial',
+      url,
+      title: 'Same-origin portrait',
+    }]
+
+    expect(buildWikiPageViewModel(page).primaryMedia?.url).toBe(url)
+  })
+
+  it('rejects unsafe or unrelated root-relative thumbnail URLs', () => {
+    const unsafe = [
+      '//evil.example/image.webp',
+      '/other/image.webp',
+      '/media/',
+      '/media/bucket/../secret.webp',
+      '/media/bucket/%2e%2e/secret.webp',
+      '/media/bucket/image.webp?download=1',
+      '/media/bucket/image.webp#fragment',
+      '/media/bucket\\image.webp',
+      'javascript:alert(1)',
+      'data:image/webp;base64,AAAA',
+    ]
+
+    for (const thumbnail of unsafe) {
+      const page: WikiPageListItem = {
+        pageId: 'char:unsafe',
+        pageType: 'character',
+        title: 'Unsafe',
+        subtitle: '',
+        category: 'Character',
+        route: '/wiki/character/unsafe',
+        thumbnail,
+      }
+      expect(buildWikiIndexItem(page).thumbnail, thumbnail).toBe('')
+    }
+  })
+
   it('builds a safe index item without inventing a route', () => {
     const page: WikiPageListItem = {
       pageId: 'char:3003',
@@ -237,11 +296,19 @@ describe('wikiViewModel', () => {
     expect(blocks.every((item) => !/技能|稀有度|阵营/.test(item.section))).toBe(true)
   })
 
-  it('accepts only public HTTP media URLs', () => {
-    expect(isPublicHttpUrl('https://cdn.test/a.webp')).toBe(true)
-    expect(isPublicHttpUrl('http://127.0.0.1:9002/a.webp')).toBe(true)
-    expect(isPublicHttpUrl('file:///a.webp')).toBe(false)
-    expect(isPublicHttpUrl('D:\\a.webp')).toBe(false)
-    expect(isPublicHttpUrl(null)).toBe(false)
+  it('accepts only safe public media URLs', () => {
+    expect(isPublicMediaUrl('https://cdn.test/a.webp')).toBe(true)
+    expect(isPublicMediaUrl('http://127.0.0.1:9002/a.webp')).toBe(true)
+    expect(isPublicMediaUrl('/media/bucket/folder/a.webp')).toBe(true)
+    expect(isPublicMediaUrl('//evil.example/a.webp')).toBe(false)
+    expect(isPublicMediaUrl('/other/a.webp')).toBe(false)
+    expect(isPublicMediaUrl('/media/bucket/../a.webp')).toBe(false)
+    expect(isPublicMediaUrl('/media/bucket/%2e%2e/a.webp')).toBe(false)
+    expect(isPublicMediaUrl('https://cdn.test/a/../b.webp')).toBe(false)
+    expect(isPublicMediaUrl('/media/bucket/a.webp?download=1')).toBe(false)
+    expect(isPublicMediaUrl('/media/bucket/a.webp#fragment')).toBe(false)
+    expect(isPublicMediaUrl('file:///a.webp')).toBe(false)
+    expect(isPublicMediaUrl('D:\\a.webp')).toBe(false)
+    expect(isPublicMediaUrl(null)).toBe(false)
   })
 })

@@ -1,6 +1,6 @@
 import type { WikiContentBlock, WikiMediaLink } from '../../types/wiki'
 import type { WikiMediaViewModel, WikiPageViewModel } from './wikiViewModel'
-import { isPublicHttpUrl } from './wikiViewModel'
+import { isPublicMediaUrl } from './wikiViewModel'
 
 export interface CharacterIdentityViewModel {
   pageId: string
@@ -568,7 +568,7 @@ function buildMediaMap(items: WikiMediaLink[]): Map<string, CharacterMediaViewMo
     const compatibilityId = firstText(item.mediaId, item.media_id, item.assetId, item.asset_id)
     const id = firstText(bindingId, compatibilityId)
     const url = firstText(item.url)
-    if (!id || !isPublicHttpUrl(url)) continue
+    if (!id || !isPublicMediaUrl(url)) continue
     const viewModel = {
       id,
       url,

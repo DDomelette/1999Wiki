@@ -70,17 +70,57 @@ const PROFILE_FIELDS = [
   '出场章节',
 ] as const
 
-export function isPublicHttpUrl(value: unknown): value is string {
-  return typeof value === 'string' && /^https?:\/\/[^\s]+$/i.test(value)
+const UNSAFE_MEDIA_URL_CHARACTERS = /[\s\\\u0000-\u001f\u007f]/
+
+function decodedMediaPath(value: string): string | null {
+  const schemeIndex = value.indexOf('://')
+  const pathIndex = schemeIndex >= 0 ? value.indexOf('/', schemeIndex + 3) : 0
+  const rawPath = pathIndex >= 0 ? value.slice(pathIndex) : '/'
+
+  try {
+    const decodedPath = decodeURIComponent(rawPath)
+    if (UNSAFE_MEDIA_URL_CHARACTERS.test(decodedPath) || /[?#]/.test(decodedPath)) return null
+    if (decodedPath.split('/').some((segment) => segment === '.' || segment === '..')) return null
+    return decodedPath
+  } catch {
+    return null
+  }
 }
 
-function isPublicImageUrl(value: unknown): value is string {
-  if (!isPublicHttpUrl(value)) return false
+export function isPublicMediaUrl(value: unknown): value is string {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || UNSAFE_MEDIA_URL_CHARACTERS.test(value)
+    || /[?#]/.test(value)
+    || value.startsWith('//')
+  ) {
+    return false
+  }
+
+  const decodedPath = decodedMediaPath(value)
+  if (!decodedPath) return false
+
+  if (value.startsWith('/')) {
+    const segments = decodedPath.slice(1).split('/')
+    return value.startsWith('/media/')
+      && decodedPath.startsWith('/media/')
+      && segments.length >= 3
+      && segments.every(Boolean)
+  }
+
   try {
-    return /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(new URL(value).pathname)
+    const url = new URL(value)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname)
   } catch {
     return false
   }
+}
+
+function isPublicImageUrl(value: unknown): value is string {
+  if (!isPublicMediaUrl(value)) return false
+  const path = decodedMediaPath(value)
+  return path !== null && /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(path)
 }
 
 export function buildWikiIndexItem(page: WikiPageListItem): WikiIndexItemViewModel {
@@ -174,7 +214,7 @@ export function buildFallbackBlocks(text: string): WikiContentBlock[] {
 }
 
 function toMediaViewModel(item: Record<string, unknown>, index: number): WikiMediaViewModel | null {
-  if (!isPublicHttpUrl(item.url)) return null
+  if (!isPublicMediaUrl(item.url)) return null
   const kind = mediaKind(item)
   if (!kind) return null
   const variant = kind === 'portrait' ? portraitVariant(item) : 'unspecified'

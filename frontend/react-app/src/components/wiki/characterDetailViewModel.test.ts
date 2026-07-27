@@ -206,6 +206,40 @@ function character3003(): WikiPageDetail {
 }
 
 describe('characterDetailViewModel', () => {
+  it('retains production same-origin portrait media for crawler skins', () => {
+    const live2dUrl = '/media/reverse1999-assets/reverse1999/portrait/aa/live2d.webp'
+    const portraitUrl = '/media/reverse1999-assets/reverse1999/portrait/bb/portrait.webp'
+    const page = character3003()
+    page.content.skins = [{
+      id: '300301',
+      name: 'Initial Archive',
+      mediaIds: {
+        stage_live2d: 'char:3003/crawler:stage_live2d:300301',
+        stage_portrait: 'char:3003/crawler:stage_portrait:300301',
+      },
+    }]
+    page.mediaLinks = [
+      media({
+        mediaId: 'live2d-resource',
+        role: 'stage_live2d',
+        skinId: '300301',
+        url: live2dUrl,
+      }),
+      media({
+        mediaId: 'portrait-resource',
+        role: 'stage_portrait',
+        skinId: '300301',
+        url: portraitUrl,
+      }),
+    ]
+
+    const view = buildCharacterDetailViewModel(buildWikiPageViewModel(page))
+
+    expect(view.portraitStates).toHaveLength(1)
+    expect(view.portraitStates[0].live2dMedia?.url).toBe(live2dUrl)
+    expect(view.portraitStates[0].portraitMedia?.url).toBe(portraitUrl)
+  })
+
   it('maps the real 3003-shaped detail into every approved dossier module without mutation', () => {
     const page = character3003()
     const before = JSON.stringify(page)
