@@ -206,7 +206,12 @@ class RAGExecutionService:
         elif prepared.generation_mode == "free_supplement":
             from .chain import _FREE_SUPPLEMENT_PREFIX
 
-            supplemented = f"{_FREE_SUPPLEMENT_PREFIX}{draft or ''}"
+            raw_draft = draft or ""
+            supplemented = (
+                raw_draft
+                if raw_draft.startswith(_FREE_SUPPLEMENT_PREFIX)
+                else f"{_FREE_SUPPLEMENT_PREFIX}{raw_draft}"
+            )
             answer, validation = validate_or_repair_answer(
                 draft=supplemented,
                 context="",

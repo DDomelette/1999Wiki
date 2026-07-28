@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -13,6 +14,8 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessageChunk
 
 from src.rag.conversation import ConversationMemoryStore
+from src.rag.execution import AskExecutionInput, PreparedExecution
+from src.rag.serializers import response_packet_to_public_dict
 from tests.conftest import CONVERSATION_ID, ExecutionAdapter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -44,6 +47,196 @@ def _stream_events(client, question: str, conversation_id: str):
 class _ExecuteProtocol:
     def execute(self, *args, **kwargs):
         return ExecutionAdapter(self).execute(*args, **kwargs)
+
+
+class _TrueStreamingChain:
+    def __init__(self, chunks=("first", " second"), final_answer="first second"):
+        class _PacketFixture:
+            def ask(self, question, **_kwargs):
+                return {
+                    "answer": "unused",
+                    "sources": [{
+                        "name": "Fixture",
+                        "category": "fixture",
+                        "source": "fixture.md",
+                        "score": 1.0,
+                        "content": "Evidence",
+                    }],
+                    "context": "Evidence",
+                }
+
+        self.packet = ExecutionAdapter(_PacketFixture()).execute("Question")
+        self.chunks = tuple(chunks)
+        self.final_answer = final_answer
+        self.finished = False
+
+    def prepare_execution(
+        self,
+        question,
+        category=None,
+        route_options=None,
+        action_payload=None,
+        conversation=None,
+        memory_status="disabled",
+        memory_turns_used=0,
+        trace=None,
+    ):
+        del trace
+        return PreparedExecution(
+            request=AskExecutionInput(
+                question=question,
+                category=category,
+                route_options=route_options or {},
+                action_payload=action_payload,
+                memory_status=memory_status,
+                memory_turns_used=memory_turns_used,
+            ),
+            conversation=conversation,
+            retrieval_packet=self.packet.retrieval_packet,
+            answer_context="Evidence",
+            generation_messages=(),
+            generation_mode="grounded",
+            immediate_answer=None,
+            missing_intents=(),
+        )
+
+    async def astream_prepared(self, prepared):
+        del prepared
+        for chunk in self.chunks:
+            yield chunk
+            await asyncio.sleep(0)
+        self.finished = True
+
+    def finalize_execution(self, prepared, draft, trace=None):
+        del prepared
+        if trace is not None:
+            trace.mark_validated_ready()
+        return replace(self.packet, answer=self.final_answer or draft)
+
+
+def test_stream_emits_real_model_chunk_before_generation_finishes():
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        chain = _TrueStreamingChain()
+        generator = rag_stream_generator(chain, "Question", None)
+        first_blocks = [await anext(generator) for _ in range(5)]
+        first_events = _parse_sse("".join(first_blocks))
+
+        assert [name for name, _data in first_events] == [
+            "status",
+            "status",
+            "sources",
+            "status",
+            "token",
+        ]
+        assert first_events[-1][1]["token"] == "first"
+        assert chain.finished is False
+        await generator.aclose()
+
+    asyncio.run(scenario())
+
+
+def _collect_true_stream(chain):
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        return _parse_sse("".join([
+            block
+            async for block in rag_stream_generator(chain, "Question", None)
+        ]))
+
+    return asyncio.run(scenario())
+
+
+def test_stream_replaces_draft_once_when_validation_changes_answer():
+    events = _collect_true_stream(
+        _TrueStreamingChain(chunks=("Draft",), final_answer="Final [S01]")
+    )
+
+    assert [name for name, _data in events] == [
+        "status",
+        "status",
+        "sources",
+        "status",
+        "token",
+        "status",
+        "answer_replace",
+        "status",
+        "done",
+    ]
+    assert next(data for name, data in events if name == "answer_replace") == {
+        "answer": "Final [S01]",
+        "reason": "citation_validation",
+    }
+    assert events[-1][1]["corrected"] is True
+
+
+def test_stream_does_not_replace_when_final_answer_matches_chunks():
+    events = _collect_true_stream(
+        _TrueStreamingChain(chunks=("Final", " [S01]"), final_answer="Final [S01]")
+    )
+
+    assert not any(name == "answer_replace" for name, _data in events)
+    assert not any(
+        name == "status" and data.get("phase") == "corrected"
+        for name, data in events
+    )
+    assert events[-1][1]["corrected"] is False
+
+
+def test_no_model_branch_emits_no_fake_tokens():
+    class NoModelChain(_TrueStreamingChain):
+        def prepare_execution(self, *args, **kwargs):
+            prepared = super().prepare_execution(*args, **kwargs)
+            return replace(
+                prepared,
+                generation_mode="none",
+                immediate_answer="No model answer",
+            )
+
+        def finalize_execution(self, prepared, draft, trace=None):
+            assert draft is None
+            if trace is not None:
+                trace.mark_validated_ready()
+            return replace(
+                self.packet,
+                answer=prepared.immediate_answer,
+                grounding_mode="none",
+                turn_outcome="not_committable",
+            )
+
+    events = _collect_true_stream(NoModelChain())
+
+    assert not any(name == "token" for name, _data in events)
+    assert not any(
+        name == "status" and data.get("phase") in {"generating", "validating"}
+        for name, data in events
+    )
+    assert events[-1][1]["answer"] == "No model answer"
+
+
+def test_sources_and_done_share_one_frozen_retrieval_snapshot():
+    events = _collect_true_stream(_TrueStreamingChain())
+    sources = next(data for name, data in events if name == "sources")
+    done = next(data for name, data in events if name == "done")
+
+    assert sources["sources"] == done["sources"]
+    assert sources["memory"] == done["memory"]
+
+
+def test_sync_and_stream_done_are_publicly_equivalent_for_same_draft():
+    chain = _TrueStreamingChain(
+        chunks=("Final", " [S01]"),
+        final_answer="Final [S01]",
+    )
+    events = _collect_true_stream(chain)
+    done = next(data for name, data in events if name == "done")
+    expected = response_packet_to_public_dict(
+        replace(chain.packet, answer="Final [S01]")
+    )
+
+    assert {key: done[key] for key in expected} == expected
 
 
 def test_sse_sources_and_done_have_identical_memory_metadata(client_with_memory_chain):

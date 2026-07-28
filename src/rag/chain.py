@@ -1,7 +1,7 @@
 """RAG chain: retrieve -> prompt -> LLM, returning answer, sources, media, and route metadata."""
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -188,6 +188,19 @@ class RAGChain:
         trace: Any = None,
     ):
         return self._execution_service.finalize(prepared, draft, trace)
+
+    async def astream_prepared(
+        self,
+        prepared: PreparedExecution,
+    ) -> AsyncIterator[str]:
+        if prepared.generation_mode == "none":
+            return
+        if prepared.generation_mode == "free_supplement":
+            yield _FREE_SUPPLEMENT_PREFIX
+        async for chunk in self._llm.astream(list(prepared.generation_messages)):
+            text = _chunk_text(chunk)
+            if text:
+                yield text
 
     def retrieve(
         self,
@@ -669,3 +682,20 @@ class RAGChain:
             )
         for chunk in self._llm.stream(messages):
             yield chunk
+
+
+def _chunk_text(chunk: Any) -> str:
+    content = chunk.content if hasattr(chunk, "content") else chunk
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, (list, tuple)):
+        return str(content) if content is not None else ""
+    parts: list[str] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(item)
+        elif isinstance(item, Mapping):
+            text = item.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "".join(parts)
