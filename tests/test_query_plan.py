@@ -451,6 +451,7 @@ def test_query_plan_fallback_intro_uses_separate_queries():
     assert "十四行诗" in plan.dense_query
     assert "十四行诗" in plan.sparse_query
     assert plan.route == "rag_grounded"
+    assert plan.retrieval_scope == "entity_strict"
 
 
 def test_query_planner_without_llm_sets_no_llm_diagnostics():

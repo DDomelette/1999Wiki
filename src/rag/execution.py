@@ -22,6 +22,7 @@ from .conversation import (
     history_messages,
 )
 from .query_plan import requested_intents
+from .local_responses import render_local_response
 from .tracing import NullTrace, RequestTrace
 
 MemoryStatus = Literal["disabled", "new", "hit", "expired"]
@@ -100,7 +101,14 @@ class RAGExecutionService:
         turn_outcome: Literal["grounded", "ungrounded", "not_committable"] = "not_committable"
         validation = CitationValidation(valid=True)
 
-        if retrieved.get("retrieval_failed", False):
+        if retrieved.get("local_response", False):
+            subtask = retrieved.get("subtask")
+            answer = render_local_response(
+                str(getattr(subtask, "task_type", "out_of_scope")),
+                request.question,
+                reason=str(retrieved.get("local_response_reason", "")),
+            )
+        elif retrieved.get("retrieval_failed", False):
             answer = _RETRIEVAL_FAILED_MSG
         elif not self._chain.llm_ready():
             answer = _API_KEY_EMPTY_MSG
@@ -198,7 +206,9 @@ class RAGExecutionService:
                     turn_outcome = "grounded"
 
         entity_ref = _entity_ref(plan)
-        requested = tuple(requested_intents(plan))
+        requested = tuple(route_decision.authorization.semantic_intents) or tuple(
+            requested_intents(plan)
+        )
         retrieval_packet = FrozenRetrievalPacket(
             plan=plan,
             entity_ref=entity_ref,

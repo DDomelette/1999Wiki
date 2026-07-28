@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -17,6 +17,9 @@ from src.rag.conversation import (
 )
 from src.rag.entity_lexicon import EntityLexicon
 from src.rag.tracing import NullTrace, RequestTrace
+
+if TYPE_CHECKING:
+    from src.rag.request_plan import RetrievalScope
 
 
 PLANNING_STATUS_LLM = "llm"
@@ -203,6 +206,7 @@ class QueryPlan:
     planning_error: str = ""
     target_parent_id: str | None = None
     context_rewrite_mode: RewriteMode = "none"
+    retrieval_scope: RetrievalScope = "entity_strict"
 
 
 def _as_tuple(value: Any) -> tuple[str, ...]:

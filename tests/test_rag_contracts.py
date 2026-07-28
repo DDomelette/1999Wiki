@@ -4,6 +4,7 @@ import dataclasses
 
 import pytest
 
+from src.rag.chain import RAGChain
 from src.rag.contracts import (
     CitationValidation,
     EntityRef,
@@ -14,6 +15,8 @@ from src.rag.contracts import (
     SourceRef,
     freeze_value,
 )
+from src.rag.query_plan import QueryPlanner
+from src.rag.request_plan import RequestPlanner
 
 
 def _response_packet_fixture() -> ResponsePacket:
@@ -132,3 +135,48 @@ def test_route_decision_rejects_values_outside_the_public_contract(field: str, v
 
     with pytest.raises(ValueError, match=field):
         RouteDecision(**kwargs)
+
+
+def test_local_route_uses_not_applicable_instead_of_empty():
+    authorization = RouteAuthorization(
+        semantic_intents=("assistant_meta",),
+        proposed_route="local_response",
+        allow_free_supplement_after_empty=False,
+        force_free_supplement=False,
+        authorization_reason="local_assistant_meta",
+    )
+
+    decision = RouteDecision(
+        authorization=authorization,
+        retrieval_outcome="not_applicable",
+        effective_route="local_response",
+        route_reason="local_assistant_meta",
+    )
+
+    assert decision.retrieval_outcome == "not_applicable"
+    assert decision.effective_route == "local_response"
+
+
+def test_public_planning_meta_does_not_propagate_raw_planner_exception():
+    sensitive = (
+        "sk-public-secret C:\\Users\\reviewer\\private\\planner.py "
+        "Traceback (most recent call last): upstream body"
+    )
+
+    class RaisingLLM:
+        def invoke(self, messages):
+            raise RuntimeError(sensitive)
+
+    plan = RequestPlanner(
+        RaisingLLM(),
+        query_planner=QueryPlanner(None),
+    ).plan("中国的首都是什么")
+    chain = RAGChain.__new__(RAGChain)
+
+    public_meta = chain._planning_meta(plan)
+
+    assert public_meta["planning_error"] == "request_planner_api_error"
+    assert sensitive not in repr(public_meta)
+    assert "sk-public-secret" not in repr(public_meta)
+    assert "C:\\Users\\reviewer" not in repr(public_meta)
+    assert "Traceback" not in repr(public_meta)

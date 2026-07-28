@@ -6,13 +6,35 @@ from types import MappingProxyType
 from typing import Literal, Mapping, TypeAlias, cast
 
 
-RetrievalOutcome: TypeAlias = Literal["sufficient", "partial", "empty", "failed"]
-ExecutionRoute: TypeAlias = Literal["rag_grounded", "expanded_rag", "llm_general"]
+RetrievalOutcome: TypeAlias = Literal[
+    "sufficient",
+    "partial",
+    "empty",
+    "failed",
+    "not_applicable",
+]
+ExecutionRoute: TypeAlias = Literal[
+    "rag_grounded",
+    "expanded_rag",
+    "llm_general",
+    "local_response",
+]
 GroundingMode: TypeAlias = Literal["grounded", "ungrounded", "none"]
 TurnOutcome: TypeAlias = Literal["grounded", "ungrounded", "not_committable"]
 
-_RETRIEVAL_OUTCOMES = frozenset({"sufficient", "partial", "empty", "failed"})
-_EXECUTION_ROUTES = frozenset({"rag_grounded", "expanded_rag", "llm_general"})
+_RETRIEVAL_OUTCOMES = frozenset({
+    "sufficient",
+    "partial",
+    "empty",
+    "failed",
+    "not_applicable",
+})
+_EXECUTION_ROUTES = frozenset({
+    "rag_grounded",
+    "expanded_rag",
+    "llm_general",
+    "local_response",
+})
 _GROUNDING_MODES = frozenset({"grounded", "ungrounded", "none"})
 _TURN_OUTCOMES = frozenset({"grounded", "ungrounded", "not_committable"})
 
