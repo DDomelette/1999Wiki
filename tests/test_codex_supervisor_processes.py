@@ -160,6 +160,20 @@ def test_runner_reclaims_stale_lock(tmp_path: Path) -> None:
     assert run_worker(_request(tmp_path, store)) == 0
 
 
+def test_runner_rejects_wrong_conda_environment(tmp_path: Path) -> None:
+    store = AtomicStateStore(tmp_path / "runtime")
+    request = RunnerRequest(
+        worker="A",
+        project_root=Path.cwd(),
+        runtime_root=store.runtime_root,
+        worktree=tmp_path,
+        argv=(sys.executable, str(FAKE_CODEX)),
+        required_python_environment="not-the-active-environment",
+    )
+    with pytest.raises(RuntimeError, match="Conda environment"):
+        run_worker(request)
+
+
 def _request(
     tmp_path: Path,
     store: AtomicStateStore,

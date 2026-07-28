@@ -30,6 +30,7 @@ class RunnerRequest:
     runtime_root: Path
     worktree: Path
     argv: tuple[str, ...]
+    required_python_environment: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -38,6 +39,7 @@ class RunnerRequest:
             "runtime_root": str(self.runtime_root.resolve()),
             "worktree": str(self.worktree.resolve()),
             "argv": list(self.argv),
+            "required_python_environment": self.required_python_environment,
         }
 
     @classmethod
@@ -51,6 +53,11 @@ class RunnerRequest:
             runtime_root=Path(str(value["runtime_root"])).resolve(),
             worktree=Path(str(value["worktree"])).resolve(),
             argv=tuple(str(item) for item in value["argv"]),
+            required_python_environment=(
+                str(value["required_python_environment"])
+                if value.get("required_python_environment")
+                else None
+            ),
         )
 
 
@@ -86,6 +93,7 @@ def start_detached_runner(request: RunnerRequest) -> ProcessIdentity:
 
 
 def run_worker(request: RunnerRequest) -> int:
+    _validate_python_environment(request.required_python_environment)
     store = AtomicStateStore(request.runtime_root)
     lock_owner = _acquire_lock(store, request.worker)
     child: subprocess.Popen[str] | None = None
@@ -121,6 +129,9 @@ def run_worker(request: RunnerRequest) -> int:
                 encoding="utf-8",
                 errors="replace",
                 shell=False,
+                env=_worker_environment(
+                    request.required_python_environment
+                ),
                 creationflags=codex_creation_flags(),
                 start_new_session=False,
             )
@@ -210,6 +221,36 @@ def _reject_active_session(
         except psutil.NoSuchProcess:
             continue
         raise RuntimeError(f"worker {worker} already has an active {role}")
+
+
+def _validate_python_environment(required: str | None) -> None:
+    if not required:
+        return
+    active = Path(sys.prefix).name
+    if active.casefold() != required.casefold():
+        raise RuntimeError(
+            "runner requires Conda environment "
+            f"{required}, active environment is {active}"
+        )
+
+
+def _worker_environment(required: str | None) -> dict[str, str]:
+    environment = os.environ.copy()
+    if not required:
+        return environment
+    prefix = Path(sys.prefix).resolve()
+    path_entries = (
+        prefix,
+        prefix / "Scripts",
+        prefix / "Library" / "bin",
+    )
+    existing_path = environment.get("PATH", "")
+    environment["PATH"] = os.pathsep.join(
+        [*(str(path) for path in path_entries), existing_path]
+    )
+    environment["CONDA_PREFIX"] = str(prefix)
+    environment["CONDA_DEFAULT_ENV"] = required
+    return environment
 
 
 def _capture_with_retry(

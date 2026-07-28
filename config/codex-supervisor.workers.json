@@ -1,6 +1,7 @@
 {
   "schema_version": "codex-supervisor/v1",
   "runtime_root": ".codex-supervisor",
+  "python_environment": "1999wiki",
   "model": "gpt-5.6-sol",
   "sandbox": "workspace-write",
   "fast_mode": false,

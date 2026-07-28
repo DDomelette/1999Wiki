@@ -10,13 +10,7 @@ $Arguments = @($Supervisor, "dashboard")
 if (-not $Once) {
     $Arguments += "--watch"
 }
-
-if ($env:CODEX_SUPERVISOR_PYTHON) {
-    & $env:CODEX_SUPERVISOR_PYTHON @Arguments
-} elseif (Get-Command py.exe -ErrorAction SilentlyContinue) {
-    & py.exe -3.12-64 @Arguments
-} else {
-    $Python = (Get-Command python.exe -ErrorAction Stop).Source
-    & $Python @Arguments
-}
+. (Join-Path $PSScriptRoot "Resolve-SupervisorPython.ps1")
+$Python = Resolve-SupervisorPython
+& $Python @Arguments
 exit $LASTEXITCODE

@@ -7,12 +7,17 @@ worker。架构固定为两层：`D → CLI A/B/C`，禁止第三层代理。每
 固定执行配置为：
 
 ```text
+python: Conda 1999wiki
 model: gpt-5.6-sol
 speed: standard
 sandbox: workspace-write
 --disable fast_mode
 --disable multi_agent
 ```
+
+监督器默认只接受 Conda `1999wiki` 环境的 Python；可以通过
+`CODEX_SUPERVISOR_PYTHON` 显式指向该环境解释器。runner 与 Codex child 会继承
+该环境，确保 worker 执行的测试和本项目一致。
 
 不设置人为 token budget。首轮任务只允许 worker 编写自己的实施 Plan；在 D
 审核并取得用户批准前，不允许修改业务代码。

@@ -76,7 +76,7 @@ def test_watch_window_explains_close_is_observer_only() -> None:
     content = (SCRIPT_ROOT / "Watch-Worker.ps1").read_text(
         encoding="utf-8"
     )
-    assert "关闭本窗口不会停止 worker" in content
+    assert "closing this window does not stop the worker" in content
     assert "Observer Only" in content
 
 
@@ -96,6 +96,32 @@ def test_runbook_documents_control_reopen_and_two_layer_rules() -> None:
         "--disable fast_mode",
         "--disable multi_agent",
         "workspace-write",
+        "Conda `1999wiki`",
         "禁止第三层代理",
     ):
         assert marker in content
+
+
+@pytest.mark.parametrize(
+    "filename",
+    (
+        "Start-Worker.ps1",
+        "Stop-Worker.ps1",
+        "Resume-Worker.ps1",
+        "Watch-Worker.ps1",
+        "Show-Dashboard.ps1",
+    ),
+)
+def test_python_entrypoints_require_conda_1999wiki(filename: str) -> None:
+    content = (SCRIPT_ROOT / filename).read_text(encoding="utf-8")
+    assert "Resolve-SupervisorPython.ps1" in content
+    assert "Resolve-SupervisorPython" in content
+
+
+def test_python_resolver_targets_named_conda_environment() -> None:
+    content = (SCRIPT_ROOT / "Resolve-SupervisorPython.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert '"1999wiki"' in content
+    assert "conda.exe" in content
+    assert "CODEX_SUPERVISOR_PYTHON" in content

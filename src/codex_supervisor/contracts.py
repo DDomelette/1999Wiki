@@ -91,6 +91,7 @@ class SupervisorConfig:
     schema_version: str
     project_root: Path
     runtime_root: Path
+    python_environment: str
     workers: Mapping[WorkerName, WorkerConfig]
 
 
@@ -215,6 +216,7 @@ def load_supervisor_config(project_root: Path) -> SupervisorConfig:
         schema_version=str(payload["schema_version"]),
         project_root=root,
         runtime_root=(root / str(payload["runtime_root"])).resolve(),
+        python_environment=str(payload["python_environment"]),
         workers=workers,
     )
 

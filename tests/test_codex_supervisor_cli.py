@@ -5,7 +5,11 @@ import json
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from src.codex_supervisor.cli import build_resume_args, main
+from src.codex_supervisor.cli import (
+    build_resume_args,
+    main,
+    resolve_codex_argv,
+)
 from src.codex_supervisor.contracts import (
     WorkerState,
     load_supervisor_config,
@@ -55,6 +59,32 @@ def test_resume_uses_recorded_session_and_standard_flags() -> None:
     assert "--disable" in argv
     assert "multi_agent" in argv
     assert 'sandbox_mode="workspace-write"' in argv
+
+
+def test_windows_npm_codex_launcher_uses_node_without_shell(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    npm = tmp_path / "npm"
+    launcher = npm / "codex.CMD"
+    javascript = npm / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+    javascript.parent.mkdir(parents=True)
+    launcher.write_text("@echo off", encoding="utf-8")
+    javascript.write_text("// fixture", encoding="utf-8")
+    node = tmp_path / "node.exe"
+    node.touch()
+
+    def fake_which(name: str) -> str | None:
+        return {
+            "codex": str(launcher),
+            "codex.exe": str(tmp_path / "denied-codex.exe"),
+            "node.exe": str(node),
+            "node": str(node),
+        }.get(name)
+
+    monkeypatch.setattr("src.codex_supervisor.cli.shutil.which", fake_which)
+    argv = resolve_codex_argv(("codex", "exec", "--json"))
+    assert argv == (str(node), str(javascript), "exec", "--json")
 
 
 def test_resume_requires_recorded_session(tmp_path: Path) -> None:

@@ -26,6 +26,7 @@ def test_worker_config_enforces_two_layers_and_standard_speed() -> None:
     assert ("--sandbox", "workspace-write") in tuple(zip(args, args[1:]))
     assert "--dangerously-bypass-approvals-and-sandbox" not in args
     assert worker.allow_subagents is False
+    assert config.python_environment == "1999wiki"
 
 
 def test_worker_state_rejects_unknown_status() -> None:

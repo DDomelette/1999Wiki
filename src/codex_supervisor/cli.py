@@ -87,7 +87,7 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         worker_config = config.workers[worker]
         _validate_worktree(worker_config)
         schema = _final_schema(root)
-        command = _resolve_codex(
+        command = resolve_codex_argv(
             build_codex_base_args(worker_config, schema) + (prompt,)
         )
         identity = start_detached_runner(
@@ -97,6 +97,7 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
                 runtime_root=config.runtime_root,
                 worktree=worker_config.worktree,
                 argv=command,
+                required_python_environment=config.python_environment,
             )
         )
         _print_json(
@@ -125,7 +126,7 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         )
         worker_config = config.workers[worker]
         _validate_worktree(worker_config)
-        command = _resolve_codex(
+        command = resolve_codex_argv(
             build_resume_args(
                 worker_config,
                 state.session_id,
@@ -140,6 +141,7 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
                 runtime_root=config.runtime_root,
                 worktree=worker_config.worktree,
                 argv=command,
+                required_python_environment=config.python_environment,
             )
         )
         _print_json(
@@ -275,11 +277,32 @@ def _validate_worktree(config: WorkerConfig) -> None:
         )
 
 
-def _resolve_codex(argv: tuple[str, ...]) -> tuple[str, ...]:
-    executable = shutil.which("codex.exe") or shutil.which("codex")
-    if not executable:
+def resolve_codex_argv(argv: tuple[str, ...]) -> tuple[str, ...]:
+    launcher_value = shutil.which("codex")
+    if launcher_value:
+        launcher = Path(launcher_value)
+        if launcher.suffix.casefold() in {".cmd", ".bat"}:
+            javascript = (
+                launcher.parent
+                / "node_modules"
+                / "@openai"
+                / "codex"
+                / "bin"
+                / "codex.js"
+            )
+            node = shutil.which("node.exe") or shutil.which("node")
+            if javascript.is_file() and node:
+                return (node, str(javascript), *argv[1:])
+        elif launcher.is_file():
+            return (str(launcher), *argv[1:])
+    executable = shutil.which("codex.exe")
+    if executable:
+        return (executable, *argv[1:])
+    if not launcher_value:
         raise FileNotFoundError("codex executable was not found")
-    return (executable, *argv[1:])
+    raise RuntimeError(
+        "codex launcher requires an accessible executable or npm Node entry"
+    )
 
 
 def _stop_worker(store: AtomicStateStore, worker: WorkerName) -> None:
