@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -237,6 +238,174 @@ def test_sync_and_stream_done_are_publicly_equivalent_for_same_draft():
     )
 
     assert {key: done[key] for key in expected} == expected
+
+
+def test_long_prepare_emits_heartbeat_comment_without_repeating_status():
+    class SlowPrepareChain(_TrueStreamingChain):
+        def prepare_execution(self, *args, **kwargs):
+            time.sleep(0.03)
+            return super().prepare_execution(*args, **kwargs)
+
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        return [
+            block
+            async for block in rag_stream_generator(
+                SlowPrepareChain(),
+                "Question",
+                None,
+                heartbeat_seconds=0.005,
+            )
+        ]
+
+    blocks = asyncio.run(scenario())
+    events = _parse_sse("".join(blocks))
+
+    assert ": heartbeat\n\n" in blocks
+    assert [
+        data["phase"] for name, data in events if name == "status"
+    ] == [
+        "understanding",
+        "retrieving",
+        "generating",
+        "validating",
+    ]
+
+
+def test_generation_failure_before_first_token_has_partial_false():
+    class FailingChain(_TrueStreamingChain):
+        async def astream_prepared(self, prepared):
+            del prepared
+            raise RuntimeError("secret upstream detail")
+            yield ""
+
+    events = _collect_true_stream(FailingChain())
+    error = next(data for name, data in events if name == "error")
+
+    assert error == {
+        "message": "回答生成失败，请稍后重试。",
+        "phase": "generating",
+        "partial": False,
+    }
+    assert events[-2] == ("status", {"phase": "failed"})
+    assert not any(name == "done" for name, _data in events)
+
+
+def test_generation_failure_after_first_token_preserves_partial_draft():
+    class PartiallyFailingChain(_TrueStreamingChain):
+        async def astream_prepared(self, prepared):
+            del prepared
+            yield "Partial"
+            raise RuntimeError("secret upstream detail")
+
+    events = _collect_true_stream(PartiallyFailingChain())
+    error = next(data for name, data in events if name == "error")
+
+    assert next(data for name, data in events if name == "token")["token"] == "Partial"
+    assert error == {
+        "message": "回答生成失败，请稍后重试。",
+        "phase": "generating",
+        "partial": True,
+    }
+    assert not any(name == "done" for name, _data in events)
+
+
+def test_validation_failure_replaces_draft_with_safe_fallback_and_errors():
+    class ValidationFailureChain(_TrueStreamingChain):
+        def finalize_execution(self, prepared, draft, trace=None):
+            del prepared, draft, trace
+            raise ValueError("secret validation detail")
+
+    events = _collect_true_stream(ValidationFailureChain(chunks=("Draft",)))
+    replacement = next(
+        data for name, data in events if name == "answer_replace"
+    )
+    error = next(data for name, data in events if name == "error")
+
+    assert replacement == {
+        "answer": "回答校验失败，未展示未经验证的草稿。",
+        "reason": "safe_fallback",
+    }
+    assert error == {
+        "message": "回答校验失败，请稍后重试。",
+        "phase": "validating",
+        "partial": False,
+    }
+    assert not any(name == "done" for name, _data in events)
+
+
+def test_disconnect_closes_upstream_and_never_commits_memory():
+    class ClosableChain(_TrueStreamingChain):
+        def __init__(self):
+            super().__init__(chunks=("Partial", " ignored"))
+            self.closed = False
+
+        async def astream_prepared(self, prepared):
+            del prepared
+            try:
+                yield "Partial"
+                await asyncio.sleep(0)
+                yield " ignored"
+            finally:
+                self.closed = True
+
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        chain = ClosableChain()
+        store = ConversationMemoryStore()
+        disconnected = False
+
+        async def is_disconnected():
+            return disconnected
+
+        generator = rag_stream_generator(
+            chain,
+            "Question",
+            None,
+            memory_store=store,
+            conversation_id=UUID(CONVERSATION_ID),
+            is_disconnected=is_disconnected,
+        )
+        async for block in generator:
+            if block.startswith("event: token"):
+                disconnected = True
+        lease = await store.acquire(UUID(CONVERSATION_ID))
+        try:
+            turns = lease.projection.turns
+        finally:
+            await store.release(lease)
+        return chain.closed, turns
+
+    closed, turns = asyncio.run(scenario())
+
+    assert closed is True
+    assert turns == ()
+
+
+def test_success_commits_only_the_final_corrected_answer():
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        store = ConversationMemoryStore()
+        async for _block in rag_stream_generator(
+            _TrueStreamingChain(chunks=("Draft",), final_answer="Final corrected [S01]"),
+            "Question",
+            None,
+            memory_store=store,
+            conversation_id=UUID(CONVERSATION_ID),
+        ):
+            pass
+        lease = await store.acquire(UUID(CONVERSATION_ID))
+        try:
+            return lease.projection.turns
+        finally:
+            await store.release(lease)
+
+    turns = asyncio.run(scenario())
+
+    assert turns[-1].answer == "Final corrected [S01]"
 
 
 def test_sse_sources_and_done_have_identical_memory_metadata(client_with_memory_chain):

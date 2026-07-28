@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Awaitable, Callable
 from uuid import UUID
@@ -20,6 +21,17 @@ from src.rag.serializers import (
     response_packet_to_sse_events,
 )
 from src.rag.tracing import make_request_trace, trace_snapshot_to_public
+
+logger = logging.getLogger(__name__)
+
+SAFE_STREAM_ERROR = "回答生成失败，请稍后重试。"
+SAFE_VALIDATION_ERROR = "回答校验失败，请稍后重试。"
+SAFE_VALIDATION_FALLBACK = "回答校验失败，未展示未经验证的草稿。"
+HEARTBEAT_SECONDS = 10.0
+
+
+class ClientDisconnected(Exception):
+    pass
 
 
 def sse_event(event: str, data: dict[str, Any]) -> str:
@@ -43,6 +55,7 @@ async def rag_stream_generator(
     memory_store: ConversationMemoryStore | None = None,
     conversation_id: UUID | None = None,
     is_disconnected: Callable[[], Awaitable[bool]] | None = None,
+    heartbeat_seconds: float = HEARTBEAT_SECONDS,
 ) -> AsyncGenerator[str, None]:
     """Stream real model increments when the chain exposes staged execution."""
     trace = make_request_trace()
@@ -86,24 +99,42 @@ async def rag_stream_generator(
             return
         yield sse_event("status", {"phase": "retrieving"})
 
+        prepare_task = asyncio.create_task(asyncio.to_thread(
+            chain.prepare_execution,
+            question,
+            category=category,
+            route_options=route_options or {},
+            action_payload=action_payload,
+            conversation=lease.projection,
+            memory_status=lease.status,
+            memory_turns_used=len(lease.projection.turns),
+            trace=trace,
+        ))
         try:
-            prepared = await asyncio.to_thread(
-                chain.prepare_execution,
-                question,
-                category=category,
-                route_options=route_options or {},
-                action_payload=action_payload,
-                conversation=lease.projection,
-                memory_status=lease.status,
-                memory_turns_used=len(lease.projection.turns),
-                trace=trace,
-            )
-        except Exception as exc:
+            async for heartbeat in _heartbeats_until(
+                prepare_task,
+                heartbeat_seconds=heartbeat_seconds,
+                is_disconnected=is_disconnected,
+            ):
+                yield heartbeat
+            prepared = await prepare_task
+        except ClientDisconnected:
+            return
+        except Exception:
+            logger.exception("RAG preparation failed")
+            yield sse_event("status", {"phase": "failed"})
             yield sse_event(
                 "error",
-                {"message": f"RAG execution failed: {type(exc).__name__}: {exc}"},
+                {
+                    "message": "问答处理失败，请稍后重试。",
+                    "phase": "retrieving",
+                    "partial": False,
+                },
             )
             return
+        finally:
+            if not prepare_task.done():
+                prepare_task.cancel()
 
         if await _disconnected(is_disconnected):
             return
@@ -137,40 +168,81 @@ async def rag_stream_generator(
             if await _disconnected(is_disconnected):
                 return
             yield sse_event("status", {"phase": "generating"})
+            upstream = chain.astream_prepared(prepared)
             try:
                 with trace.span("answer.llm"):
-                    async for token in chain.astream_prepared(prepared):
-                        if await _disconnected(is_disconnected):
-                            return
+                    async for kind, value in _stream_with_heartbeats(
+                        upstream,
+                        heartbeat_seconds=heartbeat_seconds,
+                        is_disconnected=is_disconnected,
+                    ):
+                        if kind == "heartbeat":
+                            yield value
+                            continue
+                        token = str(value)
                         if not token:
                             continue
-                        draft_parts.append(str(token))
+                        draft_parts.append(token)
                         trace.mark_model_first_token()
                         trace.mark_visible_first_token()
-                        yield sse_event("token", {"token": str(token)})
-            except Exception as exc:
+                        yield sse_event("token", {"token": token})
+            except ClientDisconnected:
+                return
+            except Exception:
+                logger.exception("RAG answer streaming failed")
+                yield sse_event("status", {"phase": "failed"})
                 yield sse_event(
                     "error",
-                    {"message": f"RAG execution failed: {type(exc).__name__}: {exc}"},
+                    {
+                        "message": SAFE_STREAM_ERROR,
+                        "phase": "generating",
+                        "partial": bool(draft_parts),
+                    },
                 )
                 return
             if await _disconnected(is_disconnected):
                 return
             yield sse_event("status", {"phase": "validating"})
 
+        finalize_task = asyncio.create_task(asyncio.to_thread(
+            chain.finalize_execution,
+            prepared,
+            "".join(draft_parts) if prepared.generation_mode != "none" else None,
+            trace,
+        ))
         try:
-            packet = await asyncio.to_thread(
-                chain.finalize_execution,
-                prepared,
-                "".join(draft_parts) if prepared.generation_mode != "none" else None,
-                trace,
-            )
-        except Exception as exc:
+            async for heartbeat in _heartbeats_until(
+                finalize_task,
+                heartbeat_seconds=heartbeat_seconds,
+                is_disconnected=is_disconnected,
+            ):
+                yield heartbeat
+            packet = await finalize_task
+        except ClientDisconnected:
+            return
+        except Exception:
+            logger.exception("RAG answer validation failed")
+            if draft_parts:
+                yield sse_event(
+                    "answer_replace",
+                    {
+                        "answer": SAFE_VALIDATION_FALLBACK,
+                        "reason": "safe_fallback",
+                    },
+                )
+            yield sse_event("status", {"phase": "failed"})
             yield sse_event(
                 "error",
-                {"message": f"RAG execution failed: {type(exc).__name__}: {exc}"},
+                {
+                    "message": SAFE_VALIDATION_ERROR,
+                    "phase": "validating",
+                    "partial": False,
+                },
             )
             return
+        finally:
+            if not finalize_task.done():
+                finalize_task.cancel()
 
         with trace.span("response.serialize"):
             AskResponse.model_validate(response_packet_to_public_dict(packet))
@@ -208,6 +280,53 @@ async def _disconnected(
     is_disconnected: Callable[[], Awaitable[bool]] | None,
 ) -> bool:
     return bool(is_disconnected is not None and await is_disconnected())
+
+
+async def _heartbeats_until(
+    task: asyncio.Task[Any],
+    *,
+    heartbeat_seconds: float,
+    is_disconnected: Callable[[], Awaitable[bool]] | None,
+) -> AsyncGenerator[str, None]:
+    interval = max(0.001, float(heartbeat_seconds))
+    while not task.done():
+        if await _disconnected(is_disconnected):
+            task.cancel()
+            raise ClientDisconnected
+        done, _pending = await asyncio.wait({task}, timeout=interval)
+        if not done:
+            yield ": heartbeat\n\n"
+
+
+async def _stream_with_heartbeats(
+    upstream: Any,
+    *,
+    heartbeat_seconds: float,
+    is_disconnected: Callable[[], Awaitable[bool]] | None,
+) -> AsyncGenerator[tuple[str, Any], None]:
+    iterator = upstream.__aiter__()
+    try:
+        while True:
+            next_task = asyncio.create_task(anext(iterator))
+            try:
+                async for heartbeat in _heartbeats_until(
+                    next_task,
+                    heartbeat_seconds=heartbeat_seconds,
+                    is_disconnected=is_disconnected,
+                ):
+                    yield "heartbeat", heartbeat
+                try:
+                    value = await next_task
+                except StopAsyncIteration:
+                    return
+                yield "value", value
+            finally:
+                if not next_task.done():
+                    next_task.cancel()
+    finally:
+        close = getattr(iterator, "aclose", None)
+        if close is not None:
+            await close()
 
 
 async def _legacy_stream(
