@@ -113,8 +113,8 @@ def test_resume_allows_d_review_revision_of_completed_work() -> None:
     assert is_resumable_status("blocked")
     assert is_resumable_status("needs_approval")
     assert is_resumable_status("completed_pending_review")
+    assert is_resumable_status("accepted")
     assert not is_resumable_status("running")
-    assert not is_resumable_status("accepted")
 
 
 def test_accept_only_allows_completed_pending_review(

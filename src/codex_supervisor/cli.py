@@ -34,6 +34,7 @@ def is_resumable_status(status: str) -> bool:
         "blocked",
         "needs_approval",
         "completed_pending_review",
+        "accepted",
     }
 
 
@@ -124,7 +125,7 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         if not is_resumable_status(state.status):
             raise ValueError(
                 "resume requires failed, blocked, needs_approval, or "
-                "completed_pending_review state"
+                "completed_pending_review/accepted state"
             )
         if not state.session_id:
             raise ValueError("resume requires a recorded session ID")
