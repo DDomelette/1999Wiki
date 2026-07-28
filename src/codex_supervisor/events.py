@@ -78,7 +78,7 @@ def _apply_completed_item(
             state,
             last_exit_code=_optional_integer(item.get("exit_code")),
             tests_summary=summary
-            if _looks_like_test(state.current_action, output)
+            if _looks_like_test(state.current_action)
             else state.tests_summary,
         )
     if item.get("type") in {"agent_message", "message"}:
@@ -143,12 +143,11 @@ def _last_nonempty_line(value: str | None) -> str | None:
     return lines[-1][:1000] if lines else None
 
 
-def _looks_like_test(command: str | None, output: str | None) -> bool:
+def _looks_like_test(command: str | None) -> bool:
     command_text = (command or "").lower()
-    output_text = (output or "").lower()
     return (
         "pytest" in command_text
         or "unittest" in command_text
-        or " passed" in output_text
-        or " failed" in output_text
+        or "tox" in command_text
+        or "nox" in command_text
     )

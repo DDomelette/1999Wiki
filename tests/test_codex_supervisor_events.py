@@ -59,6 +59,33 @@ def test_unknown_event_does_not_fail_reducer() -> None:
     assert apply_event(state, event).last_event_ordinal == 1
 
 
+def test_read_only_output_mentioning_failure_is_not_a_test_summary() -> None:
+    state = apply_event(
+        WorkerState.initial("A"),
+        {
+            "type": "item.started",
+            "item": {
+                "type": "command_execution",
+                "command": "rg -n failed docs/spec.md",
+            },
+            "_supervisor_event_ordinal": 1,
+        },
+    )
+    state = apply_event(
+        state,
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "exit_code": 0,
+                "aggregated_output": "Step: expected failed test",
+            },
+            "_supervisor_event_ordinal": 2,
+        },
+    )
+    assert state.tests_summary is None
+
+
 def test_atomic_state_store_round_trips_and_separates_workers(
     tmp_path: Path,
 ) -> None:
