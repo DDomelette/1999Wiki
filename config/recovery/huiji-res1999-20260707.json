@@ -1,0 +1,40 @@
+{
+  "schema_version": "huiji-source-recovery/v1",
+  "snapshot_id": "res1999-20260707",
+  "files": {
+    "pages.jsonl": {
+      "size": 39803538,
+      "sha256": "98f24e6a674257cc5465c865cab60e0d8174104e8c14f9a4a362c9b349dd4b6b"
+    },
+    "wikitext.jsonl": {
+      "size": 588748233,
+      "sha256": "7767c589217dcde17d7a0fca3e8f6dae45e8adb46c3a6768cb81cad2493aa721"
+    },
+    "data_pages.jsonl": {
+      "size": 581887494,
+      "rows": 72848,
+      "invalid_payload_rows": 1,
+      "sha256": "eb82b82e34300ee5d8beb27b13311fe530c59faeba3ae7883876b74b0eab9092"
+    },
+    "resources_manifest.jsonl": {
+      "size": 41514051,
+      "sha256": "20dfc072c2099f356d6a2b4b2572691054919b83dc9cbcc058a237109d373aa6"
+    },
+    "siteinfo.json": {
+      "size": 14763,
+      "sha256": "ef0b79b127f938224a75e016fe20c5dc37b54541634f532f15e78d8af1c0290"
+    },
+    "crawl_state.sqlite": {
+      "size": 47710208,
+      "sha256": "cc34c6b701321b9fe59c3268577a334a3e092cd16190b59c28f98185a5866378"
+    },
+    "errors.jsonl": {
+      "size": 299,
+      "sha256": "79e252aed70bf122849a02751dd53dfe1fe3c6cbfd3223ea3abd19651d209e07"
+    }
+  },
+  "recover": [
+    "data_pages.jsonl",
+    "crawl_state.sqlite"
+  ]
+}
