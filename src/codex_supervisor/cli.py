@@ -1,0 +1,295 @@
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from dataclasses import replace
+from pathlib import Path
+from typing import Sequence
+
+from src.codex_supervisor.contracts import (
+    WorkerConfig,
+    WorkerName,
+    build_codex_base_args,
+    load_supervisor_config,
+)
+from src.codex_supervisor.processes import (
+    ProcessIdentity,
+    stop_owned_worker,
+)
+from src.codex_supervisor.runner import (
+    RunnerRequest,
+    start_detached_runner,
+)
+from src.codex_supervisor.state_store import AtomicStateStore
+
+
+def build_resume_args(
+    config: WorkerConfig,
+    session_id: str,
+    prompt: str,
+    final_schema: Path,
+) -> tuple[str, ...]:
+    if not session_id.strip():
+        raise ValueError("resume requires a recorded session ID")
+    if config.allow_subagents or config.fast_mode or config.multi_agent:
+        raise ValueError("resume configuration violates worker constraints")
+    return (
+        "codex",
+        "exec",
+        "resume",
+        "-m",
+        config.model,
+        "--disable",
+        "fast_mode",
+        "--disable",
+        "multi_agent",
+        "-c",
+        f'sandbox_mode="{config.sandbox}"',
+        "--json",
+        "--output-schema",
+        str(final_schema.resolve()),
+        session_id,
+        prompt,
+    )
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    project_root: Path | None = None,
+) -> int:
+    root = (project_root or Path.cwd()).resolve()
+    try:
+        args = _parser().parse_args(argv)
+        return _dispatch(args, root)
+    except (FileNotFoundError, RuntimeError, ValueError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+
+def _dispatch(args: argparse.Namespace, root: Path) -> int:
+    config = load_supervisor_config(root)
+    store = AtomicStateStore(config.runtime_root)
+    worker: WorkerName = args.worker
+    if args.command == "start":
+        prompt = _read_approved_task(
+            Path(args.task_file),
+            store,
+            worker,
+            "approved-task.md",
+        )
+        worker_config = config.workers[worker]
+        _validate_worktree(worker_config)
+        schema = _final_schema(root)
+        command = _resolve_codex(
+            build_codex_base_args(worker_config, schema) + (prompt,)
+        )
+        identity = start_detached_runner(
+            RunnerRequest(
+                worker=worker,
+                project_root=root,
+                runtime_root=config.runtime_root,
+                worktree=worker_config.worktree,
+                argv=command,
+            )
+        )
+        _print_json(
+            {
+                "worker": worker,
+                "runner_pid": identity.pid,
+                "state": str(store.state_path(worker)),
+                "watch": _watch_command(root, worker),
+            }
+        )
+        return 0
+    if args.command == "resume":
+        state = store.read(worker)
+        if state.status not in {"failed", "blocked", "needs_approval"}:
+            raise ValueError(
+                "resume requires failed, blocked, or needs_approval state"
+            )
+        if not state.session_id:
+            raise ValueError("resume requires a recorded session ID")
+        prompt = _read_approved_task(
+            Path(args.task_file),
+            store,
+            worker,
+            "approved-resume.md",
+        )
+        worker_config = config.workers[worker]
+        _validate_worktree(worker_config)
+        command = _resolve_codex(
+            build_resume_args(
+                worker_config,
+                state.session_id,
+                prompt,
+                _final_schema(root),
+            )
+        )
+        identity = start_detached_runner(
+            RunnerRequest(
+                worker=worker,
+                project_root=root,
+                runtime_root=config.runtime_root,
+                worktree=worker_config.worktree,
+                argv=command,
+            )
+        )
+        _print_json(
+            {
+                "worker": worker,
+                "session_id": state.session_id,
+                "runner_pid": identity.pid,
+                "watch": _watch_command(root, worker),
+            }
+        )
+        return 0
+    if args.command == "stop":
+        _stop_worker(store, worker)
+        _print_json({"worker": worker, "status": "blocked"})
+        return 0
+    if args.command == "status":
+        _print_json(store.read(worker).to_public_json())
+        return 0
+    if args.command == "inspect":
+        state = store.read(worker).to_public_json()
+        session_path = store.session_path(worker)
+        session = (
+            json.loads(session_path.read_text(encoding="utf-8"))
+            if session_path.is_file()
+            else None
+        )
+        _print_json({"state": state, "session": session})
+        return 0
+    if args.command == "accept":
+        state = store.read(worker)
+        if state.status != "completed_pending_review":
+            raise ValueError(
+                "accept requires completed_pending_review state"
+            )
+        accepted = state.with_status("accepted")
+        store.write(accepted)
+        _print_json(accepted.to_public_json())
+        return 0
+    raise ValueError(f"unsupported command: {args.command}")
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="codex-supervisor")
+    commands = parser.add_subparsers(dest="command", required=True)
+    for command in ("start", "resume"):
+        child = commands.add_parser(command)
+        child.add_argument(
+            "--worker", required=True, choices=("A", "B", "C")
+        )
+        child.add_argument("--task-file", required=True)
+    for command in ("stop", "status", "inspect", "accept"):
+        child = commands.add_parser(command)
+        child.add_argument(
+            "--worker", required=True, choices=("A", "B", "C")
+        )
+    return parser
+
+
+def _read_approved_task(
+    task_file: Path,
+    store: AtomicStateStore,
+    worker: WorkerName,
+    filename: str,
+) -> str:
+    expected = (
+        store.runtime_root / "workers" / worker / filename
+    ).resolve()
+    actual = task_file.resolve()
+    if actual != expected:
+        raise ValueError(f"task file must be exact {filename} path")
+    if not actual.is_file():
+        raise FileNotFoundError(f"approved task file is missing: {actual}")
+    content = actual.read_text(encoding="utf-8")
+    required = ("Spec:", "Plan:", "Allowed files:", "Subagents: forbidden")
+    missing = [marker for marker in required if marker not in content]
+    if missing:
+        raise ValueError(
+            "approved task file is missing: " + ", ".join(missing)
+        )
+    return content
+
+
+def _validate_worktree(config: WorkerConfig) -> None:
+    if not config.worktree.is_dir():
+        raise FileNotFoundError(
+            f"worker {config.name} worktree is missing: {config.worktree}"
+        )
+    result = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(config.worktree),
+            "branch",
+            "--show-current",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"worker {config.name} worktree is not a Git checkout"
+        )
+    if result.stdout.strip() != config.branch:
+        raise RuntimeError(
+            f"worker {config.name} branch does not match {config.branch}"
+        )
+
+
+def _resolve_codex(argv: tuple[str, ...]) -> tuple[str, ...]:
+    executable = shutil.which("codex.exe") or shutil.which("codex")
+    if not executable:
+        raise FileNotFoundError("codex executable was not found")
+    return (executable, *argv[1:])
+
+
+def _stop_worker(store: AtomicStateStore, worker: WorkerName) -> None:
+    path = store.session_path(worker)
+    if not path.is_file():
+        raise FileNotFoundError(f"worker {worker} session does not exist")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for role in ("codex", "runner"):
+        identity_value = payload.get(role)
+        if not isinstance(identity_value, dict):
+            continue
+        stop_owned_worker(ProcessIdentity.from_json(identity_value))
+    state = store.read(worker)
+    store.write(
+        replace(
+            state.with_status("blocked"),
+            blocker="stopped explicitly by supervisor",
+        )
+    )
+
+
+def _final_schema(root: Path) -> Path:
+    return (
+        root
+        / "scripts"
+        / "codex-supervisor"
+        / "schemas"
+        / "worker-final.schema.json"
+    )
+
+
+def _watch_command(root: Path, worker: WorkerName) -> str:
+    return (
+        "powershell.exe -NoExit -ExecutionPolicy Bypass -File "
+        f'"{root / "scripts" / "codex-supervisor" / "Watch-Worker.ps1"}" '
+        f"-Worker {worker}"
+    )
+
+
+def _print_json(value: object) -> None:
+    print(json.dumps(value, ensure_ascii=False, indent=2))
