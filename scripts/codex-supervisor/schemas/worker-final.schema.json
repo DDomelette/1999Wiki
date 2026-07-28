@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Codex supervised worker final report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "phase",
+    "summary",
+    "files_changed",
+    "tests_run",
+    "tests_passed",
+    "blockers",
+    "needs_approval",
+    "last_commit",
+    "next_action"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "awaiting_plan_review",
+        "needs_approval",
+        "blocked",
+        "failed",
+        "completed_pending_review"
+      ]
+    },
+    "phase": {
+      "type": "string",
+      "enum": ["planning", "implementation", "review"]
+    },
+    "summary": {"type": "string"},
+    "files_changed": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "tests_run": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "tests_passed": {"type": "boolean"},
+    "blockers": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "needs_approval": {"type": "boolean"},
+    "last_commit": {"type": ["string", "null"]},
+    "next_action": {"type": "string"}
+  }
+}

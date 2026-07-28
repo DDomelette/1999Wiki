@@ -1,0 +1,22 @@
+{
+  "schema_version": "codex-supervisor/v1",
+  "runtime_root": ".codex-supervisor",
+  "model": "gpt-5.6-sol",
+  "sandbox": "workspace-write",
+  "fast_mode": false,
+  "multi_agent": false,
+  "workers": {
+    "A": {
+      "branch": "codex/rag-a-routing",
+      "worktree": "../1999Wiki.worktrees/rag-a-routing"
+    },
+    "B": {
+      "branch": "codex/rag-b-bm25",
+      "worktree": "../1999Wiki.worktrees/rag-b-bm25"
+    },
+    "C": {
+      "branch": "codex/rag-c-projection",
+      "worktree": "../1999Wiki.worktrees/rag-c-projection"
+    }
+  }
+}
