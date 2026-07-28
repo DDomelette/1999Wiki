@@ -23,6 +23,7 @@ from src.rag.conversation import (
 from src.rag.entity_lexicon import EntityLexicon
 from src.rag.execution import (
     AskExecutionInput,
+    PreparedExecution,
     RAGExecutionService,
     normalize_memory_status,
 )
@@ -154,6 +155,39 @@ class RAGChain:
             conversation or EMPTY_PROJECTION,
             trace,
         )
+
+    def prepare_execution(
+        self,
+        question: str,
+        category: str | None = None,
+        route_options: Mapping[str, bool] | None = None,
+        action_payload: Mapping[str, object] | None = None,
+        conversation: ConversationProjection | None = None,
+        memory_status: str = "disabled",
+        memory_turns_used: int = 0,
+        trace: Any = None,
+    ) -> PreparedExecution:
+        request = AskExecutionInput(
+            question=question,
+            category=category,
+            route_options=route_options or {},
+            action_payload=action_payload,
+            memory_status=normalize_memory_status(memory_status),
+            memory_turns_used=max(0, int(memory_turns_used)),
+        )
+        return self._execution_service.prepare(
+            request,
+            conversation or EMPTY_PROJECTION,
+            trace or NullTrace(),
+        )
+
+    def finalize_execution(
+        self,
+        prepared: PreparedExecution,
+        draft: str | None,
+        trace: Any = None,
+    ):
+        return self._execution_service.finalize(prepared, draft, trace)
 
     def retrieve(
         self,

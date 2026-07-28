@@ -25,6 +25,7 @@ from .query_plan import requested_intents
 from .tracing import NullTrace, RequestTrace
 
 MemoryStatus = Literal["disabled", "new", "hit", "expired"]
+GenerationMode = Literal["grounded", "free_supplement", "none"]
 _MEMORY_STATUSES = frozenset({"disabled", "new", "hit", "expired"})
 
 
@@ -47,6 +48,18 @@ class AskExecutionInput:
             raise ValueError("memory_turns_used must not be negative")
 
 
+@dataclass(frozen=True)
+class PreparedExecution:
+    request: AskExecutionInput
+    conversation: ConversationProjection
+    retrieval_packet: FrozenRetrievalPacket
+    answer_context: str
+    generation_messages: tuple[Any, ...]
+    generation_mode: GenerationMode
+    immediate_answer: str | None
+    missing_intents: tuple[str, ...]
+
+
 def normalize_memory_status(value: object) -> MemoryStatus:
     return cast(MemoryStatus, value if value in _MEMORY_STATUSES else "disabled")
 
@@ -64,14 +77,32 @@ class RAGExecutionService:
         trace: RequestTrace | NullTrace | None = None,
     ) -> ResponsePacket:
         active_trace = trace or NullTrace()
-        return self._execute_once(request, conversation, active_trace)
+        prepared = self.prepare(request, conversation, active_trace)
+        if prepared.generation_mode == "none":
+            return self.finalize(prepared, None, active_trace)
+        try:
+            with active_trace.span("answer.llm"):
+                response = _invoke_with_retry(
+                    self._chain._llm,
+                    list(prepared.generation_messages),
+                )
+                draft = response.content if hasattr(response, "content") else str(response)
+            active_trace.mark_model_first_token()
+        except Exception as exc:
+            return self.finalize(
+                prepared,
+                None,
+                active_trace,
+                generation_error=exc,
+            )
+        return self.finalize(prepared, str(draft), active_trace)
 
-    def _execute_once(
+    def prepare(
         self,
         request: AskExecutionInput,
         conversation: ConversationProjection,
         trace: RequestTrace | NullTrace,
-    ) -> ResponsePacket:
+    ) -> PreparedExecution:
         from .chain import (
             _API_KEY_EMPTY_MSG,
             _EMPTY_RETRIEVAL_MSG,
@@ -94,116 +125,11 @@ class RAGExecutionService:
         context = str(retrieved.get("context", ""))
         answer_context = _answer_context(context, retrieved)
         route_decision = retrieved["route_decision"]
-
-        answer: str
-        grounding_mode: Literal["grounded", "ungrounded", "none"] = "none"
-        turn_outcome: Literal["grounded", "ungrounded", "not_committable"] = "not_committable"
-        validation = CitationValidation(valid=True)
-
-        if retrieved.get("retrieval_failed", False):
-            answer = _RETRIEVAL_FAILED_MSG
-        elif not self._chain.llm_ready():
-            answer = _API_KEY_EMPTY_MSG
-        elif not sources and retrieved.get("free_supplement", False):
-            try:
-                with trace.span("answer.llm"):
-                    draft = self._chain._invoke_free_supplement(request.question, conversation)
-                trace.mark_model_first_token()
-            except Exception as exc:
-                answer = f"LLM invocation failed: {type(exc).__name__}"
-                validation = CitationValidation(
-                    valid=False,
-                    warnings=("answer_generation_failed",),
-                )
-            else:
-                answer, validation = validate_or_repair_answer(
-                    draft=draft,
-                    context="",
-                    source_map=(),
-                    grounding_mode="ungrounded",
-                    trace=trace,
-                )
-                grounding_mode = "ungrounded"
-                if validation.valid:
-                    turn_outcome = "ungrounded"
-        elif not sources:
-            answer = _empty_retrieval_answer(plan, _EMPTY_RETRIEVAL_MSG)
-        else:
-            normalized_question = _answer_question(plan, request.question)
-            messages = self._chain._prompt.format_messages(
-                context=answer_context,
-                history=history_messages(conversation),
-                question=normalized_question,
-            )
-            try:
-                with trace.span("answer.llm"):
-                    response = _invoke_with_retry(self._chain._llm, messages)
-                    draft = response.content if hasattr(response, "content") else str(response)
-                trace.mark_model_first_token()
-            except Exception as exc:
-                answer = f"LLM invocation failed: {type(exc).__name__}"
-                validation = CitationValidation(
-                    valid=False,
-                    warnings=("answer_generation_failed",),
-                )
-            else:
-                missing_intents = _missing_intents(retrieved)
-                intents = requested_intents(plan)
-                draft_text = _normalize_structured_values(str(draft), answer_context)
-                draft_text = _remove_unsupported_system_membership(
-                    draft_text,
-                    answer_context,
-                )
-                draft_text = _normalize_voice_scope(
-                    draft_text,
-                    intents,
-                    tuple(retrieved.get("assets", ())),
-                )
-                draft_text = _normalize_media_scope(
-                    draft_text,
-                    intents,
-                    tuple(retrieved.get("assets", ())),
-                    plan,
-                    source_map,
-                )
-                draft_text = _preserve_evidence_qualifiers(
-                    draft_text,
-                    answer_context,
-                )
-                draft_text = _neutralize_unsupported_attributions(
-                    draft_text,
-                    answer_context,
-                )
-                draft_text = _normalize_answer_scope(
-                    draft_text,
-                    plan,
-                    answer_context,
-                    missing_intents,
-                )
-                disclosure = _shortfall_disclosure(missing_intents)
-                if disclosure:
-                    draft_text = f"{disclosure}\n\n{draft_text}"
-                answer, validation = validate_or_repair_answer(
-                    draft=draft_text,
-                    context=answer_context,
-                    source_map=source_map,
-                    grounding_mode="grounded",
-                    repair=self._chain._repair_citations,
-                    trace=trace,
-                )
-                if disclosure and disclosure not in answer:
-                    answer = f"{disclosure}\n\n{answer}"
-                grounding_mode = "grounded"
-                if validation.valid and "citation_safe_fallback" not in validation.warnings:
-                    turn_outcome = "grounded"
-
-        entity_ref = _entity_ref(plan)
-        requested = tuple(requested_intents(plan))
         retrieval_packet = FrozenRetrievalPacket(
             plan=plan,
-            entity_ref=entity_ref,
+            entity_ref=_entity_ref(plan),
             route_decision=route_decision,
-            requested_intents=requested,
+            requested_intents=tuple(requested_intents(plan)),
             sources=sources,
             source_map=source_map,
             media=tuple(retrieved.get("media", ())),
@@ -217,9 +143,136 @@ class RAGExecutionService:
             planning_error=str(retrieved.get("planning_error", "")),
             assets=tuple(retrieved.get("assets", ())),
         )
+        generation_mode: GenerationMode
+        immediate_answer: str | None = None
+        generation_messages: tuple[Any, ...] = ()
+        if retrieved.get("retrieval_failed", False):
+            generation_mode = "none"
+            immediate_answer = _RETRIEVAL_FAILED_MSG
+        elif not self._chain.llm_ready():
+            generation_mode = "none"
+            immediate_answer = _API_KEY_EMPTY_MSG
+        elif not sources and retrieved.get("free_supplement", False):
+            generation_mode = "free_supplement"
+            generation_messages = tuple(
+                self._chain._free_supplement_messages(request.question, conversation)
+            )
+        elif not sources:
+            generation_mode = "none"
+            immediate_answer = _empty_retrieval_answer(plan, _EMPTY_RETRIEVAL_MSG)
+        else:
+            generation_mode = "grounded"
+            normalized_question = _answer_question(plan, request.question)
+            generation_messages = tuple(self._chain._prompt.format_messages(
+                context=answer_context,
+                history=history_messages(conversation),
+                question=normalized_question,
+            ))
+        return PreparedExecution(
+            request=request,
+            conversation=conversation,
+            retrieval_packet=retrieval_packet,
+            answer_context=answer_context,
+            generation_messages=generation_messages,
+            generation_mode=generation_mode,
+            immediate_answer=immediate_answer,
+            missing_intents=_missing_intents(retrieved),
+        )
+
+    def finalize(
+        self,
+        prepared: PreparedExecution,
+        draft: str | None,
+        trace: RequestTrace | NullTrace | None = None,
+        *,
+        generation_error: Exception | None = None,
+    ) -> ResponsePacket:
+        active_trace = trace or NullTrace()
+        retrieval_packet = prepared.retrieval_packet
+        plan = retrieval_packet.plan
+        answer: str
+        grounding_mode: Literal["grounded", "ungrounded", "none"] = "none"
+        turn_outcome: Literal["grounded", "ungrounded", "not_committable"] = "not_committable"
+        validation = CitationValidation(valid=True)
+
+        if generation_error is not None:
+            answer = f"LLM invocation failed: {type(generation_error).__name__}"
+            validation = CitationValidation(
+                valid=False,
+                warnings=("answer_generation_failed",),
+            )
+        elif prepared.generation_mode == "none":
+            answer = prepared.immediate_answer or ""
+        elif prepared.generation_mode == "free_supplement":
+            from .chain import _FREE_SUPPLEMENT_PREFIX
+
+            supplemented = f"{_FREE_SUPPLEMENT_PREFIX}{draft or ''}"
+            answer, validation = validate_or_repair_answer(
+                draft=supplemented,
+                context="",
+                source_map=(),
+                grounding_mode="ungrounded",
+                trace=active_trace,
+            )
+            grounding_mode = "ungrounded"
+            if validation.valid:
+                turn_outcome = "ungrounded"
+        else:
+            intents = tuple(retrieval_packet.requested_intents)
+            draft_text = _normalize_structured_values(
+                str(draft or ""),
+                prepared.answer_context,
+            )
+            draft_text = _remove_unsupported_system_membership(
+                draft_text,
+                prepared.answer_context,
+            )
+            draft_text = _normalize_voice_scope(
+                draft_text,
+                intents,
+                tuple(retrieval_packet.assets),
+            )
+            draft_text = _normalize_media_scope(
+                draft_text,
+                intents,
+                tuple(retrieval_packet.assets),
+                plan,
+                tuple(retrieval_packet.source_map),
+            )
+            draft_text = _preserve_evidence_qualifiers(
+                draft_text,
+                prepared.answer_context,
+            )
+            draft_text = _neutralize_unsupported_attributions(
+                draft_text,
+                prepared.answer_context,
+            )
+            draft_text = _normalize_answer_scope(
+                draft_text,
+                plan,
+                prepared.answer_context,
+                prepared.missing_intents,
+            )
+            disclosure = _shortfall_disclosure(prepared.missing_intents)
+            if disclosure:
+                draft_text = f"{disclosure}\n\n{draft_text}"
+            answer, validation = validate_or_repair_answer(
+                draft=draft_text,
+                context=prepared.answer_context,
+                source_map=tuple(retrieval_packet.source_map),
+                grounding_mode="grounded",
+                repair=self._chain._repair_citations,
+                trace=active_trace,
+            )
+            if disclosure and disclosure not in answer:
+                answer = f"{disclosure}\n\n{answer}"
+            grounding_mode = "grounded"
+            if validation.valid and "citation_safe_fallback" not in validation.warnings:
+                turn_outcome = "grounded"
+
         memory_info = {
-            "status": request.memory_status,
-            "turns_used": request.memory_turns_used,
+            "status": prepared.request.memory_status,
+            "turns_used": prepared.request.memory_turns_used,
             "rewrite_mode": str(getattr(plan, "context_rewrite_mode", "none") or "none"),
         }
         response_packet = ResponsePacket(
@@ -230,7 +283,7 @@ class RAGExecutionService:
             memory_info=memory_info,
             turn_outcome=turn_outcome,
         )
-        trace.mark_validated_ready()
+        active_trace.mark_validated_ready()
         return response_packet
 
 
@@ -649,6 +702,8 @@ def _plan_value(plan: Any, field: str) -> Any:
 
 __all__ = [
     "AskExecutionInput",
+    "GenerationMode",
+    "PreparedExecution",
     "RAGExecutionService",
     "build_completed_turn",
     "normalize_memory_status",

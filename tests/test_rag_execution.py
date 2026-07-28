@@ -158,6 +158,43 @@ def test_execute_calls_each_business_stage_once(tmp_path):
     assert packet.citation_validation.valid is True
 
 
+def test_prepare_freezes_one_retrieval_snapshot_and_does_not_call_answer_llm(tmp_path):
+    chain, planner, retriever, registry, llm = _chain(tmp_path, ["unused"])
+
+    prepared = chain.prepare_execution("Question")
+
+    assert prepared.generation_mode == "grounded"
+    assert prepared.retrieval_packet.sources[0]["name"] == "Fixture"
+    assert planner.calls == 1
+    assert retriever.calls == 1
+    assert registry.calls == 1
+    assert llm.calls == 0
+
+
+def test_finalize_uses_supplied_draft_and_shared_citation_rules(tmp_path):
+    chain, _planner, _retriever, _registry, llm = _chain(tmp_path, ["unused"])
+    prepared = chain.prepare_execution("Question")
+
+    packet = chain.finalize_execution(prepared, "Answer [S01]")
+
+    assert packet.answer == "Answer [S01]"
+    assert packet.citation_validation.valid is True
+    assert packet.turn_outcome == "grounded"
+    assert llm.calls == 0
+
+
+def test_execute_is_prepare_generate_finalize_once(tmp_path):
+    chain, planner, retriever, registry, llm = _chain(tmp_path, ["Answer [S01]"])
+
+    packet = chain.execute("Question")
+
+    assert packet.answer == "Answer [S01]"
+    assert planner.calls == 1
+    assert retriever.calls == 1
+    assert registry.calls == 1
+    assert llm.calls == 1
+
+
 def test_execute_retries_one_transient_answer_failure(tmp_path):
     chain, _planner, _retriever, _registry, _llm = _chain(tmp_path, ["unused"])
     transient = _TransientAnswerLLM(["Answer [S01]"])
