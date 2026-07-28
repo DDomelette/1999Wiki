@@ -140,6 +140,15 @@ def test_source_and_target_must_be_distinct(tmp_path: Path) -> None:
         )
 
 
+def test_production_manifest_uses_valid_sha256_values() -> None:
+    manifest = SnapshotManifest.load(
+        Path("config/recovery/huiji-res1999-20260707.json")
+    )
+    for name, spec in manifest.files.items():
+        assert len(spec.sha256) == 64, name
+        assert all(character in "0123456789abcdef" for character in spec.sha256)
+
+
 def _file_spec(path: Path) -> dict[str, object]:
     return {
         "size": path.stat().st_size,

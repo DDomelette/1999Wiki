@@ -20,9 +20,14 @@ class SnapshotFile:
 
     @classmethod
     def from_json(cls, value: Mapping[str, Any]) -> SnapshotFile:
+        sha256 = str(value["sha256"]).lower()
+        if len(sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in sha256
+        ):
+            raise ValueError("manifest contains an invalid SHA-256")
         return cls(
             size=int(value["size"]),
-            sha256=str(value["sha256"]).lower(),
+            sha256=sha256,
             rows=_optional_int(value.get("rows")),
             invalid_payload_rows=_optional_int(
                 value.get("invalid_payload_rows")
