@@ -127,6 +127,9 @@ class CorpusBuildRequest:
     run_dir: Path
     fidelity_baseline_path: Path
     expected_fidelity_baseline_sha256: str
+    recovery_manifest_path: Path | None = None
+    recovery_audit_receipt_path: Path | None = None
+    recovery_apply_receipt_path: Path | None = None
     wiki_compatibility_receipt_path: Path | None = None
     expected_wiki_compatibility_receipt_sha256: str = ""
     configured_build_version: str = ""

@@ -240,7 +240,11 @@ class _ProjectionAccumulator:
 def project_crawler_semantics(rows: Iterable[Mapping[str, Any]]) -> CorpusProjection:
     """Project supported records without consulting active artifacts or business stores."""
     selected: list[dict[str, Any]] = []
+    invalid_wrappers: list[Mapping[str, Any]] = []
     for candidate in rows:
+        if candidate.get("json_valid") is False:
+            invalid_wrappers.append(candidate)
+            continue
         title = str(candidate.get("title") or "")
         is_character_source = title == "Data:Char/map.json" or bool(
             _CHAR_TITLE_RE.fullmatch(title)
@@ -254,6 +258,20 @@ def project_crawler_semantics(rows: Iterable[Mapping[str, Any]]) -> CorpusProjec
     aliases = _alias_map(source_rows)
     udimo = _udimo_owner_index(source_rows)
     result = _ProjectionAccumulator()
+    for row in invalid_wrappers:
+        result.exclusions.append(
+            _exclusion(
+                row,
+                "invalid_data_wrapper",
+                details={
+                    "json_error": str(row.get("json_error") or ""),
+                    "pageid": row.get("pageid"),
+                    "revid": row.get("revid"),
+                    "source_file": str(row.get("__source_file") or "data_pages.jsonl"),
+                    "source_line_number": row.get("__source_line_number"),
+                },
+            )
+        )
 
     for row in source_rows:
         title = str(row.get("title") or "")

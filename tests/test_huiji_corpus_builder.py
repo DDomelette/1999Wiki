@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
@@ -68,6 +69,55 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     _write_jsonl(raw / "data_pages.jsonl", [data_row])
     _write_jsonl(raw / "resources_manifest.jsonl", [])
+    with sqlite3.connect(raw / "crawl_state.sqlite") as connection:
+        connection.execute("CREATE TABLE crawl_runs (id INTEGER PRIMARY KEY)")
+
+    recovery_manifest = project / "config/recovery/fixture.json"
+    recovery_audit = project / "eval/recovery/audit.json"
+    recovery_apply = project / "eval/recovery/apply.json"
+    _write_json(
+        recovery_manifest,
+        {
+            "schema_version": "huiji-source-recovery/v1",
+            "snapshot_id": "fixture",
+            "files": {
+                name: {
+                    "size": (raw / name).stat().st_size,
+                    "sha256": _sha256(raw / name),
+                    **(
+                        {"rows": 1, "invalid_payload_rows": 0}
+                        if name == "data_pages.jsonl"
+                        else {}
+                    ),
+                }
+                for name in ("data_pages.jsonl", "crawl_state.sqlite")
+            },
+            "recover": ["data_pages.jsonl", "crawl_state.sqlite"],
+        },
+    )
+    _write_json(
+        recovery_audit,
+        {
+            "status": "ready",
+            "snapshot_id": "fixture",
+            "invalid_payload_rows": 0,
+        },
+    )
+    _write_json(
+        recovery_apply,
+        {
+            "status": "completed",
+            "snapshot_id": "fixture",
+            "files": {
+                name: {
+                    "status": "already_present",
+                    "size": (raw / name).stat().st_size,
+                    "sha256": _sha256(raw / name),
+                }
+                for name in ("data_pages.jsonl", "crawl_state.sqlite")
+            },
+        },
+    )
 
     projection = project_crawler_semantics([data_row])
     active_root = project / "data/processed/huiji/dev"
@@ -179,6 +229,9 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             embedding_provider="test",
             embedding_model="test-model",
             forbidden_collection_names=("active",),
+            recovery_manifest_path=recovery_manifest,
+            recovery_audit_receipt_path=recovery_audit,
+            recovery_apply_receipt_path=recovery_apply,
         )
 
     return project, request
@@ -206,18 +259,30 @@ def test_full_builder_runs_fixed_stages_and_two_roots_have_equal_semantic_hashes
     _project, request = _fixture(tmp_path, monkeypatch)
     events: list[str] = []
     _wrap(monkeypatch, orchestrator_module, "capture_corpus_source_inventory", events, "source")
+    _wrap(monkeypatch, orchestrator_module, "validate_recovery_gate", events, "recovery")
+    _wrap(monkeypatch, orchestrator_module, "build_page_revision_join", events, "join")
     _wrap(monkeypatch, orchestrator_module, "project_crawler_semantics", events, "projection")
     _wrap(monkeypatch, orchestrator_module.media_stage, "prepare_voice_resource_rows", events, "voice_resources")
     _wrap(monkeypatch, orchestrator_module.VoiceBindingStage, "run", events, "voice")
     _wrap(monkeypatch, orchestrator_module.media_stage, "assemble_media_v3", events, "media")
     _wrap(monkeypatch, orchestrator_module, "build_fidelity_ledger", events, "fidelity")
     _wrap(monkeypatch, orchestrator_module, "write_candidate_artifacts", events, "artifacts")
+    original_read_jsonl = orchestrator_module._read_jsonl
+
+    def reject_source_list_load(path: Path):
+        if path.name in {"data_pages.jsonl", "resources_manifest.jsonl"}:
+            raise AssertionError("crawler semantic sources must use streaming readers")
+        return original_read_jsonl(path)
+
+    monkeypatch.setattr(orchestrator_module, "_read_jsonl", reject_source_list_load)
 
     first = HuijiCorpusBuilder().build_candidate(request("candidate-a", "run-a"))
     second = HuijiCorpusBuilder().build_candidate(request("candidate-b", "run-b"))
 
     expected = [
+        "recovery",
         "source",
+        "join",
         "projection",
         "voice_resources",
         "voice",
@@ -262,6 +327,16 @@ def test_expected_gate_failure_is_blocked_but_unexpected_exception_propagates(
     )
     assert evidence["state"] == "blocked"
 
+    missing_recovery = replace(
+        request("missing-recovery", "missing-recovery-run"),
+        recovery_manifest_path=None,
+        recovery_audit_receipt_path=None,
+        recovery_apply_receipt_path=None,
+    )
+    recovery_blocked = HuijiCorpusBuilder().build_candidate(missing_recovery)
+    assert recovery_blocked.state.value == "blocked"
+    assert recovery_blocked.blockers == ("source_recovery_invalid",)
+
     monkeypatch.setattr(
         orchestrator_module,
         "project_crawler_semantics",
@@ -271,3 +346,37 @@ def test_expected_gate_failure_is_blocked_but_unexpected_exception_propagates(
         HuijiCorpusBuilder().build_candidate(
             request("unexpected-error", "unexpected-error-run")
         )
+
+
+def test_recovery_failure_does_not_publish_receipt_path_or_raw_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project, request = _fixture(tmp_path, monkeypatch)
+    sensitive_receipt = (
+        project
+        / "PRIVATE_RECOVERY_RECEIPTS_DO_NOT_PUBLISH"
+        / "operator-only"
+        / "apply.json"
+    )
+    blocked = HuijiCorpusBuilder().build_candidate(
+        replace(
+            request("missing-sensitive-receipt", "missing-sensitive-receipt-run"),
+            recovery_apply_receipt_path=sensitive_receipt,
+        )
+    )
+
+    assert blocked.state.value == "blocked"
+    assert blocked.blockers == ("source_recovery_invalid",)
+    artifact_path = (
+        project
+        / "eval/runs/missing-sensitive-receipt-run/candidate_result.v1.json"
+    )
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    public_text = json.dumps(artifact, ensure_ascii=False, sort_keys=True)
+    assert artifact["failure_detail"] == "recovery evidence is unavailable or invalid"
+    assert str(sensitive_receipt) not in public_text
+    assert sensitive_receipt.as_posix() not in public_text
+    assert "PRIVATE_RECOVERY_RECEIPTS_DO_NOT_PUBLISH" not in public_text
+    assert "apply.json" not in public_text
+    assert "[Errno" not in public_text
+    assert "No such file or directory" not in public_text

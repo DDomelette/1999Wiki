@@ -22,6 +22,11 @@ from .contracts import (
     fixture_contract_fingerprint,
 )
 from .fidelity import build_fidelity_ledger
+from .page_sources import (
+    CrawlerSemanticInputs,
+    build_page_revision_join,
+    validate_recovery_gate,
+)
 from .projection import project_crawler_semantics
 from .source_inventory import (
     capture_code_fingerprint,
@@ -42,6 +47,7 @@ _SOURCE_FILES = (
 _PARTICIPATING_CODE_PATHS = (
     Path("src/huiji_rag/build/contracts.py"),
     Path("src/huiji_rag/build/source_inventory.py"),
+    Path("src/huiji_rag/build/page_sources.py"),
     Path("src/huiji_rag/build/projection.py"),
     Path("src/huiji_rag/build/voice_stage.py"),
     Path("src/huiji_rag/build/media_v3.py"),
@@ -133,6 +139,38 @@ class HuijiCorpusBuilder:
         run_dir: Path,
     ) -> CorpusBuildResult:
         project_root = _project_root(request)
+        if (
+            request.recovery_manifest_path is None
+            or request.recovery_audit_receipt_path is None
+            or request.recovery_apply_receipt_path is None
+        ):
+            raise _ExpectedGateFailure(
+                "source_recovery_invalid",
+                "recovery manifest, audit receipt, and apply receipt are required",
+            )
+        try:
+            recovery = validate_recovery_gate(
+                request.raw_root,
+                manifest_path=request.recovery_manifest_path,
+                audit_receipt_path=request.recovery_audit_receipt_path,
+                apply_receipt_path=request.recovery_apply_receipt_path,
+            )
+        except (FileNotFoundError, OSError, ValueError):
+            raise _ExpectedGateFailure(
+                "source_recovery_invalid",
+                "recovery evidence is unavailable or invalid",
+            ) from None
+        _write_create_new(
+            run_dir / "source_recovery_gate.v1.json",
+            {
+                "schema_version": "huiji.source-recovery-gate/v1",
+                "snapshot_id": recovery.snapshot_id,
+                "invalid_payload_rows": recovery.invalid_payload_rows,
+                "sqlite_quick_check": recovery.sqlite_quick_check,
+                "data_pages_sha256": recovery.data_pages_sha256,
+                "crawl_state_sha256": recovery.crawl_state_sha256,
+            },
+        )
         baseline, baseline_path, baseline_sha256 = _load_fidelity_baseline(
             request, project_root
         )
@@ -150,13 +188,50 @@ class HuijiCorpusBuilder:
         )
 
         try:
-            data_rows = _read_jsonl(Path(request.raw_root) / "data_pages.jsonl")
-            resource_rows = _read_jsonl(
-                Path(request.raw_root) / "resources_manifest.jsonl"
+            semantic_inputs = CrawlerSemanticInputs.from_root(request.raw_root)
+            page_stream = semantic_inputs.pages()
+            revision_stream = semantic_inputs.revisions()
+            source_join = build_page_revision_join(page_stream, revision_stream)
+            data_stream = semantic_inputs.data_pages()
+            resource_stream = semantic_inputs.resources()
+            projection = project_crawler_semantics(
+                item.projection_row() for item in data_stream
             )
-            projection = project_crawler_semantics(data_rows)
+            resource_rows = tuple(
+                item.projection_row() for item in resource_stream
+            )
         except (FileNotFoundError, OSError, ValueError) as error:
             raise _ExpectedGateFailure("semantic_projection_invalid", str(error)) from error
+        _write_create_new(
+            run_dir / "semantic_source_diagnostics.v1.json",
+            {
+                "schema_version": "huiji.semantic-source-diagnostics/v1",
+                "source_filenames": list(semantic_inputs.source_filenames),
+                "metrics": {
+                    stream.source_name: {
+                        "read_rows": stream.metrics.read_rows,
+                        "accepted_rows": stream.metrics.accepted_rows,
+                        "excluded_rows": stream.metrics.excluded_rows,
+                        "peak_rss_bytes": stream.metrics.peak_rss_bytes,
+                        "elapsed_seconds": stream.metrics.elapsed_seconds,
+                        "reason_counts": dict(stream.metrics.reason_counts),
+                    }
+                    for stream in (
+                        page_stream,
+                        revision_stream,
+                        data_stream,
+                        resource_stream,
+                    )
+                },
+                "page_revision_join": {
+                    "joined_count": len(source_join.joined),
+                    "diagnostics": [
+                        item.to_json() for item in source_join.diagnostics
+                    ],
+                    "blockers": list(source_join.blockers),
+                },
+            },
+        )
 
         media_config = media_stage.MediaV3Config(
             raw_root=request.raw_root,
@@ -180,7 +255,11 @@ class HuijiCorpusBuilder:
         except (FileNotFoundError, OSError, ValueError) as error:
             raise _ExpectedGateFailure("media_assembly_invalid", str(error)) from error
 
-        blockers: list[str] = [*voice_resources.blockers, *media.blockers]
+        blockers: list[str] = [
+            *source_join.blockers,
+            *voice_resources.blockers,
+            *media.blockers,
+        ]
         protected_references: dict[str, Any] = {
             "fidelity_baseline": _reference(
                 baseline_path, baseline_sha256, project_root

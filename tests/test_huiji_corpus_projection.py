@@ -323,3 +323,54 @@ def test_projection_dynamically_excludes_invalid_characters() -> None:
     }
     assert {item.entity_id for item in projection.parents if item.category == "character"} == {"4"}
     assert all(len(item.source_identity) == 64 for item in projection.exclusions)
+
+
+def test_json_valid_false_wrapper_emits_excluded_evidence_without_parsing_content(
+    monkeypatch,
+) -> None:
+    valid = _row(
+        "Data:Item/41.json",
+        {"id": 41, "name": "有效邻居", "description": "仍然投影。"},
+    )
+    invalid_content = '{"id":"must-not-project",'
+    invalid = {
+        "site": "res1999",
+        "pageid": 9001,
+        "revid": 9002,
+        "title": "Data:Story/invalid.json",
+        "content": invalid_content,
+        "content_sha256": hashlib.sha256(invalid_content.encode()).hexdigest(),
+        "json_valid": False,
+        "json_error": "fixture invalid payload",
+        "__source_file": "data_pages.jsonl",
+        "__source_line_number": 2,
+    }
+    real_loads = json.loads
+
+    def guarded_loads(value, *args, **kwargs):
+        if value == invalid_content:
+            raise AssertionError("invalid wrapper content must never be parsed")
+        return real_loads(value, *args, **kwargs)
+
+    monkeypatch.setattr(json, "loads", guarded_loads)
+
+    projection = project_crawler_semantics([valid, invalid])
+
+    assert [item.reason_code for item in projection.exclusions] == [
+        "invalid_data_wrapper"
+    ]
+    exclusion = projection.exclusions[0]
+    assert exclusion.source_title == "Data:Story/invalid.json"
+    assert exclusion.details == {
+        "json_error": "fixture invalid payload",
+        "pageid": 9001,
+        "revid": 9002,
+        "source_file": "data_pages.jsonl",
+        "source_line_number": 2,
+    }
+    assert all(item.entity_id != "must-not-project" for item in projection.parents)
+    assert all(
+        item.block.entity_id != "must-not-project" for item in projection.children
+    )
+    assert not projection.media_intents
+    assert any(item.entity_id == "41" for item in projection.parents)
