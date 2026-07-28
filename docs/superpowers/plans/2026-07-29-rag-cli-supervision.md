@@ -1445,8 +1445,8 @@ git commit -m "docs: add Codex supervisor runbook"
 
 ```text
 docs/superpowers/specs/2026-07-29-rag-thread-a-routing-design.md
-docs/superpowers/specs/2026-07-29-rag-thread-b-chinese-bm25-design.md
-docs/superpowers/specs/2026-07-29-rag-thread-c-topic-media-projection-design.md
+docs/superpowers/specs/2026-07-29-rag-thread-b-chinese-bm25-analyzer-design.md
+docs/superpowers/specs/2026-07-29-rag-thread-c-topic-story-media-projection-design.md
 ```
 
 逐份确认用户批准记录。任一缺失时不创建任何 worker。
