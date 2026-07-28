@@ -1,5 +1,21 @@
 import type { ActionItem, AssetItem, MediaItem, MediaPanel, MemoryInfo, RouteInfo, RouteOptions, SourceItem } from '../types'
 
+export type StreamPhase =
+  | 'understanding'
+  | 'retrieving'
+  | 'generating'
+  | 'validating'
+  | 'corrected'
+  | 'cancelled'
+  | 'failed'
+
+export type AnswerReplaceReason = 'citation_validation' | 'safe_fallback'
+
+export interface StreamErrorInfo {
+  phase?: StreamPhase
+  partial: boolean
+}
+
 export interface StreamMeta {
   groundingMode?: 'grounded' | 'ungrounded' | 'none'
   citationWarning?: string
@@ -15,10 +31,27 @@ export interface StreamMeta {
 
 export interface StreamCallbacks {
   onSources: (sources: SourceItem[], assets?: AssetItem[], media?: MediaItem[], meta?: StreamMeta) => void
+  onStatus?: (phase: StreamPhase) => void
   onToken: (token: string) => void
+  onAnswerReplace?: (answer: string, reason: AnswerReplaceReason) => void
   onDone: (answer: string, sources: SourceItem[], assets?: AssetItem[], media?: MediaItem[], meta?: StreamMeta) => void
-  onError: (msg: string) => void
+  onError: (msg: string, info?: StreamErrorInfo) => void
 }
+
+const STREAM_PHASES = new Set<StreamPhase>([
+  'understanding',
+  'retrieving',
+  'generating',
+  'validating',
+  'corrected',
+  'cancelled',
+  'failed',
+])
+
+const ANSWER_REPLACE_REASONS = new Set<AnswerReplaceReason>([
+  'citation_validation',
+  'safe_fallback',
+])
 
 function metaFromPayload(data: Record<string, unknown>): StreamMeta {
   return {
@@ -80,20 +113,30 @@ export async function streamAsk(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let terminal = false
 
   while (true) {
     const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
+    if (done) {
+      buffer += decoder.decode()
+    }
+    else {
+      buffer += decoder.decode(value, { stream: true })
+    }
+    buffer = buffer.replace(/\r\n/g, '\n')
     const blocks = buffer.split('\n\n')
     buffer = blocks.pop() ?? ''
     for (const block of blocks) {
-      if (!block.trim()) continue
+      if (terminal || !block.trim() || block.trimStart().startsWith(':')) continue
       const eventMatch = block.match(/^event: (.+)$/m)
       const dataMatch = block.match(/^data: (.+)$/m)
       const event = eventMatch ? eventMatch[1] : 'message'
       const data = dataMatch ? JSON.parse(dataMatch[1]) : {}
-      if (event === 'sources') {
+      if (event === 'status') {
+        const phase = data.phase as StreamPhase
+        if (STREAM_PHASES.has(phase)) callbacks.onStatus?.(phase)
+      }
+      else if (event === 'sources') {
         callbacks.onSources(
           data.sources as SourceItem[],
           data.assets as AssetItem[] | undefined,
@@ -102,6 +145,12 @@ export async function streamAsk(
         )
       }
       else if (event === 'token') callbacks.onToken(data.token as string)
+      else if (event === 'answer_replace') {
+        const reason = data.reason as AnswerReplaceReason
+        if (ANSWER_REPLACE_REASONS.has(reason)) {
+          callbacks.onAnswerReplace?.(data.answer as string, reason)
+        }
+      }
       else if (event === 'done') {
         callbacks.onDone(
           data.answer as string,
@@ -110,8 +159,17 @@ export async function streamAsk(
           data.media as MediaItem[] | undefined,
           metaFromPayload(data),
         )
+        terminal = true
       }
-      else if (event === 'error') callbacks.onError(data.message as string)
+      else if (event === 'error') {
+        const phase = data.phase as StreamPhase | undefined
+        callbacks.onError(data.message as string, {
+          phase: phase && STREAM_PHASES.has(phase) ? phase : undefined,
+          partial: data.partial === true,
+        })
+        terminal = true
+      }
     }
+    if (done) break
   }
 }
