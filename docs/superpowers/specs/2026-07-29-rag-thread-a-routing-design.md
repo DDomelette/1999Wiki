@@ -32,6 +32,7 @@
 6. `src/rag/citations.py` 在单次来源列表冻结后从 `S01` 编号，两个独立回答直接拼接会产生重复 ID。
 7. `src/rag/conversation.py` 的每个 turn 只有一个实体锚点。
 8. `backend/schemas.py`、`src/rag/serializers.py` 和 `backend/sse.py` 只公开单路响应契约。
+9. 前端已经允许 `expanded` 与 `free_supplement` 同时开启并传入后端；当前 Route Policy 的组合语义是先执行扩大检索，只有 retrieval outcome 为 `empty` 时才自由补充。遗留 `hybrid_answer` 会被归一化为 grounded route，当前不存在自动并行混合回答。
 
 线程 A 的目标是：
 
@@ -41,6 +42,7 @@
 4. 对安全、独立的复合问题进行有限拆分、并行执行和确定性聚合。
 5. 为整轮请求统一分配引用，并保持同步 API、SSE、记忆和公开 schema 一致。
 6. 保留角色实体 Owner Gate、引用验证和默认防幻觉边界。
+7. 冻结“扩大检索”和“自由补充”的双开关组合语义，避免 UI 状态、请求参数和执行路线各自成立但组合行为未定义。
 
 ## 2. 范围与非目标
 
@@ -55,6 +57,7 @@
 - 全局来源去重和引用编号；
 - 混合 grounding、turn outcome 和记忆规则；
 - 同步 API、SSE、serializer 和 Pydantic schema；
+- 双开关组合授权矩阵及对应 Route Policy 回归；
 - A 自带 fixture 的路由、执行、引用、记忆和 API 回归。
 
 ### 2.2 线程 A 不负责
@@ -67,6 +70,7 @@
 - 正式候选构建、Milvus 写入、active pointer 或生产激活；
 - 修改线程 B/C worktree 中尚未合并的代码；
 - 开放式 LLM 对所有数据库外问题自动作答。
+- 在 P0 中自动并行执行 expanded RAG 与通用 LLM，或自动混合 grounded 与 ungrounded 段落。
 
 ## 3. 总体架构
 
@@ -177,29 +181,62 @@ out_of_scope
 
 `AUTH-P0-01`：`assistant_meta`、`social_smalltalk` 和 `out_of_scope` 必须新增 `local_response` effective route，不能伪装成 `llm_general` 或 `rag_grounded`。
 
-`AUTH-P0-02`：`general_open` 只有在以下任一现有显式授权成立时才能进入 `llm_general`：
+`AUTH-P0-02`：`general_open` 不执行知识库检索，只有在以下任一现有显式授权成立时才能进入 `llm_general`：
 
 - `route_options.free_supplement=true`；
 - 用户触发已存在的 `force_free_supplement` 恢复 action。
 
 `AUTH-P0-03`：Planner 输出 `general_open` 或 `llm_general` 本身不能授权自由回答。默认关闭自由补充时必须生成边界说明，不能先执行空检索再报“未检测到实体”。
 
-`AUTH-P0-04`：检索失败不能自动转成通用回答。`knowledge_base` 的 `failed/empty/partial` 继续按 grounded 失败和不足策略处理，除非用户另行执行显式自由补充 action。
+`AUTH-P0-04`：`knowledge_base` 分支中的普通 `free_supplement=true` 只表示 `allow_free_supplement_after_empty`，不表示跳过检索或始终生成通用回答。该分支仍必须先完成本轮授权范围内的正常检索。
 
-`AUTH-P0-05`：复合请求中的授权按分支执行。一个 `assistant_meta` 分支合法，不会为同轮 `general_open` 分支扩展权限。
+`AUTH-P0-05`：常驻双开关的 P0 组合矩阵固定为：
 
-`AUTH-P0-06`：公开 route reason 至少增加：
+| `expanded` | `free_supplement` | KB 检索范围 | `sufficient` | `partial` | `empty` | `failed` |
+|---:|---:|---|---|---|---|---|
+| false | false | 默认范围 | grounded | grounded + shortfall | grounded 不足提示 | 结构化检索错误 |
+| true | false | 扩大范围 | expanded grounded | expanded grounded + shortfall | grounded 不足提示 | 结构化检索错误 |
+| false | true | 默认范围 | grounded | grounded + shortfall | `llm_general` | 结构化检索错误 |
+| true | true | 扩大范围 | expanded grounded | expanded grounded + shortfall | `llm_general` | 结构化检索错误 |
+
+`AUTH-P0-06`：双开关同时开启时，P0 必须先执行一次 expanded retrieval；有任意可提交证据时不自动创建自由补充分支。只有 outcome 精确为 `empty` 才能使用本轮已有自由补充许可。`failed` 不是 `empty`，不得伪装成资料为空后进入通用回答。
+
+`AUTH-P0-07`：`force_free_supplement` 是用户对精确恢复 action 的直接授权，可以跳过知识库重试；它与常驻 `free_supplement` 的 empty fallback 语义必须使用不同的公开 route reason。
+
+`AUTH-P0-08`：复合请求中的授权按分支执行。一个 `assistant_meta` 分支合法，不会为同轮 `general_open` 分支扩展权限；一个 KB 分支的 empty fallback 也不会授权其他 KB 或 general 分支。
+
+`AUTH-P0-09`：公开 route reason 至少增加或保留：
 
 ```text
 local_assistant_meta
 local_social_smalltalk
 local_out_of_scope
 general_open_denied
+toggle_allows_empty_fallback
+authorized_empty_fallback
+explicit_recovery_action
+retrieval_failed
 composite_mixed
 composite_partial
 ```
 
-`AUTH-P0-07`：本地回答必须在代码中集中管理，不把身份声明、能力边界和非人类小聊规则散落在 Planner prompt、API handler 或异常分支中。
+`AUTH-P0-10`：本地回答必须在代码中集中管理，不把身份声明、能力边界和非人类小聊规则散落在 Planner prompt、API handler 或异常分支中。
+
+### 5.1 P1 显式补充缺失部分
+
+`AUTH-P1-01`：当 KB 分支 outcome 为 `partial` 时，可以返回“自由补充缺失部分”恢复 action，但不得因常驻开关已开启而自动执行。
+
+`AUTH-P1-02`：该 action 必须绑定原 KB `subtask_id`、规范化 query、semantic intents 和原检索 scope；明确实体问题同时携带 EntityRef，无单一实体的 Topic/Story 保留其 scope mode。用户点击后，ungrounded 补充必须与既有 grounded 结果分区显示，不得改写、吞并或移除已验证的 grounded 文本与引用。
+
+`AUTH-P1-03`：自由补充段落不得携带 `[Snn]`、sources、media 或“来自知识库”的声明；失败只影响补充分支。
+
+### 5.2 P2 自动 Hybrid
+
+`AUTH-P2-01`：自动并行执行 expanded RAG 与通用 LLM、再发布 `mixed` 回答属于 P2，不进入本轮 A 的实施 Plan。
+
+`AUTH-P2-02`：未来启用自动 Hybrid 前，必须新增明确的用户可见说明和版本化线协议授权，例如 `hybrid_mode=parallel`。不得仅根据遗留请求中的 `expanded=true && free_supplement=true` 静默扩大授权语义。
+
+`AUTH-P2-03`：Hybrid 的 grounded 与 ungrounded 分支必须分别生成和验证，按固定分区聚合；通用 LLM 不得获得改写 grounded 事实或引用的权限。顶层可标记 `mixed`，但只有 grounded 分支进入 source map 和实体事实记忆。
 
 ## 6. RequestPlan 和 Subtask 契约
 
@@ -742,7 +779,14 @@ codex exec `
 - “你晚饭吃了吗”不伪装人类经历；
 - “中国首都是什么”默认不调用通用 LLM；
 - 显式开启 free supplement 后，general_open 才调用通用 LLM；
-- Planner 单独输出 llm_general 不能绕过授权。
+- Planner 单独输出 llm_general 不能绕过授权；
+- `expanded=false, free_supplement=false` 的 KB empty 返回 grounded 不足；
+- `expanded=true, free_supplement=false` 的 KB 查询使用扩大范围，empty 仍不自由补充；
+- `expanded=false, free_supplement=true` 的 KB 查询先使用默认范围，只有 empty 才自由补充；
+- `expanded=true, free_supplement=true` 的 KB 查询先使用扩大范围，只有 empty 才自由补充；
+- 四种开关组合下的 `partial` 均保留 grounded 证据和 shortfall，不自动混合自由补充；
+- 四种开关组合下的 `failed` 均返回结构化检索错误，不进入自由补充；
+- 遗留 `hybrid_answer` 不能绕过 P0 授权矩阵。
 
 ### 20.2 Owner 与 Topic
 
@@ -819,7 +863,7 @@ codex exec `
 线程 A 内部按以下顺序串行推进：
 
 ```text
-A1 RequestPlan + task authorization + local responses
+A1 RequestPlan + task authorization + dual-toggle matrix + local responses
   → A2 retrieval scope + Topic/Story fixture 消费
   → A3 global sources + composite execution
   → A4 mixed packet + memory + REST/SSE
@@ -850,6 +894,7 @@ feat(rag): publish mixed responses and safe memory
 P1 可选：
 
 - 更丰富但仍受控的小聊模板；
+- partial KB 回答后的显式“自由补充缺失部分”恢复 action；
 - 显式两阶段 depends_on；
 - 更细粒度 Topic diversity 和定义性内容排序；
 - 前端对 subtask 状态的专门展示。
@@ -858,6 +903,7 @@ P2 延后：
 
 - 跨分支比较推理；
 - 反事实和任务图；
+- 版本化授权后的 expanded RAG + 通用 LLM 自动 Hybrid；
 - LLM 聚合全文重写；
 - 开放式长期助手人格；
 - 稀疏向量；
@@ -882,4 +928,5 @@ P1 只有全部 P0 完成且获得新批准后才可进入 Plan；P2 不得进�
 11. 不依赖线程 B/C 未合并工作树。
 12. 未修改 Analyzer、投影、媒体下载、正式候选或生产激活。
 13. P0 测试和现有相关回归全部通过。
-14. D 审核 diff、测试、公共契约和文件所有权后接受提交。
+14. 双开关四种组合在 sufficient/partial/empty/failed 下均符合冻结矩阵，P0 不自动生成 Hybrid。
+15. D 审核 diff、测试、公共契约和文件所有权后接受提交。
