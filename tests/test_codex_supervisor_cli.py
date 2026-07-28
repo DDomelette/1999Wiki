@@ -7,6 +7,7 @@ from pathlib import Path
 
 from src.codex_supervisor.cli import (
     build_resume_args,
+    is_resumable_status,
     main,
     resolve_codex_argv,
 )
@@ -105,6 +106,15 @@ def test_resume_requires_recorded_session(tmp_path: Path) -> None:
     )
     assert exit_code == 2
     assert "session ID" in stderr
+
+
+def test_resume_allows_d_review_revision_of_completed_work() -> None:
+    assert is_resumable_status("failed")
+    assert is_resumable_status("blocked")
+    assert is_resumable_status("needs_approval")
+    assert is_resumable_status("completed_pending_review")
+    assert not is_resumable_status("running")
+    assert not is_resumable_status("accepted")
 
 
 def test_accept_only_allows_completed_pending_review(

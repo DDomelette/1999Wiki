@@ -28,6 +28,15 @@ from src.codex_supervisor.runner import (
 from src.codex_supervisor.state_store import AtomicStateStore
 
 
+def is_resumable_status(status: str) -> bool:
+    return status in {
+        "failed",
+        "blocked",
+        "needs_approval",
+        "completed_pending_review",
+    }
+
+
 def build_resume_args(
     config: WorkerConfig,
     session_id: str,
@@ -112,9 +121,10 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
     if args.command == "resume":
         assert worker is not None
         state = store.read(worker)
-        if state.status not in {"failed", "blocked", "needs_approval"}:
+        if not is_resumable_status(state.status):
             raise ValueError(
-                "resume requires failed, blocked, or needs_approval state"
+                "resume requires failed, blocked, needs_approval, or "
+                "completed_pending_review state"
             )
         if not state.session_id:
             raise ValueError("resume requires a recorded session ID")
