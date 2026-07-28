@@ -109,6 +109,7 @@ class WorkerState:
     blocker: str | None = None
     last_error: str | None = None
     last_event_key: str | None = None
+    last_event_ordinal: int = 0
     last_exit_code: int | None = None
     usage: UsageTotals = field(default_factory=UsageTotals)
 
@@ -139,6 +140,7 @@ class WorkerState:
             "blocker": self.blocker,
             "last_error": self.last_error,
             "last_event_key": self.last_event_key,
+            "last_event_ordinal": self.last_event_ordinal,
             "last_exit_code": self.last_exit_code,
             "usage": self.usage.to_json(),
         }
@@ -171,6 +173,7 @@ class WorkerState:
             blocker=_optional_str(value.get("blocker")),
             last_error=_optional_str(value.get("last_error")),
             last_event_key=_optional_str(value.get("last_event_key")),
+            last_event_ordinal=int(value.get("last_event_ordinal", 0)),
             last_exit_code=_optional_int(value.get("last_exit_code")),
             usage=UsageTotals.from_json(value.get("usage", {})),
         )
