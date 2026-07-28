@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Sequence
 
 from src.codex_supervisor.contracts import (
+    SupervisorConfig,
     WorkerConfig,
     WorkerName,
     build_codex_base_args,
@@ -191,7 +192,7 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         )
         return 0
     if args.command == "dashboard":
-        _dashboard(store, watch=args.watch)
+        _dashboard(store, config, watch=args.watch)
         return 0
     raise ValueError(f"unsupported command: {args.command}")
 
@@ -358,18 +359,47 @@ def _watch_worker(
         time.sleep(0.5)
 
 
-def _dashboard(store: AtomicStateStore, *, watch: bool) -> None:
+def _dashboard(
+    store: AtomicStateStore,
+    config: SupervisorConfig,
+    *,
+    watch: bool,
+) -> None:
     while True:
-        rows = []
+        print(
+            "Worker Branch                 Phase           Status"
+            "                    Tests             Tokens  Cached"
+        )
         for worker in ("A", "B", "C"):
             try:
                 state = store.read(worker).to_public_json()
             except FileNotFoundError:
-                state = {"worker": worker, "status": "not_started"}
-            rows.append(state)
-        _print_json({"workers": rows})
+                state = {
+                    "worker": worker,
+                    "phase": "-",
+                    "status": "not_started",
+                    "tests_summary": "-",
+                    "usage": {},
+                }
+            usage = state.get("usage") or {}
+            tokens = (
+                int(usage.get("input_tokens", 0))
+                + int(usage.get("output_tokens", 0))
+                + int(usage.get("reasoning_output_tokens", 0))
+            )
+            cached = int(usage.get("cached_input_tokens", 0))
+            branch = config.workers[worker].branch
+            print(
+                f"{worker:<6} {branch:<22} "
+                f"{str(state.get('phase') or '-'):<15} "
+                f"{str(state.get('status') or '-'):<25} "
+                f"{str(state.get('tests_summary') or '-'):<17} "
+                f"{tokens:>7,} {cached:>7,}",
+                flush=True,
+            )
         if not watch:
             return
+        print()
         time.sleep(1.0)
 
 

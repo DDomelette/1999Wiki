@@ -137,13 +137,13 @@ def test_dashboard_uses_fixed_worker_order_and_missing_marker(
         project_root=project,
     )
     assert exit_code == 0
-    rows = json.loads(stdout)["workers"]
-    assert [row["worker"] for row in rows] == ["A", "B", "C"]
-    assert [row["status"] for row in rows] == [
-        "not_started",
-        "blocked",
-        "not_started",
-    ]
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    assert lines[0].startswith("Worker")
+    assert "Branch" in lines[0]
+    assert [line.split()[0] for line in lines[1:4]] == ["A", "B", "C"]
+    assert "not_started" in lines[1]
+    assert "blocked" in lines[2]
+    assert "not_started" in lines[3]
 
 
 def test_watch_once_prints_state_and_event_history(tmp_path: Path) -> None:

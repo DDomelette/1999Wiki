@@ -6,7 +6,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Host.UI.RawUI.WindowTitle = "Codex Worker $Worker Monitor"
+$Host.UI.RawUI.WindowTitle = "Codex Worker $Worker - Observer Only"
+Write-Host "只读观察窗口：关闭本窗口不会停止 worker；重新运行本脚本可接续查看。"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Supervisor = Join-Path $ProjectRoot "scripts\codex_supervisor.py"
 $Arguments = @($Supervisor, "watch", "--worker", $Worker, "--tail", "50")

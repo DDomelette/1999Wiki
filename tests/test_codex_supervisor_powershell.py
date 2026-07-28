@@ -70,3 +70,32 @@ def test_open_windows_script_uses_visible_powershell_processes() -> None:
     assert "-WindowStyle Normal" in content
     for worker in ("A", "B", "C"):
         assert f'"{worker}"' in content
+
+
+def test_watch_window_explains_close_is_observer_only() -> None:
+    content = (SCRIPT_ROOT / "Watch-Worker.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "关闭本窗口不会停止 worker" in content
+    assert "Observer Only" in content
+
+
+def test_runbook_documents_control_reopen_and_two_layer_rules() -> None:
+    content = Path("docs/codex/cli-supervisor-runbook.md").read_text(
+        encoding="utf-8"
+    )
+    for marker in (
+        "Start-Worker.ps1",
+        "Stop-Worker.ps1",
+        "Resume-Worker.ps1",
+        "Watch-Worker.ps1",
+        "Show-Dashboard.ps1",
+        "Open-SupervisorWindows.ps1",
+        "关闭观察窗口不会停止 worker",
+        "gpt-5.6-sol",
+        "--disable fast_mode",
+        "--disable multi_agent",
+        "workspace-write",
+        "禁止第三层代理",
+    ):
+        assert marker in content
