@@ -138,6 +138,72 @@ def test_stream_emits_real_model_chunk_before_generation_finishes():
     asyncio.run(scenario())
 
 
+def test_stream_orders_early_token_before_validation_and_authoritative_done():
+    from backend.sse import rag_stream_generator
+
+    class GatedStreamingChain(_TrueStreamingChain):
+        def __init__(self):
+            super().__init__(
+                chunks=(),
+                final_answer="Validated answer [S01]",
+            )
+            self.release_model = asyncio.Event()
+            self.packet = replace(
+                self.packet,
+                retrieval_packet=replace(
+                    self.packet.retrieval_packet,
+                    media=({
+                        "media_id": "portrait-1",
+                        "asset_type": "portrait",
+                        "alt": "Fixture portrait",
+                        "url": "/media/portrait.webp",
+                    },),
+                ),
+            )
+
+        async def astream_prepared(self, prepared):
+            del prepared
+            yield "Draft"
+            await self.release_model.wait()
+            yield " answer"
+            self.finished = True
+
+    async def scenario():
+        chain = GatedStreamingChain()
+        generator = rag_stream_generator(chain, "Question", None)
+        blocks = []
+
+        while True:
+            block = await anext(generator)
+            blocks.append(block)
+            if block.startswith("event: token"):
+                break
+
+        first_token_received_before_model_finished = not chain.finished
+        chain.release_model.set()
+        blocks.extend([block async for block in generator])
+        return (
+            _parse_sse("".join(blocks)),
+            first_token_received_before_model_finished,
+        )
+
+    events, first_token_received_before_model_finished = asyncio.run(scenario())
+    names = [name for name, _data in events]
+    sources = next(data for name, data in events if name == "sources")
+    done = next(data for name, data in events if name == "done")
+
+    assert names.index("token") < next(
+        index
+        for index, (name, data) in enumerate(events)
+        if name == "status" and data["phase"] == "validating"
+    ) < names.index("done")
+    assert first_token_received_before_model_finished is True
+    assert sources["media"][0]["url"] == "/media/portrait.webp"
+    assert done["media"] == sources["media"]
+    assert done["answer"] == "Validated answer [S01]"
+    assert names.count("done") == 1
+
+
 def _collect_true_stream(chain):
     from backend.sse import rag_stream_generator
 
