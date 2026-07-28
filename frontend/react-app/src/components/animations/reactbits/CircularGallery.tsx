@@ -137,6 +137,8 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
   }
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pressedControl = (event.target as Element).closest('.circular-gallery__previous, .circular-gallery__next')
+    if (pressedControl) return
     if (count === 0 || snap || event.button > 0) return
     const now = performance.now()
     dragRef.current = {

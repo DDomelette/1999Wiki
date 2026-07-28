@@ -103,6 +103,20 @@ describe('CircularGallery P1 behavior', () => {
     expect(screen.getByRole('img', { name: 'Alt 1' }).closest('[data-gallery-position]')).toHaveAttribute('data-gallery-position', 'current')
   })
 
+  it('does not start a drag when a fixed navigation control is pressed', () => {
+    const { container } = render(<CircularGallery items={items.slice(0, 3)} bend={0} borderRadius={0.1} />)
+    const gallery = container.querySelector('.circular-gallery')!
+    const next = screen.getByRole('button', { name: '下一张图片' })
+
+    fireEvent.pointerDown(next, { button: 0, clientX: 100 })
+    expect(gallery).toHaveAttribute('data-gallery-dragging', 'false')
+    fireEvent.pointerUp(next, { button: 0, clientX: 100 })
+    fireEvent.click(next)
+
+    expect(gallery).toHaveAttribute('data-gallery-snapping', 'false')
+    expect(screen.getByRole('img', { name: 'Alt 1' }).closest('[data-gallery-position]')).toHaveAttribute('data-gallery-position', 'current')
+  })
+
   it('drags with the pointer and commits the measured next slot after linear snapping', () => {
     vi.spyOn(performance, 'now')
       .mockReturnValueOnce(1_000)
