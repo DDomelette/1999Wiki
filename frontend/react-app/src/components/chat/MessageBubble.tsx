@@ -1,12 +1,23 @@
 import { motion } from 'framer-motion'
-import type { AssetItem, MediaItem, Message } from '../../types'
+import type { AssetItem, MediaItem, Message, StreamPhase } from '../../types'
 import { MarkdownContent } from './MarkdownContent'
 import { MessageAssets } from './MessageAssets'
 import { MessageActions } from './MessageActions'
 import { useChatStore } from '../../store/chatStore'
 
+const STREAM_PHASE_LABELS: Partial<Record<StreamPhase, string>> = {
+  understanding: '正在理解问题…',
+  retrieving: '正在检索资料…',
+  generating: '正在生成回答…',
+  validating: '正在校验引用…',
+  cancelled: '已停止生成',
+  failed: '回答生成失败',
+}
+
 export function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === 'user'
+  const phaseLabel = message.phase ? STREAM_PHASE_LABELS[message.phase] : undefined
+  const statusText = phaseLabel ?? message.status
   const runAction = useChatStore((s) => s.runAction)
   const messages = useChatStore((s) => s.messages)
   const send = useChatStore((s) => s.send)
@@ -44,17 +55,16 @@ export function MessageBubble({ message }: { message: Message }) {
         message.content
       ) : (
         <>
-          {message.status && (
+          {statusText && (
             <motion.div
+              role="status"
+              aria-live="polite"
+              data-stream-phase={phaseLabel ? message.phase : undefined}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              style={{
-                marginBottom: message.content ? 6 : 0,
-                color: 'var(--accent-gold)',
-                fontSize: '0.875rem',
-              }}
+              className="message-bubble__stream-status"
             >
-              {message.status}
+              {statusText}
             </motion.div>
           )}
           {!message.streaming && message.planningWarning && (
@@ -72,6 +82,22 @@ export function MessageBubble({ message }: { message: Message }) {
           <div data-message-content="true" data-animation-slot="message-body">
             <MarkdownContent text={message.content} streaming={!!message.streaming} />
           </div>
+          {message.correctionNotice && (
+            <div
+              data-correction-notice="true"
+              className="message-bubble__correction-notice"
+            >
+              已完成引用校验并修正
+            </div>
+          )}
+          {message.partialError && (
+            <div
+              data-partial-error="true"
+              className="message-bubble__partial-error"
+            >
+              回答未完成，未经过引用校验
+            </div>
+          )}
           {!message.streaming && hasMessageMedia && (
             <div data-message-media="true" data-animation-slot="message-media">
               <MessageAssets
