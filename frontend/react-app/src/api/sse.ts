@@ -1,13 +1,6 @@
-import type { ActionItem, AssetItem, MediaItem, MediaPanel, MemoryInfo, RouteInfo, RouteOptions, SourceItem } from '../types'
+import type { ActionItem, AssetItem, MediaItem, MediaPanel, MemoryInfo, RouteInfo, RouteOptions, SourceItem, StreamPhase } from '../types'
 
-export type StreamPhase =
-  | 'understanding'
-  | 'retrieving'
-  | 'generating'
-  | 'validating'
-  | 'corrected'
-  | 'cancelled'
-  | 'failed'
+export type { StreamPhase } from '../types'
 
 export type AnswerReplaceReason = 'citation_validation' | 'safe_fallback'
 
