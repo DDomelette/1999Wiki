@@ -667,12 +667,25 @@ plan schema：
 schema_version = huiji.referenced-media-plan/v1
 source_inventory_fingerprint
 projection_fingerprint
+phase = p0 | p1
+selection_policy_sha256
+media_budget_baseline_inventory_sha256
+media_budget_bytes
+minimum_free_after_commit_bytes
 unique resources
 binding IDs
 filename/url/sha1/size/local_relpath
 download status
 MinIO presence evidence
 capacity totals
+projected_free_after_commit_bytes
+budget_excluded_binding_count
+budget_excluded_resource_count
+overflow_media_new_bytes
+projected_free_if_overflow_committed_bytes
+free_space_shortfall_bytes
+minimum_disk_expansion_bytes
+recommended_disk_expansion_bytes
 ```
 
 `CAPACITY-P0-01`：只计划 P0 projection 实际引用且未被 decorative/unsupported policy 排除的资源。不得把全部 manifest 当作下载集合。
@@ -692,6 +705,18 @@ local_required_peak_bytes
 MinIO_existing_object_bytes
 MinIO_new_object_bytes
 cloud_required_peak_bytes
+media_budget_bytes
+selected_media_new_bytes
+projected_free_after_commit_bytes
+actual_free_after_commit_bytes
+minimum_free_after_commit_bytes
+budget_excluded_binding_count
+budget_excluded_resource_count
+overflow_media_new_bytes
+projected_free_if_overflow_committed_bytes
+free_space_shortfall_bytes
+minimum_disk_expansion_bytes
+recommended_disk_expansion_bytes
 ```
 
 `CAPACITY-P0-03`：本地安全门槛：
@@ -726,6 +751,179 @@ known_cloud_free_or_quota_bytes >=
 - MinIO 真实新对象量；
 - candidate/rollback 临时峰值；
 - 未下载或冲突 blocker。
+
+### 16.1 服务器硬预算
+
+2026-07-29 只读检查得到当前生产服务器基线：
+
+```text
+captured_at                        2026-07-29T03:20:04+08:00
+filesystem                         /dev/vda2
+filesystem_size_bytes              42,156,257,280
+filesystem_used_bytes              23,098,384,384
+filesystem_available_bytes         17,216,012,288
+filesystem_available_gib           16.03
+current_minio_directory_bytes       5,218,361,320
+current_docker_directory_bytes      3,583,373,864
+```
+
+该服务器为单系统盘；MinIO、Milvus、MySQL、Docker 和应用共享根分区。以上数字只是规划基线，不能替代上传前的实时 `df -B1`。
+
+冻结预算：
+
+```text
+P0_MEDIA_NEW_BYTES_MAX              268,435,456      # 256 MiB
+P1_MEDIA_CUMULATIVE_NEW_BYTES_MAX   2,147,483,648    # 2 GiB
+MIN_FREE_AFTER_COMMIT_BYTES         12,884,901,888   # 12 GiB
+```
+
+当前快照的只读规划样本为：
+
+```text
+P0 one-representative-per-main-page
+  468 unique objects
+  186,067,585 declared bytes
+
+P1 up-to-three-per-main-page
+  1,060 unique objects
+  577,660,183 declared bytes
+
+P1 up-to-two-Data-Story-backgrounds
+  702 unique objects
+  1,096,270,832 declared bytes
+```
+
+这些数字用于证明预算具备可行空间，不是最终 allowlist，也不能覆盖实际 MinIO reuse、artifact/index 估算和提交前实时容量检查。
+
+`CAPACITY-P0-07`：D 在首次 P0 写入前生成 metadata-only MinIO inventory receipt，并冻结 `media_budget_baseline_inventory_sha256`。P0 与 P1 共用该基线；P1 不得在 P0 上传后重新选基线以规避累计预算。`selected_media_new_bytes` 只计算该基线中同 object key + SHA/size 尚不存在的真实新对象。基线已有物理对象可以被多个 binding 复用，不重复计费或上传。
+
+`CAPACITY-P0-08`：P0 物理资源选择固定为：
+
+1. 所有合法图片先建立 source-backed binding metadata；
+2. 每个主命名空间 Page、Activity 或 Chapter 最多实体化一张代表图；
+3. 优先级为显式 caption 的 banner/poster/cover/title，其次为有章节语义的正文图；
+4. Data Story 背景、CG、对话头像只保留来源路径或复用关系，不在 P0 新增物理对象；
+5. 导航、边框、按钮、Buff、货币和重复小图标不进入 P0 物理集合。
+
+P0 最终 `selected_media_new_bytes` 不得超过 256 MiB。核心代表图集合自身超过预算时状态为 `capacity_blocked`，不得随机截断。
+
+`CAPACITY-P0-09`：P1 在新的用户批准和独立 Plan 下，使用累计预算：
+
+1. 每个 Page 最多三张物理图，包含 P0 已选代表图；
+2. 每个 Story 最多两张去重后的背景或 CG；
+3. 对话 `head_icon` 复用已有角色头像，不按 Story step 生成新对象；
+4. Item、Psychube、Episode、地图和活动插图各实体最多一张代表图；
+5. SkinVideo 外链截图、外链视频、战斗/Buff/UI 图标和全部 manifest 下载不计入获准 P1 集合；如未来纳入，必须重新审批预算。
+
+P1 相对修订前生产基线的累计 `selected_media_new_bytes` 不得超过 2 GiB。达到预算后，低优先级资源保留 binding metadata 并进入 `capacity_budget_excluded` 诊断，不能静默丢弃关系。
+
+`CAPACITY-P0-10`：每次 P0/P1 提交前必须满足：
+
+```text
+projected_free_after_commit_bytes >= 12,884,901,888
+```
+
+`projected_free_after_commit_bytes` 必须扣除本阶段全部已知新增项，而不只是媒体：
+
+- MinIO 新对象和上传临时峰值；
+- Parent/Child/Media artifacts；
+- BM25 artifact；
+- 计划中的 Milvus 增量及其索引开销；
+- MySQL 增量；
+- candidate、rollback 和 operation receipt；
+- Docker release 增量中无法安全复用的部分。
+
+任一项未知时不得按零计算；应使用经记录的保守上界，或返回 `unknown_capacity`。
+
+本节的 `commit` 指批准的对象/候选存储阶段原子提交和状态接受，不是 Git commit。
+
+`CAPACITY-P0-11`：提交完成后重新读取同一文件系统的实际 available bytes。若：
+
+```text
+actual_free_after_commit_bytes < 12,884,901,888
+```
+
+则阶段不得标记 accepted/ready。不得通过删除现有 MinIO、Milvus、MySQL、Docker image、release 或备份来临时满足门槛；任何清理必须另立计划并获得批准。
+
+`CAPACITY-P0-12`：禁止以下“全量”模式：
+
+- 全部 40,420 个 manifest 图片；
+- 全部 6,321 个已匹配 Wikitext 图片；
+- 全部 Data Story 背景/CG；
+- 同时保存等价 PNG、WebP 和新衍生图；
+- 在服务器保留完整媒体下载 staging 副本。
+
+下载和转码在本地或独立构建环境完成；服务器只接收批准 allowlist 中的最终对象。服务器端单对象 `.part`/multipart 临时量仍必须进入峰值计算。
+
+### 16.2 阻断后的剩余媒体与扩容预测
+
+触发 `capacity_blocked` 后必须继续完成只读预测，但不得继续下载、上传或提交对象。
+
+`CAPACITY-P0-13`：overflow forecast 至少分成三个互斥集合：
+
+```text
+selected_within_budget
+  已进入当前批准 allowlist 的对象
+
+phase_overflow
+  语义合法、仅因 phase byte budget 或 12 GiB 门槛被排除的对象
+
+not_eligible
+  decorative、unsupported、conflict、missing manifest、外链未授权、
+  视频或超出当前 P0/P1 语义范围的对象
+```
+
+只有 `phase_overflow` 用于“是否放弃、部分放行或扩容”的决策。`not_eligible` 不能借扩容名义自动进入下载集合。
+
+`CAPACITY-P0-14`：报告必须对 `phase_overflow` 同时给出：
+
+- resource/binding 数量；
+- 去重后的真实新对象字节；
+- 按 Page/Story/Item/Psychube/Episode/Map/Activity 等类别分组；
+- 按代表图、captioned supporting、background/CG、guide/map 等优先级分组；
+- 已有 MinIO 对象可复用字节；
+- 若全部加入后的 `projected_free_if_overflow_committed_bytes`；
+- 相对 12 GiB 门槛的 `free_space_shortfall_bytes`；
+- 不包含 overflow 时的 projected/actual free；
+- 最大单对象和上传临时峰值。
+
+公式：
+
+```text
+projected_free_if_overflow_committed_bytes =
+  projected_free_after_commit_bytes
+  - overflow_media_new_bytes
+  - overflow_storage_overhead_bytes
+  - overflow_candidate_index_growth_bytes
+
+free_space_shortfall_bytes =
+  max(
+    0,
+    MIN_FREE_AFTER_COMMIT_BYTES
+    - projected_free_if_overflow_committed_bytes
+  )
+
+minimum_disk_expansion_bytes =
+  free_space_shortfall_bytes
+
+recommended_disk_expansion_bytes =
+  0, if free_space_shortfall_bytes = 0
+  otherwise round_up_to_5_gib(
+    free_space_shortfall_bytes
+    + max(2 GiB, 0.20 * overflow_media_new_bytes)
+  )
+```
+
+`minimum_disk_expansion_bytes` 仅表示数学上刚好维持 12 GiB 的下限；实际扩容评估使用 `recommended_disk_expansion_bytes`，为未来索引、Docker release、日志和文件系统波动保留余量。若 `free_space_shortfall_bytes = 0`，报告应明确“无需扩盘，但需要提高 phase media budget 并重新批准”，不能自动放行。
+
+`CAPACITY-P0-15`：阻断后的决策只允许：
+
+1. `abandon_overflow`：保持 metadata binding，放弃下载全部 overflow；
+2. `approve_partial_overflow`：按冻结优先级选择显式子集，重新生成 allowlist、预算和 SHA；
+3. `expand_storage_then_replan`：先完成独立扩容计划和验证，再基于新容量重新生成 allowlist；
+4. `defer_decision`：保持 blocked，不改变生产状态。
+
+系统不得自行选择决策，不得以删除现有对象、数据库、镜像或备份代替扩容，也不得在旧 allowlist 上追加资源。每次选择都需要新的用户批准和 operation receipt。
 
 ## 17. 下载、上传和激活边界
 
@@ -904,6 +1102,18 @@ removed_with_source_reason
 - allowlist 只包含实际引用资源；
 - declared/existing/missing/new cloud bytes 正确；
 - local/cloud safety margin；
+- P0 新媒体超过 256 MiB 时返回 `capacity_blocked`；
+- P1 累计新媒体超过 2 GiB 时返回 `capacity_blocked`；
+- projected 或 actual free space 低于 12 GiB 时不得 accepted/ready；
+- 未知 artifact/Milvus/MySQL/Docker 增量不能按零计；
+- exact existing MinIO object 可以复用且不重复计费；
+- 超出预算的低优先级 binding 保留 metadata 和 `capacity_budget_excluded`；
+- 同一输入的代表图选择和 selection policy SHA 确定；
+- capacity_blocked 后只读生成 selected/phase_overflow/not_eligible 三集合；
+- overflow forecast 的剩余空间、12 GiB shortfall 和扩容公式正确；
+- shortfall 为零时只建议提高预算，不误报必须扩盘；
+- partial overflow 会生成新的显式 allowlist 和 SHA，不追加旧 allowlist；
+- abandon/defer/expand 决策均保持生产对象零写入，直到新的用户批准；
 - unknown cloud capacity 不报告 sufficient；
 - downloader 拒绝 allowlist 外 job；
 - canonical state DB 不被修改；
@@ -950,9 +1160,11 @@ removed_with_source_reason
 
 `REAL-P0-05`：“暴雨”必须找到 catalog 允许的真实来源证据或明确报告 evidence shortfall；角色页零散提及不得占据全部 Topic children。
 
-`REAL-P0-06`：容量报告必须给出实际 referenced unique resources、missing local bytes 和 MinIO new bytes。只有能读取可靠 cloud free/quota evidence 时才能判断云端是否足够。
+`REAL-P0-06`：容量报告必须给出实际 referenced unique resources、missing local bytes、MinIO new bytes、phase budget 和 projected free after commit。只有能读取可靠 cloud free/quota evidence 时才能判断云端是否足够；P0/P1 的 projected free 和提交后 actual free 均不得低于 12 GiB。
 
 `REAL-P0-07`：没有用户下载批准时，真实 run 到 diagnostic/allowlist/capacity 即停止；这不是媒体实现失败，但 candidate 不得报告 ready。
+
+`REAL-P0-08`：如真实 run 触发容量阻断，必须输出 `phase_overflow` 的真实资源数、去重字节、全部加入后的预计剩余空间、12 GiB shortfall、最小扩容量和按 5 GiB 档位取整的建议扩容量；报告生成过程对 MinIO、MySQL、Milvus、Docker 和文件系统为只读。
 
 ## 23. 文件所有权
 
@@ -1064,12 +1276,16 @@ test(rag): verify projection fidelity and real snapshot diagnostics
 
 P1 可选：
 
-- Data Story 背景、CG 和音频路径的结构化媒体绑定；
+- Data Story 背景、CG 和音频路径的结构化媒体绑定；图片每个 Story 最多实体化两张，音频不自动下载；
+- Page 图片从 P0 的每页一张扩展到累计每页最多三张；
+- Item、Psychube、Episode、地图和活动插图每实体最多一张代表图；
+- 对话头像复用已有角色头像，不按 Story step 新增物理对象；
 - 模板背景图和受控 HTML image；
 - inheritance/portray Page section；
 - 更丰富但仍 source-backed 的 Topic catalog；
 - 增量 revision build；
-- 下载批准后的真实引用资源补全。
+- 下载批准后的真实引用资源补全；
+- P1 新媒体相对修订前生产基线累计不超过 2 GiB，且提交后根分区至少剩余 12 GiB。
 
 P2 延后：
 
@@ -1081,7 +1297,7 @@ P2 延后：
 - 皮肤级复杂媒体组合；
 - 正式生产自动激活。
 
-P1 只有全部 P0 完成且获得新批准后才可进入 Plan；P2 不得进入本轮实施任务。
+P1 只有全部 P0 完成、获得新批准并通过累计 2 GiB 媒体预算和 12 GiB 最低剩余空间检查后才可进入 Plan；P2 不得进入本轮实施任务。
 
 ## 27. 完成判定
 
@@ -1101,7 +1317,7 @@ P1 只有全部 P0 完成且获得新批准后才可进入 Plan；P2 不得进�
 12. exact resource resolution 区分 missing、not_downloaded 和 conflict。
 13. 同一 resource 的多个合法 binding 不丢失。
 14. allowlist 只含实际引用资源。
-15. 容量报告给出本地、candidate、MinIO new 和安全余量；未知云容量不报告 sufficient。
+15. 容量报告给出本地、candidate、MinIO new、phase budget、projected/actual free 和安全余量；未知云容量不报告 sufficient。
 16. builder 不访问网络，未经批准不下载、不上传、不激活。
 17. 现有 character/item/psychube、Voice 和 Media V3 没有 unexplained regression。
 18. parent-child-media closure、重复构建和 fidelity gate 通过。
@@ -1109,5 +1325,11 @@ P1 只有全部 P0 完成且获得新批准后才可进入 Plan；P2 不得进�
 20. 不依赖线程 A/B 未合并代码。
 21. 未修改正式 raw、processed、MySQL、MinIO、Milvus、baseline 或 active pointer。
 22. D 审核 diff、测试、数据身份、容量和文件所有权后接受提交。
+23. P0 新媒体不超过 256 MiB，代表图选择确定且超限时硬阻断。
+24. P1 如获批准，相对修订前生产基线的累计新媒体不超过 2 GiB。
+25. P0/P1 提交前 projected free 和提交后 actual free 均不低于 12 GiB。
+26. 超预算图片保留 binding metadata 和可审计排除原因，不通过删除既有生产数据腾挪空间。
+27. capacity_blocked 后生成剩余合格媒体的空间下降量、shortfall 和扩容建议，而不是只返回布尔失败。
+28. 放弃、部分放行、扩容或延期均由用户重新批准，系统不自动扩预算或写入对象。
 
 若用户未批准真实资源下载，C 仍可完成 parser、projection、binding intent、allowlist、容量和 diagnostic P0；但真实 media candidate 必须保持 `diagnostic_only/blocked`，不得声明 `ready_for_embedding`。
