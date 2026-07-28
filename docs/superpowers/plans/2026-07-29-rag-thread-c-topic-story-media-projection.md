@@ -1,12 +1,12 @@
 # Thread C Topic/Story/Page Projection And Wikitext Media Implementation Plan
 
-> **Execution mode:** Execute task-by-task in the existing `codex/rag-c-projection` worktree and the original long-lived Codex session. Use `gpt-5.6-sol`, standard speed, `workspace-write`, `fast_mode=false`, and `multi_agent=false`. Do not create subagents, invoke another Codex CLI, or read unmerged A/B worktrees.
+> **Execution mode:** Execute task-by-task in the existing `codex/rag-c-projection` worktree and the original long-lived Codex session. Use `gpt-5.6-sol`, standard speed, `workspace-write`, `fast_mode=false`, and `multi_agent=false`. Every Python, pytest, audit, diagnostic, and fixture-build command must run with the verified Conda `1999wiki` interpreter at `D:\Anaconda32024\envs\1999wiki\python.exe`. Do not create subagents, invoke another Codex CLI, or read unmerged A/B worktrees.
 
 **Goal:** Extend the single offline Huiji corpus builder so one verified crawler snapshot is streamed through page/revision/Data/resource joins, source-backed Page/Story/Topic projection, bounded Wikitext parsing, exact Wikitext media binding, and read-only capacity planning without regressing existing character, Voice, Media V3, fidelity, or artifact closure.
 
 **Architecture:** A recovery receipt gate admits exactly four frozen crawler JSONL files into `CrawlerSemanticInputs`. Streaming readers create bounded identity indexes and diagnostics; independent page, Wikitext, Story, and Topic stages produce the frozen Parent/Child contract. Wikitext media intents resolve by exact normalized filename, retain binding multiplicity, and feed the existing Media V3 assembler only when local content is verified. A separate referenced-media planner emits deterministic allowlist and capacity evidence; neither the builder nor this thread performs network, MinIO, MySQL, Milvus, or activation writes.
 
-**Tech stack:** Python 3.12, dataclasses, incremental JSON/JSONL and SHA-256, bounded Wikitext scanner, pytest, existing canonical artifact writer, existing Media V3 contracts, PowerShell for read-only acceptance commands.
+**Tech stack:** Python 3.11.15 from Conda environment `1999wiki` (`D:\Anaconda32024\envs\1999wiki\python.exe`, `sys.prefix=D:\Anaconda32024\envs\1999wiki`), dataclasses, incremental JSON/JSONL and SHA-256, bounded Wikitext scanner, pytest, existing canonical artifact writer, existing Media V3 contracts, PowerShell for read-only acceptance commands.
 
 **Approved spec:** `docs/superpowers/specs/2026-07-29-rag-thread-c-topic-story-media-projection-design.md` at baseline commit `ed569ee23f5d3927f8a332e69ef4de82ac8b6c59`.
 
@@ -23,11 +23,50 @@
 5. `MediaBindingIntent` and `_ResourceCatalog` currently use legacy stem matching. Wikitext intents require a separate exact-filename path; legacy structured Data stem behavior must remain intact.
 6. Existing Media V3 runtime rows require a contained local file with verified SHA-1, SHA-256, and size. Not-downloaded Wikitext media therefore remains intent/allowlist/capacity evidence and keeps the candidate `diagnostic_only`; it is not emitted as a fake runtime row.
 7. The canonical raw writeback of `data_pages.jsonl` and `crawl_state.sqlite` is owned by D. C never copies, restores, rewrites, or recrawls either file and never modifies canonical `crawl_state.sqlite`.
-8. The one recovery wrapper with `json_valid=false` closes `REC-P0-06` only after both the fixture test and restored-snapshot diagnostic prove one excluded-evidence row and zero projected children/media intents from its invalid `content`.
+8. The one recovery wrapper with `json_valid=false` closes `RECOVERY-P0-06` only after both the fixture test and restored-snapshot diagnostic prove one excluded-evidence row and zero projected children/media intents from its invalid `content`.
 9. This plan does not modify Planner, Retriever, route policy, request planning, sparse/BM25 analyzer or payload/provenance schema. B-related semantic-hash integration is deferred to D after B → C merge.
 10. No task downloads media, writes MinIO/MySQL/Milvus, performs embedding, creates or switches an active pointer, rewrites production baselines, or activates a candidate.
+11. Every implementation phase starts by running the fail-closed interpreter probe below. A missing interpreter, a resolved executable mismatch, `sys.prefix` mismatch, or Python version other than `3.11.15` stops the phase and is reported to D; no command falls back to bare `python`, `py`, another Conda environment, or the system interpreter.
 
-### 1.1 Files Thread C May Change During Approved Implementation
+### 1.1 Mandatory Conda `1999wiki` Interpreter Gate
+
+Run this PowerShell probe before every Task 0–9 and again before each Python/pytest/audit command group:
+
+```powershell
+$Python = 'D:\Anaconda32024\envs\1999wiki\python.exe'
+$ExpectedPrefix = 'D:\Anaconda32024\envs\1999wiki'
+$ExpectedVersion = '3.11.15'
+if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+    throw "Conda 1999wiki interpreter missing: $Python"
+}
+$ActualExecutable = & $Python -c 'import os, sys; print(os.path.normcase(os.path.realpath(sys.executable)))'
+if ($LASTEXITCODE -ne 0) {
+    throw 'Conda 1999wiki executable probe failed'
+}
+$ActualPrefix = & $Python -c 'import os, sys; print(os.path.normcase(os.path.realpath(sys.prefix)))'
+if ($LASTEXITCODE -ne 0) {
+    throw 'Conda 1999wiki sys.prefix probe failed'
+}
+$ActualVersion = ((& $Python --version) -replace '^Python\s+', '').Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw 'Conda 1999wiki version probe failed'
+}
+$ResolvedPython = [System.IO.Path]::GetFullPath($Python).ToLowerInvariant()
+$ResolvedPrefix = [System.IO.Path]::GetFullPath($ExpectedPrefix).ToLowerInvariant()
+if ([System.IO.Path]::GetFullPath([string]$ActualExecutable).ToLowerInvariant() -ne $ResolvedPython) {
+    throw "Python executable mismatch: $ActualExecutable"
+}
+if ([System.IO.Path]::GetFullPath([string]$ActualPrefix).ToLowerInvariant() -ne $ResolvedPrefix) {
+    throw "sys.prefix mismatch: $ActualPrefix"
+}
+if ([string]$ActualVersion -ne $ExpectedVersion) {
+    throw "Python version mismatch: $ActualVersion"
+}
+```
+
+All later PowerShell snippets use the `$Python` value established by this probe and invoke Python as `& $Python ...`. Opening a new PowerShell process requires rerunning the full probe before continuing.
+
+### 1.2 Files Thread C May Change During Approved Implementation
 
 ```text
 src/huiji_rag/build/projection.py
@@ -63,7 +102,7 @@ tests/test_huiji_models.py
 
 If implementation needs any file outside this allowlist or any public field beyond Section 13 of the Spec, stop with `status=needs_approval`; do not broaden scope.
 
-### 1.2 Explicitly Forbidden Files And State
+### 1.3 Explicitly Forbidden Files And State
 
 ```text
 src/rag/query_plan.py
@@ -112,7 +151,7 @@ The task numbers below are the primary implementation owners. Supporting regress
 | `TEST-P0-01`, `TEST-P0-02`, `TEST-P0-03`, `TEST-P0-04`, `TEST-P0-05`, `TEST-P0-06`, `TEST-P0-07` | 1 through 9 | named fixture, focused and regression commands |
 | `REAL-P0-01`, `REAL-P0-02`, `REAL-P0-03`, `REAL-P0-04`, `REAL-P0-05`, `REAL-P0-06`, `REAL-P0-07`, `REAL-P0-08` | 8 | restored-snapshot streaming diagnostics and capacity forecast only |
 | `OWN-P0-01`, `OWN-P0-02`, `OWN-P0-03` | 0, 3, 9 | frozen fields only; no B hash code; stop on extra public fields |
-| `AGENT-P0-01`, `AGENT-P0-02`, `AGENT-P0-03`, `AGENT-P0-04`, `AGENT-P0-05` | all tasks | original standard-speed single session; no subagents; plan review and recovery gates |
+| `AGENT-P0-01`, `AGENT-P0-02`, `AGENT-P0-03`, `AGENT-P0-04`, `AGENT-P0-05` | all tasks | original standard-speed single session; no subagents; plan/recovery gates; every phase fail-closes unless executable, `sys.prefix`, and Python `3.11.15` match Conda `1999wiki` |
 | `PHASE-P0-01` | 1 through 9 | D review after each phase commit before continuing |
 
 Coverage count: 155 unique P0 IDs. No P0 requirement is assigned to P1/P2.
@@ -290,7 +329,7 @@ Use monkeypatch spies on `Path.read_text`, list-returning `_read_jsonl`, network
 Run:
 
 ```powershell
-python -m pytest tests/test_huiji_page_sources.py tests/test_huiji_corpus_source_inventory.py -q
+& $Python -m pytest tests/test_huiji_page_sources.py tests/test_huiji_corpus_source_inventory.py -q
 ```
 
 Expected RED:
@@ -328,12 +367,12 @@ Patch `json.loads` with a sentinel that fails if called with the invalid wrapper
 Run:
 
 ```powershell
-python -m pytest tests/test_huiji_corpus_projection.py -k "json_valid_false or invalid_wrapper" -q
+& $Python -m pytest tests/test_huiji_corpus_projection.py -k "json_valid_false or invalid_wrapper" -q
 ```
 
 Expected RED: `_project_generic()` currently catches `JSONDecodeError` and projects invalid content as fallback text.
 
-`REC-P0-06` remains open after this RED test and remains open after fixture GREEN; it closes only in Task 8 when the restored snapshot also produces exactly one excluded row.
+`RECOVERY-P0-06` remains open after this RED test and remains open after fixture GREEN; it closes only in Task 8 when the restored snapshot also produces exactly one excluded row.
 
 ### Step 3: Implement minimal streaming contracts
 
@@ -396,7 +435,7 @@ Do not apply `_project_generic()` fallback to this wrapper. Other valid rows con
 ### Step 7: Run focused GREEN and regressions
 
 ```powershell
-python -m pytest `
+& $Python -m pytest `
   tests/test_huiji_page_sources.py `
   tests/test_huiji_corpus_projection.py `
   tests/test_huiji_corpus_projection_fidelity.py `
@@ -450,7 +489,7 @@ test_table_projection_preserves_header_cell_and_row_order
 Run:
 
 ```powershell
-python -m pytest tests/test_huiji_wikitext_projection.py -q
+& $Python -m pytest tests/test_huiji_wikitext_projection.py -q
 ```
 
 Expected RED: module/API absent.
@@ -487,7 +526,7 @@ test_repeated_build_has_equal_page_ids_order_content_hash_and_source_refs
 Run:
 
 ```powershell
-python -m pytest tests/test_huiji_wikitext_projection.py -k "redirect or page or chunk" -q
+& $Python -m pytest tests/test_huiji_wikitext_projection.py -k "redirect or page or chunk" -q
 ```
 
 Expected RED: scanner output is not yet projected.
@@ -506,7 +545,7 @@ Expected RED: scanner output is not yet projected.
 ### Step 5: Run focused GREEN
 
 ```powershell
-python -m pytest `
+& $Python -m pytest `
   tests/test_huiji_page_sources.py `
   tests/test_huiji_wikitext_projection.py `
   tests/test_huiji_corpus_projection.py `
@@ -547,7 +586,7 @@ test_schema_enrichment_is_separate_from_semantic_fidelity_change
 Run:
 
 ```powershell
-python -m pytest tests/test_huiji_models.py tests/test_huiji_corpus_projection_fidelity.py -k "content or heading_path or entity_aliases or enrichment" -q
+& $Python -m pytest tests/test_huiji_models.py tests/test_huiji_corpus_projection_fidelity.py -k "content or heading_path or entity_aliases or enrichment" -q
 ```
 
 Expected RED: `ChildBlock` lacks the three frozen fields.
@@ -575,7 +614,7 @@ test_story_ids_use_business_id_scene_or_stable_step_and_hash_fallback_evidence
 Run:
 
 ```powershell
-python -m pytest tests/test_huiji_story_projection.py -q
+& $Python -m pytest tests/test_huiji_story_projection.py -q
 ```
 
 Expected RED: story module/API absent and generic projection still collapses Story into one profile/root child.
@@ -594,7 +633,7 @@ Do not retain all Data payloads in multiple indexes. Preserve original Data sour
 ### Step 5: Run focused GREEN and legacy projection regression
 
 ```powershell
-python -m pytest `
+& $Python -m pytest `
   tests/test_huiji_story_projection.py `
   tests/test_huiji_models.py `
   tests/test_huiji_corpus_projection.py `
@@ -636,7 +675,7 @@ test_topic_page_story_rows_share_exact_public_child_contract
 Run:
 
 ```powershell
-python -m pytest tests/test_huiji_topic_projection.py -q
+& $Python -m pytest tests/test_huiji_topic_projection.py -q
 ```
 
 Expected RED: module/catalog absent.
@@ -659,7 +698,7 @@ Create a Topic child per source child/evidence relation. Preserve source owner a
 ### Step 4: Run C2 focused GREEN
 
 ```powershell
-python -m pytest `
+& $Python -m pytest `
   tests/test_huiji_wikitext_projection.py `
   tests/test_huiji_story_projection.py `
   tests/test_huiji_topic_projection.py `
@@ -726,7 +765,7 @@ test_media_v3_rejects_unknown_child_and_invalid_source_ref_closure
 Run:
 
 ```powershell
-python -m pytest `
+& $Python -m pytest `
   tests/test_huiji_wikitext_projection.py -k "media or file or gallery" `
   tests/test_huiji_media_v3_builder.py -k "exact or shared or missing or conflict" `
   -q
@@ -756,7 +795,7 @@ Create one intent per valid occurrence. Resource deduplication may share `resour
 ### Step 6: Run focused GREEN and Media V3 regression
 
 ```powershell
-python -m pytest `
+& $Python -m pytest `
   tests/test_huiji_wikitext_projection.py `
   tests/test_huiji_media_v3_builder.py `
   tests/test_huiji_media_v3_contract.py `
@@ -820,7 +859,7 @@ test_budget_excluded_binding_metadata_is_preserved
 Run:
 
 ```powershell
-python -m pytest tests/test_huiji_media_download_plan.py -q
+& $Python -m pytest tests/test_huiji_media_download_plan.py -q
 ```
 
 Expected RED: module/contracts absent.
@@ -895,7 +934,7 @@ Unit tests use fake responses only. Do not execute network.
 ### Step 6: Run focused GREEN
 
 ```powershell
-python -m pytest `
+& $Python -m pytest `
   tests/test_huiji_media_download_plan.py `
   tests/test_huiji_resource_downloader.py `
   -q
@@ -947,7 +986,7 @@ test_builder_never_imports_or_calls_network_minio_mysql_milvus_or_embedding_writ
 Run:
 
 ```powershell
-python -m pytest tests/test_huiji_corpus_builder.py tests/test_huiji_corpus_builder_contracts.py -q
+& $Python -m pytest tests/test_huiji_corpus_builder.py tests/test_huiji_corpus_builder_contracts.py -q
 ```
 
 Expected RED: current builder list-loads Data/resources, skips pages/Wikitext semantic stages, and has no `diagnostic_only` path for planned unavailable media.
@@ -984,7 +1023,7 @@ Add all C stage files, topic catalog bytes, parser config, decorative threshold,
 ### Step 6: Run focused integration GREEN
 
 ```powershell
-python -m pytest `
+& $Python -m pytest `
   tests/test_huiji_corpus_builder_contracts.py `
   tests/test_huiji_corpus_builder.py `
   tests/test_huiji_corpus_artifacts.py `
@@ -1049,7 +1088,7 @@ neighbor valid rows continue
 
 Inspect only wrapper metadata and hashes. Do not print or parse invalid `content`.
 
-Only after these assertions pass may C report `REC-P0-06` projection exclusion closure.
+Only after these assertions pass may C report `RECOVERY-P0-06` projection exclusion closure.
 
 ### Step 4: Validate “今夜星光灿烂” without inventing a revision
 
@@ -1116,7 +1155,7 @@ Stop for D review before final regression.
 ### Step 1: Run all new focused tests
 
 ```powershell
-python -m pytest `
+& $Python -m pytest `
   tests/test_huiji_page_sources.py `
   tests/test_huiji_wikitext_projection.py `
   tests/test_huiji_story_projection.py `
@@ -1141,7 +1180,7 @@ Expected: PASS.
 ### Step 2: Run existing projection/media/Voice regressions
 
 ```powershell
-python -m pytest `
+& $Python -m pytest `
   tests/test_huiji_wiki_crawler_projection.py `
   tests/test_huiji_wiki_crawler_only_policy.py `
   tests/test_huiji_media_v3_minio_gate.py `
@@ -1235,7 +1274,7 @@ Each commit includes its RED tests, minimal implementation, GREEN focused tests,
 Thread C may report implementation `completed_pending_review` only when:
 
 1. D recovery receipts and canonical identities are consumed read-only.
-2. The restored snapshot’s only `json_valid=false` wrapper appears exactly once in excluded evidence, its invalid `content` is never parsed/projected, and `REC-P0-06` is not closed earlier.
+2. The restored snapshot’s only `json_valid=false` wrapper appears exactly once in excluded evidence, its invalid `content` is never parsed/projected, and `RECOVERY-P0-06` is not closed earlier.
 3. All four crawler files are semantically consumed with streaming/bounded memory behavior.
 4. Exact page/revision join, redirect, conflict and namespace rules pass.
 5. Page sections/chunks, Story names/content and Topic evidence satisfy frozen identities and source refs.
