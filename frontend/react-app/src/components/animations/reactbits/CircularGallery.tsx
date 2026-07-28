@@ -6,6 +6,7 @@ import type {
   TransitionEvent as ReactTransitionEvent,
   WheelEvent as ReactWheelEvent,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { Maximize2, X } from 'lucide-react'
 import './CircularGallery.css'
 import { getMotionPolicy } from '../../../motion/motionPolicy'
@@ -271,14 +272,37 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
             </button>
           )
         })}
+        <button
+          type="button"
+          className="circular-gallery__previous"
+          disabled={safeIndex === 0}
+          onClick={() => moveTo(safeIndex - 1)}
+          aria-label="上一张图片"
+        >
+          ‹
+        </button>
+        <button
+          type="button"
+          className="circular-gallery__next"
+          disabled={safeIndex >= count - 1}
+          onClick={() => moveTo(safeIndex + 1)}
+          aria-label="下一张图片"
+        >
+          ›
+        </button>
       </div>
-      <div className="circular-gallery__controls" aria-label="图片画廊控制">
-        <button type="button" disabled={safeIndex === 0} onClick={() => moveTo(safeIndex - 1)} aria-label="上一张图片">‹</button>
-        <span aria-live="polite">{items[safeIndex]?.title || ''} · {safeIndex + 1}/{items.length}</span>
-        <button type="button" disabled={safeIndex >= count - 1} onClick={() => moveTo(safeIndex + 1)} aria-label="下一张图片">›</button>
-        <button ref={openerRef} type="button" disabled={!items[safeIndex]} onClick={() => setViewerOpen(true)} aria-label="Open current image"><Maximize2 aria-hidden="true" /></button>
+      <div className="circular-gallery__caption" aria-label="图片画廊控制">
+        <span className="circular-gallery__title" aria-live="polite">{items[safeIndex]?.title || ''}</span>
+        <span className="circular-gallery__counter">{safeIndex + 1}/{items.length}</span>
+        <button className="circular-gallery__open" ref={openerRef} type="button" disabled={!items[safeIndex]} onClick={() => setViewerOpen(true)} aria-label="Open current image"><Maximize2 aria-hidden="true" /></button>
       </div>
-      {viewerOpen && items[safeIndex] && <div className="circular-gallery__lightbox" role="dialog" aria-modal="true" aria-label={items[safeIndex].title} onMouseDown={(event) => event.target === event.currentTarget && setViewerOpen(false)}><button type="button" onClick={() => setViewerOpen(false)} aria-label="Close image viewer"><X aria-hidden="true" /></button><img src={items[safeIndex].image} alt={items[safeIndex].alt} /></div>}
+      {viewerOpen && items[safeIndex] && createPortal(
+        <div className="circular-gallery__lightbox" role="dialog" aria-modal="true" aria-label={items[safeIndex].title} onMouseDown={(event) => event.target === event.currentTarget && setViewerOpen(false)}>
+          <button className="circular-gallery__lightbox-close" type="button" onClick={() => setViewerOpen(false)} aria-label="Close image viewer"><X aria-hidden="true" /></button>
+          <img src={items[safeIndex].image} alt={items[safeIndex].alt} />
+        </div>,
+        document.body,
+      )}
     </div>
   )
 }
