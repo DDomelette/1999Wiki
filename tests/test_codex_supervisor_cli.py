@@ -126,6 +126,40 @@ def test_task_file_requires_scope_and_no_subagents(tmp_path: Path) -> None:
     assert "Allowed files" in stderr
 
 
+def test_dashboard_uses_fixed_worker_order_and_missing_marker(
+    tmp_path: Path,
+) -> None:
+    project = _project_fixture(tmp_path)
+    store = AtomicStateStore(project / ".codex-supervisor")
+    store.write(WorkerState.initial("B").with_status("blocked"))
+    exit_code, stdout, _ = invoke_cli(
+        ["dashboard"],
+        project_root=project,
+    )
+    assert exit_code == 0
+    rows = json.loads(stdout)["workers"]
+    assert [row["worker"] for row in rows] == ["A", "B", "C"]
+    assert [row["status"] for row in rows] == [
+        "not_started",
+        "blocked",
+        "not_started",
+    ]
+
+
+def test_watch_once_prints_state_and_event_history(tmp_path: Path) -> None:
+    project = _project_fixture(tmp_path)
+    store = AtomicStateStore(project / ".codex-supervisor")
+    store.write(WorkerState.initial("A").with_status("running"))
+    store.append_event("A", '{"type":"thread.started","thread_id":"x"}')
+    exit_code, stdout, _ = invoke_cli(
+        ["watch", "--worker", "A", "--tail", "5", "--once"],
+        project_root=project,
+    )
+    assert exit_code == 0
+    assert '"status": "running"' in stdout
+    assert "thread.started" in stdout
+
+
 def _project_fixture(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     (project / "config").mkdir(parents=True)

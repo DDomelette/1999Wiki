@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
@@ -73,8 +74,9 @@ def main(
 def _dispatch(args: argparse.Namespace, root: Path) -> int:
     config = load_supervisor_config(root)
     store = AtomicStateStore(config.runtime_root)
-    worker: WorkerName = args.worker
+    worker: WorkerName | None = getattr(args, "worker", None)
     if args.command == "start":
+        assert worker is not None
         prompt = _read_approved_task(
             Path(args.task_file),
             store,
@@ -106,6 +108,7 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         )
         return 0
     if args.command == "resume":
+        assert worker is not None
         state = store.read(worker)
         if state.status not in {"failed", "blocked", "needs_approval"}:
             raise ValueError(
@@ -148,13 +151,16 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         )
         return 0
     if args.command == "stop":
+        assert worker is not None
         _stop_worker(store, worker)
         _print_json({"worker": worker, "status": "blocked"})
         return 0
     if args.command == "status":
+        assert worker is not None
         _print_json(store.read(worker).to_public_json())
         return 0
     if args.command == "inspect":
+        assert worker is not None
         state = store.read(worker).to_public_json()
         session_path = store.session_path(worker)
         session = (
@@ -165,6 +171,7 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         _print_json({"state": state, "session": session})
         return 0
     if args.command == "accept":
+        assert worker is not None
         state = store.read(worker)
         if state.status != "completed_pending_review":
             raise ValueError(
@@ -173,6 +180,18 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         accepted = state.with_status("accepted")
         store.write(accepted)
         _print_json(accepted.to_public_json())
+        return 0
+    if args.command == "watch":
+        assert worker is not None
+        _watch_worker(
+            store,
+            worker,
+            tail=args.tail,
+            once=args.once,
+        )
+        return 0
+    if args.command == "dashboard":
+        _dashboard(store, watch=args.watch)
         return 0
     raise ValueError(f"unsupported command: {args.command}")
 
@@ -191,6 +210,14 @@ def _parser() -> argparse.ArgumentParser:
         child.add_argument(
             "--worker", required=True, choices=("A", "B", "C")
         )
+    watch = commands.add_parser("watch")
+    watch.add_argument(
+        "--worker", required=True, choices=("A", "B", "C")
+    )
+    watch.add_argument("--tail", type=int, default=50)
+    watch.add_argument("--once", action="store_true")
+    dashboard = commands.add_parser("dashboard")
+    dashboard.add_argument("--watch", action="store_true")
     return parser
 
 
@@ -289,6 +316,61 @@ def _watch_command(root: Path, worker: WorkerName) -> str:
         f'"{root / "scripts" / "codex-supervisor" / "Watch-Worker.ps1"}" '
         f"-Worker {worker}"
     )
+
+
+def _watch_worker(
+    store: AtomicStateStore,
+    worker: WorkerName,
+    *,
+    tail: int,
+    once: bool,
+) -> None:
+    if tail < 0:
+        raise ValueError("watch tail must be non-negative")
+    event_path = store.event_log_path(worker)
+    offset = 0
+    first = True
+    while True:
+        try:
+            state = store.read(worker).to_public_json()
+        except FileNotFoundError:
+            state = {"worker": worker, "status": "not_started"}
+        if first:
+            _print_json({"state": state})
+            if event_path.is_file():
+                lines = event_path.read_text(encoding="utf-8").splitlines()
+                selected = lines[-tail:] if tail else []
+                for line in selected:
+                    print(line)
+                offset = event_path.stat().st_size
+            first = False
+        elif event_path.is_file():
+            size = event_path.stat().st_size
+            if size < offset:
+                offset = 0
+            with event_path.open("r", encoding="utf-8") as handle:
+                handle.seek(offset)
+                for line in handle:
+                    print(line.rstrip("\r\n"), flush=True)
+                offset = handle.tell()
+        if once:
+            return
+        time.sleep(0.5)
+
+
+def _dashboard(store: AtomicStateStore, *, watch: bool) -> None:
+    while True:
+        rows = []
+        for worker in ("A", "B", "C"):
+            try:
+                state = store.read(worker).to_public_json()
+            except FileNotFoundError:
+                state = {"worker": worker, "status": "not_started"}
+            rows.append(state)
+        _print_json({"workers": rows})
+        if not watch:
+            return
+        time.sleep(1.0)
 
 
 def _print_json(value: object) -> None:
