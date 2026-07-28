@@ -48,7 +48,7 @@ test('desktop controls stay fixed and viewer close remains unobstructed', async 
   const beforePrevious = await previous.boundingBox()
   const beforeNext = await next.boundingBox()
 
-  await next.click()
+  await gallery.locator('[data-gallery-position="next"]').click()
   await expect(gallery.locator('[data-gallery-position="current"] img')).toHaveAttribute('alt', assets[1].alt)
   const afterPrevious = await previous.boundingBox()
   const afterNext = await next.boundingBox()
@@ -60,6 +60,20 @@ test('desktop controls stay fixed and viewer close remains unobstructed', async 
   }
 
   const viewport = gallery.locator('.circular-gallery__viewport')
+  await previous.click()
+  const gap = await viewport.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    for (let x = rect.left + 1; x < rect.right; x += 2) {
+      const y = rect.top + 2
+      if (document.elementFromPoint(x, y) === element) return { x, y }
+    }
+    return null
+  })
+  expect(gap).not.toBeNull()
+  await page.mouse.click(gap!.x, gap!.y)
+  await page.waitForTimeout(250)
+  await expect(gallery).toHaveAttribute('data-gallery-snapping', 'false')
+
   const viewportBox = await viewport.boundingBox()
   expect(viewportBox).not.toBeNull()
   await page.mouse.move(viewportBox!.x + viewportBox!.width / 2, viewportBox!.y + viewportBox!.height / 2)
@@ -75,6 +89,12 @@ test('desktop controls stay fixed and viewer close remains unobstructed', async 
   })
   expect(ctrlWheel).toEqual({ dispatched: true, defaultPrevented: false })
   await expect(gallery.locator('[data-gallery-position="current"] img')).toHaveAttribute('alt', assets[0].alt)
+  const shiftWheel = await viewport.evaluate((element) => {
+    const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, shiftKey: true, deltaY: 120 })
+    element.dispatchEvent(event)
+    return event.defaultPrevented
+  })
+  expect(shiftWheel).toBe(true)
 
   await gallery.getByRole('button', { name: 'Open current image' }).click()
   const dialog = page.getByRole('dialog', { name: assets[0].alt })

@@ -4,7 +4,6 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
   TransitionEvent as ReactTransitionEvent,
-  WheelEvent as ReactWheelEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { Maximize2, X } from 'lucide-react'
@@ -36,6 +35,7 @@ interface DragSample {
   lastTime: number
   velocityPxPerMs: number
   stepPx: number
+  captured: boolean
 }
 
 interface SnapState {
@@ -87,6 +87,14 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
     setCurrentIndex(Math.min(count - 1, Math.max(0, index)))
   }, [count])
 
+  const resetPointerState = useCallback(() => {
+    dragRef.current = null
+    suppressClickRef.current = false
+    setIsDragging(false)
+    setSnap(null)
+    setDragOffset(0)
+  }, [])
+
   useEffect(() => {
     recordMotionDiagnostic({ component: 'CircularGallery', event: status === 'ready' ? 'initialized' : 'fallback', reason: policy.reason })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -104,21 +112,32 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
     }
   }, [viewerOpen])
 
-  // Shift + wheel 遵循桌面横向滚动习惯；原生 deltaX 支持触控板横滑。
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (event.ctrlKey) return
-    const horizontalDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
-      ? event.deltaX
-      : event.shiftKey
-        ? event.deltaY
-        : 0
-    if (horizontalDelta === 0) return
-    event.preventDefault()
-    const now = performance.now()
-    if (now - wheelLockRef.current < 260) return
-    wheelLockRef.current = now
-    moveTo(safeIndex + (horizontalDelta > 0 ? 1 : -1))
-  }
+  useEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    // React 18 delegates wheel passively, so this listener must be native and non-passive.
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) return
+      const horizontalDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+        ? event.deltaX
+        : event.shiftKey
+          ? event.deltaY
+          : 0
+      if (horizontalDelta === 0) return
+      event.preventDefault()
+      const now = performance.now()
+      if (now - wheelLockRef.current < 260) return
+      wheelLockRef.current = now
+      moveTo(safeIndex + (horizontalDelta > 0 ? 1 : -1))
+    }
+    viewport.addEventListener('wheel', handleWheel, { passive: false })
+    return () => viewport.removeEventListener('wheel', handleWheel)
+  }, [moveTo, safeIndex])
+
+  useEffect(() => {
+    window.addEventListener('blur', resetPointerState)
+    return () => window.removeEventListener('blur', resetPointerState)
+  }, [resetPointerState])
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
@@ -148,11 +167,11 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
       lastTime: now,
       velocityPxPerMs: 0,
       stepPx: measureStep(),
+      captured: false,
     }
     suppressClickRef.current = false
     setDragOffset(0)
     setIsDragging(true)
-    event.currentTarget.setPointerCapture?.(event.pointerId)
   }
 
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -165,6 +184,10 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
     sample.lastTime = now
     const rawOffset = event.clientX - sample.startX
     suppressClickRef.current = Math.abs(rawOffset) > 5
+    if (!sample.captured && suppressClickRef.current && event.currentTarget.setPointerCapture) {
+      event.currentTarget.setPointerCapture(event.pointerId)
+      sample.captured = true
+    }
     setDragOffset(applyEdgeResistance(rawOffset, safeIndex, count))
     if (event.cancelable) event.preventDefault()
   }
@@ -174,12 +197,13 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
     if (!sample || sample.pointerId !== event.pointerId) return
     const rawOffset = event.clientX - sample.startX
     const releaseOffset = applyEdgeResistance(rawOffset, safeIndex, count)
+    const velocityPxPerMs = performance.now() - sample.lastTime > 100 ? 0 : sample.velocityPxPerMs
     const targetIndex = resolveGalleryTarget({
       currentIndex: safeIndex,
       itemCount: count,
       offsetPx: releaseOffset,
       stepPx: sample.stepPx,
-      velocityPxPerMs: sample.velocityPxPerMs,
+      velocityPxPerMs,
     })
     const targetOffset = targetIndex > safeIndex
       ? -sample.stepPx
@@ -190,9 +214,11 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
     const durationMs = calculateGallerySnapDuration(targetOffset - releaseOffset, reducedMotion)
     dragRef.current = null
     setIsDragging(false)
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    if (sample.captured && event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
 
-    if (reducedMotion) {
+    if (reducedMotion || Math.abs(targetOffset - releaseOffset) < 0.5) {
       setCurrentIndex(targetIndex)
       setSnap(null)
       setDragOffset(0)
@@ -211,7 +237,9 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
     setIsDragging(false)
     setSnap(null)
     setDragOffset(0)
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    if (sample.captured && event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
   }
 
   const handleSnapEnd = (event: ReactTransitionEvent<HTMLButtonElement>, position: GalleryPosition) => {
@@ -240,7 +268,9 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
         className="circular-gallery__viewport"
         style={viewportStyle}
         tabIndex={0}
-        onWheel={handleWheel}
+        role="group"
+        aria-roledescription="carousel"
+        aria-label="图片画廊"
         onKeyDown={handleKeyDown}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -295,7 +325,7 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
       </div>
       <div className="circular-gallery__caption" aria-label="图片画廊控制">
         <span className="circular-gallery__title" aria-live="polite">{items[safeIndex]?.title || ''}</span>
-        <span className="circular-gallery__counter">{safeIndex + 1}/{items.length}</span>
+        <span className="circular-gallery__counter" aria-live="polite">{safeIndex + 1}/{items.length}</span>
         <button className="circular-gallery__open" ref={openerRef} type="button" disabled={!items[safeIndex]} onClick={() => setViewerOpen(true)} aria-label="Open current image"><Maximize2 aria-hidden="true" /></button>
       </div>
       {viewerOpen && items[safeIndex] && createPortal(

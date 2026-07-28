@@ -159,6 +159,57 @@ describe('CircularGallery P1 behavior', () => {
     expect(viewport).toHaveStyle('--gallery-drag-offset: 0px')
   })
 
+  it('does not enter a snap state when pointer release needs no animation', () => {
+    vi.spyOn(performance, 'now')
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_100)
+    const { container } = render(<CircularGallery items={items.slice(0, 3)} bend={0} borderRadius={0.1} />)
+    const gallery = container.querySelector('.circular-gallery')!
+    const viewport = container.querySelector('.circular-gallery__viewport')!
+    stubSlotGeometry()
+
+    fireEvent.pointerDown(viewport, { pointerId: 5, clientX: 300 })
+    fireEvent.pointerUp(viewport, { pointerId: 5, clientX: 300 })
+
+    expect(gallery).toHaveAttribute('data-gallery-snapping', 'false')
+    fireEvent.pointerDown(viewport, { pointerId: 6, clientX: 300 })
+    expect(gallery).toHaveAttribute('data-gallery-dragging', 'true')
+  })
+
+  it('discards stale flick velocity after the pointer pauses before release', () => {
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(1_000)
+    const { container } = render(<CircularGallery items={items.slice(0, 3)} bend={0} borderRadius={0.1} />)
+    const viewport = container.querySelector('.circular-gallery__viewport')!
+    stubSlotGeometry()
+
+    fireEvent.pointerDown(viewport, { pointerId: 7, clientX: 300 })
+    clock.mockReturnValue(1_050)
+    fireEvent.pointerMove(viewport, { pointerId: 7, clientX: 260 })
+    clock.mockReturnValue(1_500)
+    fireEvent.pointerUp(viewport, { pointerId: 7, clientX: 260 })
+    fireEvent.transitionEnd(screen.getByRole('img', { name: 'Alt 0' }).parentElement!, { propertyName: 'transform' })
+
+    expect(screen.getByRole('img', { name: 'Alt 0' }).closest('[data-gallery-position]')).toHaveAttribute('data-gallery-position', 'current')
+  })
+
+  it('clears pointer state when the window loses focus', () => {
+    vi.spyOn(performance, 'now')
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(1_100)
+    const { container } = render(<CircularGallery items={items.slice(0, 3)} bend={0} borderRadius={0.1} />)
+    const gallery = container.querySelector('.circular-gallery')!
+    const viewport = container.querySelector('.circular-gallery__viewport')!
+    stubSlotGeometry()
+
+    fireEvent.pointerDown(viewport, { pointerId: 8, clientX: 300 })
+    fireEvent.pointerMove(viewport, { pointerId: 8, clientX: 240 })
+    fireEvent(window, new Event('blur'))
+
+    expect(gallery).toHaveAttribute('data-gallery-dragging', 'false')
+    expect(gallery).toHaveAttribute('data-gallery-snapping', 'false')
+    expect(viewport).toHaveStyle('--gallery-drag-offset: 0px')
+  })
+
   it('resists an outward drag at the first image and cancels without changing index', () => {
     vi.spyOn(performance, 'now')
       .mockReturnValueOnce(1_000)

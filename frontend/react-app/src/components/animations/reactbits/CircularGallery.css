@@ -206,7 +206,8 @@
 
 .circular-gallery__lightbox img {
   max-width: min(94vw, 1600px);
-  max-height: calc(100dvh - 116px);
+  max-height: 90vh;
+  max-height: calc(100dvh - max(116px, calc(env(safe-area-inset-top, 0px) + 100px)));
   object-fit: contain;
 }
 
