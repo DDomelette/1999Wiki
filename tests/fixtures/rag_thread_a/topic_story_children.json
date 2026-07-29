@@ -1,0 +1,235 @@
+[
+  {
+    "category": "topic",
+    "entity_type": "topic",
+    "entity_id": "topic:storm",
+    "entity_name": "暴雨",
+    "entity_aliases": ["暴雨事件"],
+    "owner_entity_id": "topic:storm",
+    "owner_page_id": "page:storm-overview",
+    "route_tags": ["general_game", "story", "definition"],
+    "parent_id": "page:storm-overview/definition",
+    "child_id": "topic:storm/definition:01",
+    "heading_path": "暴雨 > 定义",
+    "section_kind": "topic",
+    "content": "暴雨是游戏世界观中的核心事件。",
+    "search_text": "暴雨 暴雨事件 定义 世界观 story 剧情 故事",
+    "source_refs": [
+      {
+        "source_kind": "crawler_page",
+        "source_title": "暴雨",
+        "source_row_id": "storm-overview-definition",
+        "source_content_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  },
+  {
+    "category": "topic",
+    "entity_type": "topic",
+    "entity_id": "topic:storm",
+    "entity_name": "暴雨",
+    "entity_aliases": ["暴雨事件"],
+    "owner_entity_id": "topic:storm",
+    "owner_page_id": "page:storm-history",
+    "route_tags": ["general_game", "story", "definition"],
+    "parent_id": "page:storm-history/overview",
+    "child_id": "topic:storm/definition:02",
+    "heading_path": "暴雨记录 > 概览",
+    "section_kind": "topic",
+    "content": "不同页面记录了暴雨事件与时代变化的关系。",
+    "search_text": "暴雨 暴雨事件 概览 时代 story 剧情 故事",
+    "source_refs": [
+      {
+        "source_kind": "crawler_page",
+        "source_title": "暴雨记录",
+        "source_row_id": "storm-history-overview",
+        "source_content_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    ]
+  },
+  {
+    "category": "story",
+    "entity_type": "story",
+    "entity_id": "story:chapter-1",
+    "entity_name": "第一章",
+    "entity_aliases": [],
+    "owner_entity_id": "story:chapter-1",
+    "owner_page_id": "page:story-chapter-1",
+    "route_tags": ["story", "plot", "lore"],
+    "parent_id": "page:story-chapter-1/plot",
+    "child_id": "story:chapter-1/plot:01",
+    "heading_path": "第一章 > 剧情",
+    "section_kind": "story",
+    "content": "第一章剧情描述了暴雨来临前后的事件。",
+    "search_text": "第一章 剧情 暴雨 story plot lore",
+    "source_refs": [
+      {
+        "source_kind": "crawler_data_page",
+        "source_title": "Data:Story/Chapter1",
+        "source_row_id": "story-chapter-1",
+        "source_content_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    ]
+  },
+  {
+    "category": "character",
+    "entity_type": "character",
+    "entity_id": "character:mention",
+    "entity_name": "路人角色",
+    "entity_aliases": [],
+    "owner_entity_id": "character:mention",
+    "owner_page_id": "char:mention",
+    "route_tags": ["profile"],
+    "parent_id": "char:mention/profile",
+    "child_id": "character:mention/profile:01",
+    "heading_path": "路人角色 > 简介",
+    "section_kind": "profile",
+    "content": "简介中零散提到暴雨。",
+    "search_text": "路人角色 简介 暴雨",
+    "source_refs": [
+      {
+        "source_kind": "crawler_data_page",
+        "source_title": "Data:Char/Mention.json",
+        "source_row_id": "character-mention",
+        "source_content_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    ]
+  },
+  {
+    "category": "character",
+    "entity_type": "character",
+    "entity_id": "character:sonetto",
+    "entity_name": "十四行诗",
+    "entity_aliases": ["Sonetto"],
+    "owner_entity_id": "character:sonetto",
+    "owner_page_id": "char:sonetto",
+    "route_tags": ["skill"],
+    "parent_id": "char:sonetto/skills",
+    "child_id": "character:sonetto/skill:01",
+    "heading_path": "十四行诗 > 技能",
+    "section_kind": "skill",
+    "content": "十四行诗的技能资料。",
+    "search_text": "十四行诗 Sonetto 技能 神秘术",
+    "source_refs": [
+      {
+        "source_kind": "crawler_data_page",
+        "source_title": "Data:Char/Sonetto.json",
+        "source_row_id": "sonetto-skill",
+        "source_content_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    ]
+  },
+  {
+    "category": "character",
+    "entity_type": "character",
+    "entity_id": "character:other",
+    "entity_name": "其他角色",
+    "entity_aliases": [],
+    "owner_entity_id": "character:other",
+    "owner_page_id": "char:other",
+    "route_tags": ["skill"],
+    "parent_id": "char:other/skills",
+    "child_id": "character:other/skill:01",
+    "heading_path": "其他角色 > 技能",
+    "section_kind": "skill",
+    "content": "其他角色的技能资料。",
+    "search_text": "其他角色 技能 神秘术",
+    "source_refs": [
+      {
+        "source_kind": "crawler_data_page",
+        "source_title": "Data:Char/Other.json",
+        "source_row_id": "other-skill",
+        "source_content_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    ]
+  },
+  {
+    "category": "topic",
+    "entity_type": "topic",
+    "entity_id": "topic:missing-ref",
+    "entity_name": "缺失来源主题",
+    "entity_aliases": [],
+    "owner_entity_id": "topic:missing-ref",
+    "owner_page_id": "page:missing-ref",
+    "route_tags": ["general_game", "definition"],
+    "parent_id": "page:missing-ref/definition",
+    "child_id": "topic:missing-ref/definition:01",
+    "heading_path": "缺失来源主题 > 定义",
+    "section_kind": "topic",
+    "content": "这个主题没有来源引用。",
+    "search_text": "暴雨 缺失 来源 定义",
+    "source_refs": []
+  },
+  {
+    "category": "topic",
+    "entity_type": "topic",
+    "entity_id": "topic:invalid-source",
+    "entity_name": "无效来源主题",
+    "entity_aliases": [],
+    "owner_entity_id": "topic:invalid-source",
+    "owner_page_id": "page:invalid-source",
+    "route_tags": ["general_game", "invalid_source"],
+    "parent_id": "page:invalid-source/definition",
+    "child_id": "topic:invalid-source/definition:01",
+    "heading_path": "无效来源主题 > 定义",
+    "section_kind": "topic",
+    "content": "这个主题的来源哈希无效。",
+    "search_text": "暴雨 无效 来源 定义",
+    "source_refs": [
+      {
+        "source_kind": "crawler_page",
+        "source_title": "Invalid",
+        "source_row_id": "invalid-source",
+        "source_content_sha256": "not-a-sha256"
+      }
+    ]
+  },
+  {
+    "category": "topic",
+    "entity_type": "topic",
+    "entity_id": "topic:unverified-alias",
+    "entity_name": "其他主题",
+    "entity_aliases": ["暴雨"],
+    "owner_entity_id": "topic:unverified-alias",
+    "owner_page_id": "page:unverified-alias",
+    "route_tags": ["general_game", "alias_unverified"],
+    "parent_id": "page:unverified-alias/definition",
+    "child_id": "topic:unverified-alias/definition:01",
+    "heading_path": "其他主题 > 定义",
+    "section_kind": "topic",
+    "content": "无法证明这个别名与暴雨相同。",
+    "search_text": "其他主题 暴雨 别名",
+    "source_refs": [
+      {
+        "source_kind": "crawler_page",
+        "source_title": "其他主题",
+        "source_row_id": "unverified-alias",
+        "source_content_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+      }
+    ]
+  },
+  {
+    "category": "story",
+    "entity_type": "story",
+    "entity_id": "Data:Story/304502",
+    "entity_name": "",
+    "entity_aliases": [],
+    "owner_entity_id": "Data:Story/304502",
+    "owner_page_id": "Data:Story/304502",
+    "route_tags": ["story", "plot"],
+    "parent_id": "Data:Story/304502/plot",
+    "child_id": "Data:Story/304502/plot:01",
+    "heading_path": "",
+    "section_kind": "story",
+    "content": "只保留内部 ID 的剧情记录。",
+    "search_text": "Data Story 304502 剧情 story plot",
+    "source_refs": [
+      {
+        "source_kind": "crawler_data_page",
+        "source_title": "Data:Story/304502",
+        "source_row_id": "story-304502",
+        "source_content_sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+      }
+    ]
+  }
+]

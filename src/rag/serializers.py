@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .contracts import ResponsePacket, freeze_value
+from .contracts import ResponsePacket, SubtaskInfo, freeze_value
 
 _SOURCE_FIELDS = (
     "citation_id",
@@ -62,6 +62,7 @@ _ASSET_FIELDS = (
     "url",
 )
 _ACTION_FIELDS = (
+    "subtask_id",
     "label",
     "query",
     "action_type",
@@ -143,7 +144,23 @@ def response_packet_to_public_dict(packet: ResponsePacket) -> dict[str, Any]:
         "citation_warning": ",".join(packet.citation_validation.warnings),
         "omitted_actions": [_action_to_public(row) for row in retrieval.omitted_actions],
         "failure_actions": [_action_to_public(row) for row in retrieval.failure_actions],
+        "subtasks": [_branch_to_public(branch) for branch in packet.branch_results],
         "memory": dict(packet.memory_info),
+    }
+
+
+def _branch_to_public(branch: Any) -> dict[str, Any]:
+    subtask = SubtaskInfo.from_branch(branch)
+    return {
+        "subtask_id": subtask.subtask_id,
+        "order": subtask.order,
+        "task_type": subtask.task_type,
+        "query": subtask.query,
+        "effective_route": subtask.effective_route,
+        "retrieval_outcome": subtask.retrieval_outcome,
+        "grounding_mode": subtask.grounding_mode,
+        "status": subtask.status,
+        "citation_ids": list(subtask.citation_ids),
     }
 
 

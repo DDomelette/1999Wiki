@@ -5,10 +5,13 @@ from types import SimpleNamespace
 import pytest
 
 from src.rag.query_plan import QueryPlan
+from src.rag.request_plan import PlannedSubtask
 from src.rag.retriever import RetrievalExecutionError, Retriever
 from src.rag.route_policy import (
+    authorize_subtask,
     authorize_route,
     classify_retrieval_outcome,
+    finalize_subtask_route,
     finalize_route,
 )
 
@@ -132,3 +135,106 @@ def test_dense_dependency_failure_is_not_reported_as_empty():
     assert error.value.stage == "retrieval.dense"
     assert error.value.error_class == "ConnectionError"
     assert "fallback failed" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("expanded", "free", "outcome", "route", "reason"),
+    [
+        (False, False, "sufficient", "rag_grounded", "grounded_sufficient"),
+        (False, False, "partial", "rag_grounded", "grounded_partial"),
+        (False, False, "empty", "rag_grounded", "grounded_empty"),
+        (False, False, "failed", "rag_grounded", "retrieval_failed"),
+        (True, False, "sufficient", "expanded_rag", "grounded_sufficient"),
+        (True, False, "partial", "expanded_rag", "grounded_partial"),
+        (True, False, "empty", "expanded_rag", "grounded_empty"),
+        (True, False, "failed", "rag_grounded", "retrieval_failed"),
+        (False, True, "sufficient", "rag_grounded", "grounded_sufficient"),
+        (False, True, "partial", "rag_grounded", "grounded_partial"),
+        (False, True, "empty", "llm_general", "authorized_empty_fallback"),
+        (False, True, "failed", "rag_grounded", "retrieval_failed"),
+        (True, True, "sufficient", "expanded_rag", "grounded_sufficient"),
+        (True, True, "partial", "expanded_rag", "grounded_partial"),
+        (True, True, "empty", "llm_general", "authorized_empty_fallback"),
+        (True, True, "failed", "rag_grounded", "retrieval_failed"),
+    ],
+)
+def test_dual_toggle_matrix(expanded, free, outcome, route, reason):
+    knowledge_task = PlannedSubtask(
+        subtask_id="T01",
+        order=1,
+        task_type="knowledge_base",
+        query="fixture question",
+        query_plan=_plan(intent="skill", route="rag_grounded"),
+    )
+
+    authorization = authorize_subtask(
+        knowledge_task,
+        {"expanded": expanded, "free_supplement": free},
+        None,
+    )
+    decision = finalize_subtask_route(authorization, outcome)
+
+    assert decision.effective_route == route
+    assert decision.route_reason == reason
+
+
+@pytest.mark.parametrize(
+    ("task_type", "reason"),
+    [
+        ("assistant_meta", "local_assistant_meta"),
+        ("social_smalltalk", "local_social_smalltalk"),
+        ("out_of_scope", "local_out_of_scope"),
+    ],
+)
+def test_local_subtasks_are_authorized_without_retrieval(task_type, reason):
+    task = PlannedSubtask("T01", 1, task_type, "fixture", None)
+
+    decision = finalize_subtask_route(authorize_subtask(task, {}, None), "not_applicable")
+
+    assert decision.effective_route == "local_response"
+    assert decision.retrieval_outcome == "not_applicable"
+    assert decision.route_reason == reason
+
+
+def test_general_open_is_denied_by_default_even_if_planner_proposes_it():
+    task = PlannedSubtask("T01", 1, "general_open", "中国首都是什么", None)
+
+    decision = finalize_subtask_route(authorize_subtask(task, {}, None), "not_applicable")
+
+    assert decision.effective_route == "local_response"
+    assert decision.route_reason == "general_open_denied"
+
+
+@pytest.mark.parametrize(
+    ("options", "action", "reason"),
+    [
+        ({"free_supplement": True}, None, "toggle_allows_empty_fallback"),
+        ({}, {"action_type": "force_free_supplement", "subtask_id": "T01"}, "explicit_recovery_action"),
+    ],
+)
+def test_general_open_requires_explicit_authorization(options, action, reason):
+    task = PlannedSubtask("T01", 1, "general_open", "中国首都是什么", None)
+
+    decision = finalize_subtask_route(
+        authorize_subtask(task, options, action),
+        "not_applicable",
+    )
+
+    assert decision.effective_route == "llm_general"
+    assert decision.route_reason == reason
+
+
+def test_recovery_action_authorization_does_not_cross_subtask_id():
+    task = PlannedSubtask("T02", 2, "general_open", "中国首都是什么", None)
+
+    decision = finalize_subtask_route(
+        authorize_subtask(
+            task,
+            {},
+            {"action_type": "force_free_supplement", "subtask_id": "T01"},
+        ),
+        "not_applicable",
+    )
+
+    assert decision.effective_route == "local_response"
+    assert decision.route_reason == "general_open_denied"

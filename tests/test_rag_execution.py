@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
+from backend.schemas import AskResponse
 from src.rag.chain import RAGChain
-from src.rag.contracts import CitationValidation, ResponsePacket
-from src.rag.execution import AskExecutionInput, build_completed_turn
+from src.rag.contracts import (
+    BranchResult,
+    CitationValidation,
+    EntityRef,
+    ResponsePacket,
+)
+from src.rag.execution import (
+    AskExecutionInput,
+    build_completed_turn,
+    execute_request_plan,
+)
+from src.rag.request_plan import PlannedSubtask, RequestPlan
 from src.rag.tracing import RequestTrace
 from src.rag.serializers import (
     response_packet_to_public_dict,
@@ -87,6 +101,12 @@ class _RetrieverSpy:
         }]
 
 
+class _DuplicateRetrieverSpy(_RetrieverSpy):
+    def search(self, query, category=None, query_plan=None, trace=None):
+        row = super().search(query, category, query_plan, trace)
+        return [row[0], dict(row[0])]
+
+
 class _RegistrySpy:
     def __init__(self):
         self.calls = 0
@@ -156,6 +176,141 @@ def test_execute_calls_each_business_stage_once(tmp_path):
     assert registry.calls == 1
     assert llm.calls == 1
     assert packet.citation_validation.valid is True
+
+
+def test_composite_overlapping_branches_share_trace_without_cross_parenting():
+    trace = RequestTrace()
+    retrieval_ready = threading.Barrier(2)
+    nested_ready = threading.Barrier(2)
+    answer_ready = threading.Barrier(2)
+    tasks = tuple(
+        PlannedSubtask(
+            subtask_id=f"T0{order}",
+            order=order,
+            task_type="knowledge_base",
+            query=f"query-{order}",
+            query_plan=object(),
+        )
+        for order in (1, 2)
+    )
+    plan = RequestPlan(original_query="composite", subtasks=tasks)
+
+    def retrieve(subtask):
+        with trace.span("retrieval.dense", stage="dense"):
+            retrieval_ready.wait(timeout=1)
+            with trace.span("retrieval.fusion", stage="fusion"):
+                nested_ready.wait(timeout=1)
+        suffix = subtask.subtask_id[-1]
+        return {"sources": [{
+            "entity_type": "topic",
+            "entity_id": f"topic-{suffix}",
+            "child_id": f"child-{suffix}",
+            "parent_id": f"parent-{suffix}",
+            "name": f"Topic {suffix}",
+            "content": f"Evidence {suffix}",
+            "source_refs": [{
+                "site": "huiji",
+                "title": f"Topic {suffix}",
+                "revid": suffix,
+                "content_sha256": suffix * 64,
+            }],
+        }]}
+
+    def answer(subtask, retrieved, source_ids, source_map):
+        del retrieved, source_map
+        with trace.span("answer.llm"):
+            answer_ready.wait(timeout=1)
+        return BranchResult(
+            subtask_id=subtask.subtask_id,
+            order=subtask.order,
+            task_type=subtask.task_type,
+            query=subtask.query,
+            effective_route="rag_grounded",
+            retrieval_outcome="sufficient",
+            grounding_mode="grounded",
+            status="succeeded",
+            answer=f"Answer [{source_ids[0]}]",
+            source_ids=source_ids,
+            entity_ref=None,
+            citation_validation=CitationValidation(
+                valid=True,
+                used_ids=source_ids,
+            ),
+        )
+
+    result = execute_request_plan(plan, retrieve, answer, max_workers=2)
+    snapshot = trace.snapshot()
+    dense = [span for span in snapshot.spans if span.name == "retrieval.dense"]
+    fusion = [span for span in snapshot.spans if span.name == "retrieval.fusion"]
+    answers = [span for span in snapshot.spans if span.name == "answer.llm"]
+
+    assert len(result.branches) == 2
+    assert len(dense) == len(fusion) == len(answers) == 2
+    assert all(span.parent_name is None for span in dense)
+    assert all(span.parent_name == "retrieval.dense" for span in fusion)
+    assert all(span.parent_name is None for span in answers)
+
+
+def test_composite_execute_retrieves_only_kb_and_serializes_safe_ordered_subtasks(tmp_path):
+    chain, planner, retriever, registry, llm = _chain(tmp_path, ["Knowledge [S01]"])
+
+    packet = chain.execute("你好，你是谁，请介绍一下十四行诗")
+    public = response_packet_to_public_dict(packet)
+    wire = AskResponse.model_validate(public)
+
+    assert planner.calls == 1
+    assert retriever.calls == 1
+    assert registry.calls == 1
+    assert llm.calls == 1
+    assert [item["subtask_id"] for item in public["subtasks"]] == ["T01", "T02", "T03"]
+    assert [item["task_type"] for item in public["subtasks"]] == [
+        "social_smalltalk",
+        "assistant_meta",
+        "knowledge_base",
+    ]
+    assert public["route"]["name"] == "composite"
+    assert public["route"]["effective_route"] == "composite"
+    assert public["route"]["retrieval_outcome"] == "sufficient"
+    assert public["sources"][0]["citation_id"] == "S01"
+    assert packet.answer.index("T01") < packet.answer.index("T02") < packet.answer.index("T03")
+    assert packet.grounding_mode == "mixed"
+    assert packet.turn_outcome == "mixed"
+    assert [item.subtask_id for item in wire.subtasks] == ["T01", "T02", "T03"]
+
+
+def test_composite_duplicate_identical_sources_keep_one_aligned_citation(tmp_path):
+    chain, _planner, _retriever, _registry, llm = _chain(
+        tmp_path,
+        ["Knowledge [S01]"],
+    )
+    duplicate_retriever = _DuplicateRetrieverSpy()
+    chain._retriever = duplicate_retriever
+
+    packet = chain.execute("你好，你是谁，请介绍一下十四行诗")
+
+    kb_branch = packet.branch_results[2]
+    assert duplicate_retriever.calls == 1
+    assert llm.calls == 1
+    assert kb_branch.status == "succeeded"
+    assert kb_branch.source_ids == ("S01",)
+    assert packet.citation_validation.valid is True
+    assert [row["citation_id"] for row in packet.retrieval_packet.sources] == ["S01"]
+
+
+def test_composite_recovery_action_requires_exact_subtask_binding(tmp_path):
+    chain, _planner, retriever, _registry, _llm = _chain(tmp_path, ["unused"])
+
+    with pytest.raises(ValueError, match="valid subtask_id"):
+        chain.execute(
+            "你好，你是谁，请介绍一下十四行诗",
+            action_payload={
+                "label": "扩大搜索",
+                "query": "请介绍一下十四行诗",
+                "action_type": "expand_search",
+            },
+        )
+
+    assert retriever.calls == 0
 
 
 def test_execute_retries_one_transient_answer_failure(tmp_path):
@@ -508,20 +663,98 @@ def test_invalid_draft_is_never_serialized_to_sse(tmp_path):
     assert invalid_draft not in wire
 
 
-def test_completed_turn_requires_a_valid_committable_packet(tmp_path):
+def test_completed_turn_anchors_only_a_valid_grounded_character_branch(tmp_path):
     chain, _planner, _retriever, _registry, _llm = _chain(tmp_path, ["Answer [S01]"])
     packet = chain.execute("Question")
     request = AskExecutionInput("Question", None, {}, None)
-
-    completed = build_completed_turn(request, packet, datetime.now(timezone.utc))
+    character_branch = replace(
+        packet.branch_results[0],
+        entity_ref=EntityRef("character", "char-1", "Character"),
+    )
+    anchored_packet = replace(packet, branch_results=(character_branch,))
+    completed = build_completed_turn(
+        request,
+        anchored_packet,
+        datetime.now(timezone.utc),
+    )
+    invalid_branch = replace(
+        character_branch,
+        citation_validation=CitationValidation(valid=False, missing_required=True),
+    )
     invalid = replace(
         packet,
-        citation_validation=CitationValidation(valid=False, missing_required=True),
+        branch_results=(invalid_branch,),
     )
 
     assert completed is not None
-    assert completed.entity_id == "fixture-1"
-    assert build_completed_turn(request, invalid, datetime.now(timezone.utc)) is None
+    assert completed.entity_id == "char-1"
+    invalid_turn = build_completed_turn(request, invalid, datetime.now(timezone.utc))
+    assert invalid_turn is not None
+    assert invalid_turn.entity_id is None
+
+
+def test_completed_turn_keeps_local_and_mixed_history_with_safe_anchor_selection(tmp_path):
+    chain, _planner, _retriever, _registry, _llm = _chain(
+        tmp_path,
+        ["Knowledge [S01]"],
+    )
+    packet = chain.execute("你好，你是谁，请介绍一下十四行诗")
+    request = AskExecutionInput("你好，你是谁，请介绍一下十四行诗", None, {}, None)
+    local_one, local_two, knowledge = packet.branch_results
+    character = replace(
+        knowledge,
+        entity_ref=EntityRef("character", "char-1", "Character"),
+    )
+
+    mixed = replace(packet, branch_results=(local_one, local_two, character))
+    mixed_turn = build_completed_turn(request, mixed, datetime.now(timezone.utc))
+    second_character = replace(
+        character,
+        subtask_id="T04",
+        order=4,
+        entity_ref=EntityRef("character", "char-2", "Other"),
+    )
+    ambiguous = replace(
+        packet,
+        branch_results=(local_one, character, second_character),
+    )
+    ambiguous_turn = build_completed_turn(
+        request,
+        ambiguous,
+        datetime.now(timezone.utc),
+    )
+    topic = replace(
+        character,
+        entity_ref=EntityRef("topic", "topic-1", "Topic"),
+    )
+    topic_turn = build_completed_turn(
+        request,
+        replace(packet, branch_results=(local_one, topic)),
+        datetime.now(timezone.utc),
+    )
+    local_packet = replace(
+        packet,
+        answer=local_one.answer,
+        grounding_mode="none",
+        turn_outcome="local",
+        branch_results=(local_one,),
+    )
+    local_turn = build_completed_turn(
+        AskExecutionInput("你好", None, {}, None),
+        local_packet,
+        datetime.now(timezone.utc),
+    )
+
+    assert mixed_turn is not None
+    assert mixed_turn.grounding_mode == "mixed"
+    assert mixed_turn.entity_id == "char-1"
+    assert ambiguous_turn is not None
+    assert ambiguous_turn.entity_id is None
+    assert topic_turn is not None
+    assert topic_turn.entity_id is None
+    assert local_turn is not None
+    assert local_turn.grounding_mode == "none"
+    assert local_turn.entity_id is None
 
 
 def test_execute_propagates_trace_and_records_all_applicable_stages(tmp_path):

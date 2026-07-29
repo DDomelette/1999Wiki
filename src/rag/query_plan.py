@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -17,6 +17,9 @@ from src.rag.conversation import (
 )
 from src.rag.entity_lexicon import EntityLexicon
 from src.rag.tracing import NullTrace, RequestTrace
+
+if TYPE_CHECKING:
+    from src.rag.request_plan import RetrievalScope
 
 
 PLANNING_STATUS_LLM = "llm"
@@ -174,6 +177,7 @@ _EXPLICIT_META_PATTERNS = (
     "能查什么",
     "能做什么",
 )
+_OWNER_FREE_TOPIC_MARKERS = ("暴雨",)
 
 
 @dataclass(frozen=True)
@@ -203,6 +207,7 @@ class QueryPlan:
     planning_error: str = ""
     target_parent_id: str | None = None
     context_rewrite_mode: RewriteMode = "none"
+    retrieval_scope: RetrievalScope = "entity_strict"
 
 
 def _as_tuple(value: Any) -> tuple[str, ...]:
@@ -777,6 +782,12 @@ class QueryPlanner:
             if self._entity_lexicon is not None
             else None
         )
+        owner_free_topic = match is None and any(
+            marker in query for marker in _OWNER_FREE_TOPIC_MARKERS
+        )
+        if owner_free_topic:
+            intent = "general_game"
+            secondary_intents = ()
         history_ref = conversation.last_entity_ref
         context_anchor = (
             match is None
@@ -799,14 +810,14 @@ class QueryPlanner:
             resolution_mode = (
                 "current_exact" if match.matched_text == match.canonical else "current_alias"
             )
-        elif context_anchor and history_ref is not None:
+        elif context_anchor and history_ref is not None and not owner_free_topic:
             aliases = list(history_ref.aliases)
             entity = history_ref.entity_name
             scatter_terms = (entity,) if entity else ()
             entity_type = history_ref.entity_type
             entity_id = history_ref.entity_id
             resolution_mode = "history_exact"
-        elif self._entity_lexicon is not None:
+        elif self._entity_lexicon is not None or owner_free_topic:
             aliases = []
             scatter_terms = _guess_scatter_terms(query)
             entity = None

@@ -28,6 +28,7 @@ from src.rag.execution import (
 )
 from src.rag.prompts import get_rag_prompt
 from src.rag.query_plan import VALID_INTENTS, QueryPlanner
+from src.rag.request_plan import RequestPlanner
 from src.rag.ownership import OwnershipViolation
 from src.rag.retriever import (
     RetrievalExecutionError,
@@ -35,9 +36,9 @@ from src.rag.retriever import (
     require_huiji_runtime_source,
 )
 from src.rag.route_policy import (
-    authorize_route,
+    authorize_subtask,
     classify_retrieval_outcome,
-    finalize_route,
+    finalize_subtask_route,
     normalize_action_type,
 )
 from src.rag.serializers import response_packet_to_public_dict
@@ -61,7 +62,13 @@ _RETRIEVAL_DEBUG_COUNT_FIELDS = (
     "intent_retained",
     "coverage_shortfall",
 )
-_SAFE_ROUTE_INTENTS = frozenset(VALID_INTENTS)
+_SAFE_ROUTE_INTENTS = frozenset(VALID_INTENTS) | frozenset({
+    "assistant_meta",
+    "social_smalltalk",
+    "knowledge_base",
+    "general_open",
+    "out_of_scope",
+})
 
 _API_KEY_EMPTY_MSG = "请在 .env 中配置 DEEPSEEK_API_KEY 后再提问。"
 _EMPTY_RETRIEVAL_MSG = "知识库中暂时没有找到足够资料回答这个问题。"
@@ -163,31 +170,67 @@ class RAGChain:
         action_payload: dict[str, Any] | None = None,
         conversation: ConversationProjection | None = None,
         trace: RequestTrace | NullTrace | None = None,
+        _request_plan: Any = None,
+        _subtask: Any = None,
+        _allocate_citations: bool = True,
     ) -> dict[str, Any]:
         active_trace = trace or NullTrace()
         projection = conversation or EMPTY_PROJECTION
-        if trace is None or isinstance(active_trace, NullTrace):
-            plan = self._query_planner.plan(
-                question,
-                category=category,
-                conversation=projection,
-            )
-        else:
-            plan = self._query_planner.plan(
-                question,
-                category=category,
-                conversation=projection,
-                trace=active_trace,
-            )
+        request_plan = _request_plan or RequestPlanner(
+            self._planner_llm,
+            query_planner=self._query_planner,
+        ).plan(
+            question,
+            category=category,
+            conversation=projection,
+            trace=active_trace,
+        )
+        if _subtask is None and len(request_plan.subtasks) != 1:
+            return {
+                "request_plan": request_plan,
+                "composite_pending": True,
+            }
+        subtask = _subtask or request_plan.subtasks[0]
         options = dict(route_options or {})
-        authorization = authorize_route(plan, options, action_payload)
+        targeted_action = self._targeted_action_payload(
+            request_plan,
+            subtask,
+            action_payload,
+        )
+        authorization = authorize_subtask(subtask, options, targeted_action)
+        if subtask.task_type != "knowledge_base":
+            decision = finalize_subtask_route(authorization, "not_applicable")
+            local_response = decision.effective_route == "local_response"
+            return {
+                "plan": subtask,
+                "request_plan": request_plan,
+                "subtask": subtask,
+                "sources": [],
+                "source_map": (),
+                "context": "",
+                "assets": [],
+                "media": [],
+                "route": self._route_info(subtask, decision, {}),
+                "omitted_actions": [],
+                "failure_actions": [],
+                "media_panels": [],
+                "free_supplement": decision.effective_route == "llm_general",
+                "local_response": local_response,
+                "local_response_reason": decision.route_reason if local_response else "",
+                "retrieval_failed": False,
+                "route_decision": decision,
+                **self._planning_meta(request_plan),
+            }
+
+        plan = subtask.query_plan
+        assert plan is not None
         plan = self._with_authorized_options(
             plan,
             options,
             authorization.proposed_route,
         )
-        if action_payload:
-            plan = self._with_action_payload(plan, action_payload)
+        if targeted_action:
+            plan = self._with_action_payload(plan, targeted_action)
 
         retrieval_failed = False
         if authorization.force_free_supplement:
@@ -225,12 +268,17 @@ class RAGChain:
             failed=retrieval_failed,
         )
         with active_trace.span("route.resolve"):
-            decision = finalize_route(authorization, outcome)
+            decision = finalize_subtask_route(authorization, outcome)
         free_supplement = decision.effective_route == "llm_general"
-        with active_trace.span("source_map.build", source_count=len(sources)):
-            frozen_sources, source_map = build_source_map(sources)
-        sources = [dict(source) for source in frozen_sources]
-        context = self._format_context(sources, source_map)
+        if _allocate_citations:
+            with active_trace.span("source_map.build", source_count=len(sources)):
+                frozen_sources, source_map = build_source_map(sources)
+            sources = [dict(source) for source in frozen_sources]
+            context = self._format_context(sources, source_map)
+        else:
+            sources = [dict(source) for source in sources]
+            source_map = ()
+            context = ""
         with active_trace.span("media.attach", source_count=len(sources)):
             if free_supplement or retrieval_failed:
                 assets = []
@@ -258,6 +306,8 @@ class RAGChain:
         planning_meta = self._planning_meta(plan)
         return {
             "plan": plan,
+            "request_plan": request_plan,
+            "subtask": subtask,
             "sources": sources,
             "source_map": source_map,
             "context": context,
@@ -313,6 +363,19 @@ class RAGChain:
                 setattr(plan, key, value)
             return plan
 
+    @staticmethod
+    def _targeted_action_payload(
+        request_plan: Any,
+        subtask: Any,
+        action_payload: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not action_payload:
+            return None
+        target_id = str(action_payload.get("subtask_id") or "").strip()
+        if target_id:
+            return action_payload if target_id == subtask.subtask_id else None
+        return action_payload if len(request_plan.subtasks) == 1 else None
+
     def _route_info(
         self,
         plan: Any,
@@ -346,7 +409,9 @@ class RAGChain:
                     if self._is_safe_intent_identifier(key) and type(count) is int
                 }
                 retrieval_debug[field] = counts
-        plan_intent = self._strict_string(getattr(plan, "intent", ""))
+        plan_intent = self._strict_string(
+            getattr(plan, "intent", "") or getattr(plan, "task_type", "")
+        )
         debug_entity = self._strict_entity(debug.get("entity"))
         plan_entity = self._strict_entity(getattr(plan, "entity", None))
         return {

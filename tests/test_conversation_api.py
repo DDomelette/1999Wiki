@@ -7,7 +7,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from backend.schemas import AskRequest
+from backend.schemas import AskRequest, AskResponse
 from src.rag.conversation import ConversationLease
 from tests.conftest import CONVERSATION_ID
 
@@ -70,6 +70,46 @@ def test_sync_ask_commits_only_after_valid_success_response(client_with_memory_c
     assert "fixture content" not in serialized
 
 
+def test_sync_ask_does_not_commit_when_final_public_validation_fails(
+    client_with_memory_chain,
+    monkeypatch,
+):
+    from backend import main as main_mod
+
+    original = AskResponse.model_validate
+    calls = 0
+
+    def fail_second_validation(cls, value, *args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("simulated final public validation failure")
+        return original(value, *args, **kwargs)
+
+    monkeypatch.setattr(
+        AskResponse,
+        "model_validate",
+        classmethod(fail_second_validation),
+    )
+    conversation_id = UUID("00000000-0000-4000-8000-000000000088")
+
+    with pytest.raises(ValueError, match="final public validation"):
+        client_with_memory_chain.post("/ask", json={
+            "question": "介绍角色甲",
+            "conversation_id": str(conversation_id),
+        })
+
+    async def stored_turns():
+        store = main_mod._state["memory"]
+        lease = await store.acquire(conversation_id)
+        try:
+            return lease.projection.turns
+        finally:
+            await store.release(lease)
+
+    assert asyncio.run(stored_turns()) == ()
+
+
 def test_delete_is_idempotent_and_invalidates_old_history(client_with_memory_chain):
     client_with_memory_chain.post("/ask", json={
         "question": "介绍角色甲",
@@ -100,6 +140,30 @@ def test_missing_conversation_id_remains_disabled(client_with_memory_chain):
         "turns_used": 0,
         "rewrite_mode": "none",
     }
+
+
+def test_openapi_publishes_strict_subtask_info_and_extended_enums():
+    from backend.main import app
+
+    schemas = app.openapi()["components"]["schemas"]
+    subtask = schemas["SubtaskInfo"]
+    properties = subtask["properties"]
+
+    assert subtask["additionalProperties"] is False
+    assert set(properties) == {
+        "subtask_id",
+        "order",
+        "task_type",
+        "query",
+        "effective_route",
+        "retrieval_outcome",
+        "grounding_mode",
+        "status",
+        "citation_ids",
+    }
+    assert "composite" in schemas["RouteInfo"]["properties"]["effective_route"]["enum"]
+    assert "not_applicable" in properties["retrieval_outcome"]["enum"]
+    assert "mixed" in schemas["AskResponse"]["properties"]["grounding_mode"]["enum"]
 
 
 class _BrokenStore:

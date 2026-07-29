@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -13,6 +14,7 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessageChunk
 
 from src.rag.conversation import ConversationMemoryStore
+from src.rag.contracts import BranchResult, CitationValidation, EntityRef
 from tests.conftest import CONVERSATION_ID, ExecutionAdapter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -78,8 +80,12 @@ def test_sync_and_sse_expose_reconciled_lifecycle_timing(client_with_memory_chai
         assert timing["model_first_token_ms"] <= timing["validated_ready_ms"]
         assert timing["validated_ready_ms"] <= timing["visible_first_token_ms"]
         assert timing["visible_first_token_ms"] <= timing["completed_ms"]
-        assert "memory.acquire" in timing["stage_ms"]
-        assert "response.serialize" in timing["stage_ms"]
+        assert set(timing["stage_ms"]) == {
+            "request.planning",
+            "branch.retrieval",
+            "branch.answer",
+            "response.aggregation",
+        }
 
 
 class _CancelableMemoryChain(_ExecuteProtocol):
@@ -222,9 +228,54 @@ def test_clear_during_stream_invalidates_the_old_generation_commit():
     asyncio.run(scenario())
 
 
+def test_completed_turn_is_committed_only_after_done_yield_resumes():
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        store = ConversationMemoryStore()
+        conversation_id = UUID(CONVERSATION_ID)
+        generator = rag_stream_generator(
+            _CancelableMemoryChain(),
+            "问题",
+            None,
+            memory_store=store,
+            conversation_id=conversation_id,
+        )
+
+        while True:
+            block = await anext(generator)
+            if block.startswith("event: done"):
+                break
+        entry = store._entries[conversation_id]
+        assert tuple(entry.turns) == ()
+
+        with pytest.raises(StopAsyncIteration):
+            await anext(generator)
+        assert len(entry.turns) == 1
+
+    asyncio.run(scenario())
+
+
 def test_sync_and_stream_memory_and_source_semantics_match_on_fresh_ids(
     client_with_memory_chain,
 ):
+    from backend import main as main_mod
+
+    target = main_mod._state["chain"]
+
+    class CountingChain:
+        def __init__(self):
+            self.calls = 0
+
+        def __getattr__(self, name):
+            return getattr(target, name)
+
+        def execute(self, *args, **kwargs):
+            self.calls += 1
+            return target.execute(*args, **kwargs)
+
+    counting = CountingChain()
+    main_mod._state["chain"] = counting
     sync_id = "00000000-0000-4000-8000-000000000011"
     stream_id = "00000000-0000-4000-8000-000000000012"
 
@@ -240,6 +291,17 @@ def test_sync_and_stream_memory_and_source_semantics_match_on_fresh_ids(
     stream_sources = next(data for event, data in stream_events if event == "sources")
     stream_done = next(data for event, data in stream_events if event == "done")
 
+    assert counting.calls == 2
+    for field in (
+        "answer",
+        "sources",
+        "subtasks",
+        "route",
+        "grounding_mode",
+        "assets",
+        "media",
+    ):
+        assert sync[field] == stream_done[field]
     assert sync["memory"] == stream_sources["memory"] == stream_done["memory"]
     assert sync["route"]["entity"] == stream_sources["route"]["entity"]
     assert sync["route"]["requested_intents"] == stream_sources["route"]["requested_intents"]
@@ -253,6 +315,74 @@ def test_sync_and_stream_memory_and_source_semantics_match_on_fresh_ids(
         "question": "她的技能呢",
         "conversation_id": stream_id,
     }).json()["memory"]["status"] == "hit"
+
+
+def test_partial_branch_failure_streams_a_valid_done_packet_without_error():
+    from backend.sse import rag_stream_generator
+
+    class PartialChain:
+        def execute(self, *args, **kwargs):
+            packet = ExecutionAdapter(_CancelableMemoryChain()).execute(*args, **kwargs)
+            source_id = packet.retrieval_packet.source_map[0].citation_id
+            succeeded = BranchResult(
+                subtask_id="T01",
+                order=1,
+                task_type="knowledge_base",
+                query="knowledge",
+                effective_route="rag_grounded",
+                retrieval_outcome="sufficient",
+                grounding_mode="grounded",
+                status="succeeded",
+                answer=f"Knowledge [{source_id}]",
+                source_ids=(source_id,),
+                entity_ref=EntityRef("character", "char-1", "Character"),
+                citation_validation=CitationValidation(
+                    valid=True,
+                    used_ids=(source_id,),
+                ),
+            )
+            failed = BranchResult(
+                subtask_id="T02",
+                order=2,
+                task_type="knowledge_base",
+                query="failed",
+                effective_route="rag_grounded",
+                retrieval_outcome="failed",
+                grounding_mode="none",
+                status="failed",
+                answer="safe failure",
+                source_ids=(),
+                entity_ref=None,
+                citation_validation=CitationValidation(valid=True),
+                public_error="branch_execution_failed",
+            )
+            return replace(
+                packet,
+                answer=f"Knowledge [{source_id}]\n\nT02: safe failure",
+                branch_results=(succeeded, failed),
+            )
+
+    async def scenario():
+        blocks = [
+            block
+            async for block in rag_stream_generator(
+                PartialChain(),
+                "question",
+                None,
+            )
+        ]
+        events = _parse_sse("".join(blocks))
+
+        assert [name for name, _payload in events][0] == "sources"
+        assert [name for name, _payload in events][-1] == "done"
+        assert not [name for name, _payload in events if name == "error"]
+        done = events[-1][1]
+        assert [item["status"] for item in done["subtasks"]] == [
+            "succeeded",
+            "failed",
+        ]
+
+    asyncio.run(scenario())
 
 
 @pytest.fixture
@@ -359,7 +489,12 @@ def test_ask_stream_emits_error_when_retrieval_fails(monkeypatch):
     # 应有 error 事件,而非连接中断(无事件)
     assert len(events) > 0
     assert events[-1][0] == "error"
-    assert "Ollama" in events[-1][1]["message"] or "retriev" in events[-1][1]["message"].lower() or "connect" in events[-1][1]["message"].lower()
+    assert events[-1][1] == {
+        "code": "rag_execution_failed",
+        "message": "RAG execution failed.",
+    }
+    assert "Ollama" not in text
+    assert "ConnectionError" not in text
 
 
 def test_ask_stream_uses_chain_retrieve_when_available(monkeypatch):
@@ -1313,12 +1448,16 @@ def test_route_normalizer_filters_unsafe_intent_values_and_count_keys():
     }}
 
 
-def test_transport_sanitizer_preserves_allowlisted_planner_stage_timings():
+def test_transport_sanitizer_only_preserves_aggregate_stage_timings():
     from backend.schemas import sanitize_transport_value
 
     sanitized = sanitize_transport_value({
         "timing": {
             "stage_ms": {
+                "request.planning": 12.0,
+                "branch.retrieval": 8.0,
+                "branch.answer": 20.0,
+                "response.aggregation": 2.0,
                 "planner.llm": 10.0,
                 "planner.normalize": 2.0,
                 "answer.llm": 20.0,
@@ -1328,9 +1467,10 @@ def test_transport_sanitizer_preserves_allowlisted_planner_stage_timings():
     })
 
     assert sanitized["timing"]["stage_ms"] == {
-        "planner.llm": 10.0,
-        "planner.normalize": 2.0,
-        "answer.llm": 20.0,
+        "request.planning": 12.0,
+        "branch.retrieval": 8.0,
+        "branch.answer": 20.0,
+        "response.aggregation": 2.0,
     }
 
 
