@@ -23,12 +23,14 @@ from src.huiji_rag.build.fidelity import FidelityResult
 from src.huiji_rag.build.projection import CorpusProjection, SemanticChild
 from src.huiji_rag.build.voice_stage import VoiceBindingStage
 from src.huiji_rag.models import ChildBlock, ParentBlock, VoiceSourceRow
+from src.rag.chinese_analyzer import ChineseBM25Analyzer
 
 
 FIXTURE = Path("tests/fixtures/contracts/huiji_media_v3/media_assets.v3.jsonl")
 
 
 def _artifact_input(build_version: str, *, blockers=()) -> CandidateArtifactInput:
+    analyzer = ChineseBM25Analyzer()
     media_rows = [
         json.loads(line)
         for line in FIXTURE.read_text(encoding="utf-8").splitlines()[:2]
@@ -142,6 +144,9 @@ def _artifact_input(build_version: str, *, blockers=()) -> CandidateArtifactInpu
         config_fingerprint_sha256="c" * 64,
         fidelity_baseline_path="eval/baseline.json",
         fidelity_baseline_sha256="d" * 64,
+        bm25_analyzer_identity=analyzer.identity,
+        bm25_k1=1.5,
+        bm25_b=0.75,
         blockers=tuple(blockers),
         protected_state_references={"pre": "e" * 64},
         embedding_config_fingerprint_sha256="f" * 64,
@@ -170,11 +175,200 @@ def test_candidate_writer_uses_exact_layout_manifest_closure_and_direct_bm25(tmp
         if line
     ]
     child_bm25 = json.loads(first.paths.child_bm25.read_text(encoding="utf-8"))
+    media_bm25 = json.loads(first.paths.media_bm25_v3.read_text(encoding="utf-8"))
     assert child_bm25["records"] == child_rows
+    assert child_bm25["schema_version"] == "huiji.bm25-index/v3"
+    assert media_bm25["schema_version"] == "huiji.media-binding-bm25/v4"
+    assert child_bm25["analyzer"] == media_bm25["analyzer"]
+    assert child_bm25["bm25"] == media_bm25["bm25"] == {"k1": 1.5, "b": 0.75}
+    assert manifest["semantic_corpus"]["child"]["analyzer_fingerprint_sha256"] == (
+        child_bm25["analyzer"]["fingerprint_sha256"]
+    )
+    assert manifest["semantic_corpus"]["child"]["analyzer_probe_sha256"]
+    assert manifest["semantic_corpus"]["child"]["bm25"] == child_bm25["bm25"]
+    assert manifest["semantic_corpus"]["child"] == {
+        **manifest["semantic_corpus"]["media_binding"],
+        "id_field": "child_id",
+        "row_count": len(child_rows),
+        "ordered_ids_sha256": child_bm25["ordered_ids_sha256"],
+        "semantic_corpus_sha256": child_bm25["semantic_corpus_sha256"],
+    }
+    handoff = json.loads(first.paths.embedding_handoff_v1.read_text(encoding="utf-8"))
+    assert handoff["child_analyzer_fingerprint_sha256"] == (
+        child_bm25["analyzer"]["fingerprint_sha256"]
+    )
+    artifact_schemas = {
+        entry["relative_path"]: entry["schema_version"]
+        for entry in manifest["artifacts"]
+    }
+    assert artifact_schemas["indexes/child_text_bm25.json"] == "huiji.bm25-index/v3"
+    assert artifact_schemas["indexes/media_binding_bm25.v3.json"] == (
+        "huiji.media-binding-bm25/v4"
+    )
 
     second = write_candidate_artifacts(tmp_path / "processed", _artifact_input("build-b"))
     assert first.semantic_artifact_sha256 == second.semantic_artifact_sha256
     assert first.build_manifest_sha256 != second.build_manifest_sha256
+    assert first.paths.child_bm25.read_bytes() == second.paths.child_bm25.read_bytes()
+    assert first.paths.media_bm25_v3.read_bytes() == second.paths.media_bm25_v3.read_bytes()
+
+
+def test_bm25_analyzer_change_preserves_semantic_hash_but_changes_payload(tmp_path: Path) -> None:
+    base_request = _artifact_input("base")
+    changed_analyzer = ChineseBM25Analyzer(extra_terms=("确定性额外术语",))
+    changed_request = replace(
+        _artifact_input("changed"),
+        bm25_analyzer_identity=changed_analyzer.identity,
+    )
+
+    base = write_candidate_artifacts(tmp_path / "base", base_request)
+    changed = write_candidate_artifacts(tmp_path / "changed", changed_request)
+    base_manifest = verify_candidate_manifest(base.paths.build_root)
+    changed_manifest = verify_candidate_manifest(changed.paths.build_root)
+
+    assert (
+        base_manifest["semantic_corpus"]["child"]["semantic_corpus_sha256"]
+        == changed_manifest["semantic_corpus"]["child"]["semantic_corpus_sha256"]
+    )
+    assert base.paths.child_bm25.read_bytes() != changed.paths.child_bm25.read_bytes()
+    assert (
+        base_manifest["semantic_corpus"]["child"]["analyzer_fingerprint_sha256"]
+        != changed_manifest["semantic_corpus"]["child"]["analyzer_fingerprint_sha256"]
+    )
+
+
+def _rewrite_candidate_json(root: Path, relative_path: str, payload: dict) -> None:
+    target = root / relative_path
+    data = canonical_json_bytes(payload)
+    target.write_bytes(data)
+    manifest_path = root / "build_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    entry = next(
+        item for item in manifest["artifacts"]
+        if item["relative_path"] == relative_path
+    )
+    entry["sha256"] = hashlib.sha256(data).hexdigest()
+    entry["size"] = len(data)
+    manifest_path.write_bytes(canonical_json_bytes(manifest))
+
+
+def _set_nested(payload: dict, path: tuple[str, ...], value) -> None:
+    target = payload
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (("schema_version",), "huiji.bm25-index/v99"),
+        (("record_kind",), "media_binding"),
+        (("analyzer", "schema_version"), "rag.bm25-analyzer/v99"),
+        (("analyzer", "name"), "other-analyzer"),
+        (("analyzer", "version"), "99"),
+        (("analyzer", "segmenter", "name"), "other-segmenter"),
+        (("analyzer", "segmenter", "version"), "99"),
+        (("analyzer", "segmenter", "hmm"), True),
+        (("analyzer", "config_sha256"), "0" * 64),
+        (("analyzer", "dictionary_sha256"), "0" * 64),
+        (("analyzer", "fingerprint_sha256"), "0" * 64),
+        (("analyzer_fingerprint_sha256",), "0" * 64),
+        (("bm25", "k1"), 1.2),
+        (("bm25", "b"), 0.4),
+        (("analyzer_probe_sha256",), "0" * 64),
+        (("row_count",), 99),
+        (("ordered_ids_sha256",), "0" * 64),
+        (("semantic_corpus_sha256",), "0" * 64),
+    ),
+)
+def test_candidate_bm25_parity_rejects_metadata_drift(
+    tmp_path: Path,
+    path: tuple[str, ...],
+    value,
+) -> None:
+    result = write_candidate_artifacts(
+        tmp_path / "processed",
+        _artifact_input("parity-drift"),
+    )
+    relative = "indexes/child_text_bm25.json"
+    payload = json.loads(result.paths.child_bm25.read_text(encoding="utf-8"))
+    _set_nested(payload, path, value)
+    _rewrite_candidate_json(result.paths.build_root, relative, payload)
+
+    with pytest.raises(ValueError):
+        verify_candidate_manifest(result.paths.build_root)
+
+
+def test_candidate_bm25_parity_rejects_record_and_cross_payload_identity_drift(
+    tmp_path: Path,
+) -> None:
+    records_result = write_candidate_artifacts(
+        tmp_path / "records",
+        _artifact_input("record-drift"),
+    )
+    records_payload = json.loads(
+        records_result.paths.child_bm25.read_text(encoding="utf-8")
+    )
+    records_payload["records"][0]["search_text"] = "changed private record"
+    _rewrite_candidate_json(
+        records_result.paths.build_root,
+        "indexes/child_text_bm25.json",
+        records_payload,
+    )
+    with pytest.raises(ValueError):
+        verify_candidate_manifest(records_result.paths.build_root)
+
+    identity_result = write_candidate_artifacts(
+        tmp_path / "identity",
+        _artifact_input("identity-drift"),
+    )
+    identity_payload = json.loads(
+        identity_result.paths.child_bm25.read_text(encoding="utf-8")
+    )
+    changed = ChineseBM25Analyzer(extra_terms=("仅 child 漂移",)).identity.to_dict()
+    identity_payload["analyzer"] = changed
+    identity_payload["analyzer_fingerprint_sha256"] = changed[
+        "fingerprint_sha256"
+    ]
+    _rewrite_candidate_json(
+        identity_result.paths.build_root,
+        "indexes/child_text_bm25.json",
+        identity_payload,
+    )
+    with pytest.raises(ValueError, match="identity differs"):
+        verify_candidate_manifest(identity_result.paths.build_root)
+
+
+def test_candidate_manifest_rejects_bm25_manifest_and_handoff_identity_drift(
+    tmp_path: Path,
+) -> None:
+    manifest_result = write_candidate_artifacts(
+        tmp_path / "manifest",
+        _artifact_input("manifest-drift"),
+    )
+    manifest_path = manifest_result.paths.build_manifest
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["semantic_corpus"]["child"]["analyzer_probe_sha256"] = "0" * 64
+    manifest_path.write_bytes(canonical_json_bytes(manifest))
+    with pytest.raises(ValueError, match="semantic corpus metrics mismatch"):
+        verify_candidate_manifest(manifest_result.paths.build_root)
+
+    handoff_result = write_candidate_artifacts(
+        tmp_path / "handoff",
+        _artifact_input("handoff-drift"),
+    )
+    handoff = json.loads(
+        handoff_result.paths.embedding_handoff_v1.read_text(encoding="utf-8")
+    )
+    handoff["child_analyzer_fingerprint_sha256"] = "0" * 64
+    _rewrite_candidate_json(
+        handoff_result.paths.build_root,
+        "handoff/embedding_handoff.v1.json",
+        handoff,
+    )
+    with pytest.raises(ValueError, match="handoff"):
+        verify_candidate_manifest(handoff_result.paths.build_root)
 
 
 def test_blocked_candidate_never_emits_embedding_handoff(tmp_path: Path) -> None:
