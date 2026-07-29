@@ -7,7 +7,15 @@ from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from src.huiji_rag.build.contracts import (
+    CAPACITY_MARGIN_DENOMINATOR,
+    CAPACITY_MARGIN_NUMERATOR,
+    CLOUD_CAPACITY_MARGIN_MINIMUM_BYTES,
+    GIB,
+    LOCAL_CAPACITY_MARGIN_MINIMUM_BYTES,
     MEDIA_CAPACITY_REPORT_SCHEMA_VERSION,
+    MIN_FREE_AFTER_COMMIT_BYTES,
+    P0_MEDIA_NEW_BYTES_MAX,
+    P1_MEDIA_CUMULATIVE_NEW_BYTES_MAX,
     REFERENCED_MEDIA_ALLOWLIST_ENTRY_SCHEMA_VERSION,
     REFERENCED_MEDIA_PLAN_SCHEMA_VERSION,
     canonical_json_bytes,
@@ -15,14 +23,37 @@ from src.huiji_rag.build.contracts import (
 )
 
 
-GIB = 1024**3
-P0_MEDIA_NEW_BYTES_MAX = 268435456
-P1_MEDIA_CUMULATIVE_NEW_BYTES_MAX = 2147483648
-MIN_FREE_AFTER_COMMIT_BYTES = 12884901888
 _P0_OWNER_TYPES = frozenset({"page", "activity", "chapter"})
 _P0_EXCLUDED_ROLES = frozenset(
     {"audio", "avatar", "background", "cg", "decorative_icon"}
 )
+_MEDIA_ROLE_SELECTION_PRIORITY = {
+    "banner": 10,
+    "poster": 20,
+    "page_image": 30,
+    "gallery_image": 40,
+}
+MEDIA_SELECTION_POLICY_SHA256 = hashlib.sha256(
+    canonical_json_bytes(
+        {
+            "schema_version": "huiji.media-selection-policy/v1",
+            "p0_owner_types": sorted(_P0_OWNER_TYPES),
+            "p0_excluded_roles": sorted(_P0_EXCLUDED_ROLES),
+            "p0_representatives_per_owner": 1,
+            "role_selection_priority": dict(
+                sorted(_MEDIA_ROLE_SELECTION_PRIORITY.items())
+            ),
+            "default_selection_priority": 100,
+            "physical_identity_fields": [
+                "object_key",
+                "sha1",
+                "sha256_when_known",
+                "size",
+            ],
+        },
+        trailing_newline=False,
+    )
+).hexdigest()
 _CAPACITY_DECISIONS = frozenset(
     {
         "abandon_overflow",
@@ -98,10 +129,18 @@ class MediaDownloadPlanResult:
         }
 
 
+def media_selection_priority(media_role: str) -> int:
+    return _MEDIA_ROLE_SELECTION_PRIORITY.get(str(media_role), 100)
+
+
 def build_media_download_plan(
     request: MediaDownloadPlanRequest,
 ) -> MediaDownloadPlanResult:
     resources, not_eligible = _select_eligible_resources(request)
+    planning_incomplete = any(
+        row.get("reason_code") == "capacity_planning_incomplete"
+        for row in not_eligible
+    )
     baseline = _baseline_identities(request.minio_inventory_rows)
     enriched = [_with_capacity_identity(resource, baseline) for resource in resources]
     budget = (
@@ -146,10 +185,16 @@ def build_media_download_plan(
         + totals["concurrent_part_peak_bytes"]
         + totals["candidate_artifact_estimate_bytes"]
     )
-    local_margin = max(2 * GIB, _twenty_percent(local_subtotal))
-    cloud_margin = max(GIB, _twenty_percent(totals["MinIO_new_object_bytes"]))
+    local_margin = max(
+        LOCAL_CAPACITY_MARGIN_MINIMUM_BYTES, _twenty_percent(local_subtotal)
+    )
+    cloud_margin = max(
+        CLOUD_CAPACITY_MARGIN_MINIMUM_BYTES,
+        _twenty_percent(totals["MinIO_new_object_bytes"]),
+    )
     unknown_capacity = (
-        capacity.free_local_bytes is None
+        planning_incomplete
+        or capacity.free_local_bytes is None
         or capacity.known_cloud_free_or_quota_bytes is None
         or capacity.other_storage_growth_bytes is None
     )
@@ -195,7 +240,9 @@ def build_media_download_plan(
         )
     )
     state = "planned"
-    if overflow or capacity_sufficient is False:
+    if planning_incomplete:
+        state = "unknown_capacity"
+    elif overflow or capacity_sufficient is False:
         state = "capacity_blocked"
     elif unknown_capacity:
         state = "unknown_capacity"
@@ -220,7 +267,11 @@ def build_media_download_plan(
         else 0
         if shortfall == 0
         else _round_up(
-            shortfall + max(2 * GIB, _twenty_percent(overflow_new_bytes)),
+            shortfall
+            + max(
+                LOCAL_CAPACITY_MARGIN_MINIMUM_BYTES,
+                _twenty_percent(overflow_new_bytes),
+            ),
             5 * GIB,
         )
     )
@@ -374,11 +425,14 @@ def _select_eligible_resources(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     candidates: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
-    identity_by_resource_id: dict[str, tuple[str, str, str, int]] = {}
-    identity_by_object_key: dict[str, tuple[str, str, int]] = {}
-    resource_id_by_identity: dict[tuple[str, str, str, int], str] = {}
+    identity_by_resource_id: dict[str, tuple[str, str, str | None, int]] = {}
+    identity_by_object_key: dict[str, tuple[str, str | None, int]] = {}
+    resource_id_by_identity: dict[tuple[str, str, str | None, int], str] = {}
     for source in request.media_rows:
         row = dict(source)
+        if row.get("capacity_planning_incomplete") is True:
+            excluded.append(_excluded_evidence(row, "capacity_planning_incomplete"))
+            continue
         if _identity_missing(row):
             excluded.append(_excluded_evidence(row, "resource_identity_incomplete"))
             continue
@@ -448,7 +502,7 @@ def _aggregate_resources(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, An
         identity = (
             str(row["object_key"]),
             str(row["sha1"]).lower(),
-            str(row["content_sha256"]).lower(),
+            _optional_sha256(row.get("content_sha256")),
             int(row["size"]),
         )
         current = grouped.get(identity)
@@ -493,10 +547,10 @@ def _with_capacity_identity(
     identity = (
         str(row["object_key"]),
         str(row["sha1"]).lower(),
-        str(row["content_sha256"]).lower(),
+        _optional_sha256(row.get("content_sha256")),
         int(row["size"]),
     )
-    row["minio_reused"] = identity in baseline
+    row["minio_reused"] = identity[2] is not None and identity in baseline
     row["new_object_bytes"] = 0 if row["minio_reused"] else int(row["size"])
     return row
 
@@ -601,11 +655,12 @@ def _allowlist_row(resource: Mapping[str, Any]) -> dict[str, Any]:
         "url": resource["url"],
         "mime": resource.get("mime"),
         "sha1": str(resource["sha1"]).lower(),
-        "content_sha256": str(resource["content_sha256"]).lower(),
+        "content_sha256": _optional_sha256(resource.get("content_sha256")),
         "size": int(resource["size"]),
         "local_relpath": resource["local_relpath"],
         "object_key": resource["object_key"],
         "download_status": resource.get("download_status"),
+        "local_present": bool(resource.get("local_present")),
         "expected_download_bytes": (
             0 if bool(resource.get("local_present")) else int(resource["size"])
         ),
@@ -716,7 +771,9 @@ def _selection_key(row: Mapping[str, Any]) -> tuple[int, str]:
 
 
 def _twenty_percent(value: int) -> int:
-    return (value + 4) // 5
+    return (
+        value * CAPACITY_MARGIN_NUMERATOR + CAPACITY_MARGIN_DENOMINATOR - 1
+    ) // CAPACITY_MARGIN_DENOMINATOR
 
 
 def _round_up(value: int, quantum: int) -> int:
@@ -729,7 +786,6 @@ def _identity_missing(row: Mapping[str, Any]) -> bool:
         "filename",
         "url",
         "sha1",
-        "content_sha256",
         "size",
         "local_relpath",
         "object_key",
@@ -737,11 +793,13 @@ def _identity_missing(row: Mapping[str, Any]) -> bool:
     return any(row.get(field) in {None, ""} for field in required)
 
 
-def _candidate_identity(row: Mapping[str, Any]) -> tuple[str, str, str, int]:
+def _candidate_identity(
+    row: Mapping[str, Any],
+) -> tuple[str, str, str | None, int]:
     return (
         str(row["object_key"]),
         str(row["sha1"]),
-        str(row["content_sha256"]),
+        _optional_sha256(row.get("content_sha256")),
         int(row["size"]),
     )
 
@@ -750,16 +808,15 @@ def _validated_identity(
     row: Mapping[str, Any],
     *,
     label: str,
-) -> tuple[str, str, str, int]:
+) -> tuple[str, str, str | None, int]:
     try:
         object_key = row["object_key"]
         sha1 = row["sha1"]
-        sha256 = row["content_sha256"]
+        raw_sha256 = row.get("content_sha256")
         raw_size = row["size"]
         if (
             not isinstance(object_key, str)
             or not isinstance(sha1, str)
-            or not isinstance(sha256, str)
             or not isinstance(raw_size, int)
             or isinstance(raw_size, bool)
         ):
@@ -767,11 +824,31 @@ def _validated_identity(
         size = raw_size
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError(f"{label} is incomplete or malformed") from error
+    sha256 = _optional_sha256(raw_sha256)
+    predownload_without_sha256 = (
+        sha256 is None
+        and str(row.get("download_status") or "").strip().casefold()
+        == "not_downloaded"
+        and row.get("local_present") is False
+    )
     if (
         not object_key
         or not _SHA1_RE.fullmatch(sha1)
-        or not _SHA256_RE.fullmatch(sha256)
+        or (sha256 is None and not predownload_without_sha256)
+        or (sha256 is not None and not _SHA256_RE.fullmatch(sha256))
         or size < 0
     ):
         raise ValueError(f"{label} is incomplete or malformed")
+    if predownload_without_sha256 and row.get("resource_id") != (
+        f"resource:predownload-sha1:{sha1}"
+    ):
+        raise ValueError(f"{label} is incomplete or malformed")
     return object_key, sha1, sha256, size
+
+
+def _optional_sha256(value: object) -> str | None:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        return None
+    return value

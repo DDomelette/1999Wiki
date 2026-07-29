@@ -62,7 +62,7 @@ class DownloadJob:
     local_relpath: str
     size: int
     sha1: str
-    content_sha256: str
+    content_sha256: str | None
     expected_download_bytes: int
     mime: str | None
 
@@ -220,10 +220,22 @@ class ResourceDownloader:
         if size < 0 or expected_download_bytes not in {0, size}:
             raise ValueError("approved allowlist expected bytes are invalid")
         sha1 = str(row["sha1"]).lower()
-        sha256 = str(row["content_sha256"]).lower()
+        raw_sha256 = row["content_sha256"]
+        sha256 = (
+            str(raw_sha256).lower()
+            if raw_sha256 is not None and raw_sha256 != ""
+            else None
+        )
         if len(sha1) != 40 or any(value not in "0123456789abcdef" for value in sha1):
             raise ValueError("approved allowlist SHA-1 is invalid")
-        if len(sha256) != 64 or any(
+        if sha256 is None:
+            if not (
+                row.get("download_status") == "not_downloaded"
+                and row.get("local_present") is False
+                and expected_download_bytes == size
+            ):
+                raise ValueError("approved allowlist SHA-256 is required")
+        elif len(sha256) != 64 or any(
             value not in "0123456789abcdef" for value in sha256
         ):
             raise ValueError("approved allowlist SHA-256 is invalid")
@@ -358,11 +370,21 @@ class ResourceDownloader:
         if not path.is_file() or path.stat().st_size != job.size:
             return False
         sha1, sha256 = _file_digests(path)
-        return sha1 == job.sha1 and sha256 == job.content_sha256
+        return sha1 == job.sha1 and (
+            job.content_sha256 is None or sha256 == job.content_sha256
+        )
 
     def _append_receipt(self, result: DownloadResult) -> None:
         receipt = self.config.staging_receipt_path.resolve()
         receipt.parent.mkdir(parents=True, exist_ok=True)
+        actual_sha1: str | None = None
+        actual_sha256: str | None = None
+        actual_size: int | None = None
+        if result.status in {"downloaded", "skipped"}:
+            target = self._target_path(result.job.local_relpath)
+            if target.is_file():
+                actual_sha1, actual_sha256 = _file_digests(target)
+                actual_size = target.stat().st_size
         record = {
             "schema_version": MEDIA_DOWNLOAD_RECEIPT_SCHEMA_VERSION,
             "allowlist_sha256": self.config.expected_allowlist_sha256,
@@ -373,6 +395,9 @@ class ResourceDownloader:
             "binding_ids": list(result.job.binding_ids),
             "status": result.status,
             "bytes_written": result.bytes_written,
+            "actual_sha1": actual_sha1,
+            "actual_sha256": actual_sha256,
+            "actual_size": actual_size,
             "error": result.error,
         }
         with receipt.open("ab") as handle:

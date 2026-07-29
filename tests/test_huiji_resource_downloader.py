@@ -129,6 +129,56 @@ def test_resource_downloader_writes_only_staging_and_records_independent_receipt
     assert summary.failed == 0
 
 
+def test_predownload_allowlist_without_sha256_records_computed_digests(tmp_path):
+    body = b"pre-download-image"
+    row = make_allowlist_row(
+        "Banner.png",
+        body,
+        resource_id=f"resource:predownload-sha1:{hashlib.sha1(body).hexdigest()}",
+        content_sha256=None,
+        download_status="not_downloaded",
+        local_present=False,
+    )
+
+    downloader, _ = make_downloader(
+        tmp_path,
+        [row],
+        urlopen_fn=lambda request, timeout: FakeResponse(body),
+    )
+
+    summary = downloader.run()
+
+    assert summary.downloaded == 1
+    receipt = json.loads(
+        (tmp_path / "staging/download_receipt.v1.jsonl").read_text(encoding="utf-8")
+    )
+    assert receipt["actual_sha1"] == hashlib.sha1(body).hexdigest()
+    assert receipt["actual_sha256"] == hashlib.sha256(body).hexdigest()
+    assert receipt["actual_size"] == len(body)
+
+
+@pytest.mark.parametrize(
+    ("download_status", "local_present"),
+    [("downloaded", False), ("downloaded", True), ("not_downloaded", True)],
+)
+def test_resource_downloader_rejects_missing_sha256_outside_predownload_state(
+    tmp_path,
+    download_status,
+    local_present,
+):
+    row = make_allowlist_row(
+        "MissingSha256.png",
+        b"body",
+        content_sha256=None,
+        download_status=download_status,
+        local_present=local_present,
+    )
+    downloader, _ = make_downloader(tmp_path, [row])
+
+    with pytest.raises(ValueError, match="SHA-256 is required"):
+        downloader.run()
+
+
 def test_resource_downloader_skips_existing_valid_staging_file(tmp_path):
     body = b"already-downloaded"
     row = make_allowlist_row(
@@ -293,6 +343,7 @@ def test_resource_downloader_rejects_approval_metadata_mismatch(
     [
         "http://huiji-public.huijistatic.com/A.png",
         "https://example.com/A.png",
+        "https://res1999.huijiwiki.com/wiki/File:A.png",
     ],
 )
 def test_resource_downloader_preserves_https_host_enforcement(tmp_path, url):

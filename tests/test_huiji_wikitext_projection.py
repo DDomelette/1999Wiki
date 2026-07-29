@@ -172,6 +172,29 @@ def test_unsupported_template_html_unbalanced_link_and_unclosed_gallery_are_isol
     assert scan.images[-1].filename == "kept.png"
 
 
+def test_page_diagnostics_preserve_source_backed_occurrence_coordinates() -> None:
+    content = "{{First}}\nVisible text.\n{{Second}}"
+    result = _project_revision(41, "Diagnostic Source", 410, content)
+
+    diagnostics = [
+        item
+        for item in result.diagnostics
+        if item.reason_code == "unsupported_template_media"
+    ]
+    assert [(item.char_start, item.char_end) for item in diagnostics] == [
+        (content.index("{{First}}"), content.index("{{First}}") + len("{{First}}")),
+        (content.index("{{Second}}"), content.index("{{Second}}") + len("{{Second}}")),
+    ]
+    assert {item.pageid for item in diagnostics} == {41}
+    assert {item.revid for item in diagnostics} == {410}
+    assert {item.source_title for item in diagnostics} == {"Diagnostic Source"}
+    assert {item.source_content_sha256 for item in diagnostics} == {
+        hashlib.sha256(content.encode("utf-8")).hexdigest()
+    }
+    assert all("First" not in str(item.details) for item in diagnostics)
+    assert all("Second" not in str(item.details) for item in diagnostics)
+
+
 def test_scanner_never_calls_network_wiki_api_mysql_or_renderer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -228,17 +251,49 @@ def test_dangling_cycle_cross_namespace_and_conflicting_redirect_are_diagnostic(
 
 
 def test_page_ids_use_pageid_heading_sha20_occurrence_and_zero_padded_chunk() -> None:
-    result = _project([(7, "Page", "Lead.\n== Same ==\nOne.\n== Same ==\nTwo.")])
+    content = (
+        "Lead.\n"
+        "== Same ==\nOne.\n"
+        "== Same ==\nTwo.\n"
+        "== Same ==\nThree."
+    )
+    result = _project_revision(7, "Page", 70, content)
+    scan = scan_wikitext(content)
     ids = [child.child_id for child in result.children]
     heading_token = hashlib.sha256("Same".encode()).hexdigest()[:20]
     assert ids == [
         "page:7/section:lead/chunk:0000",
         f"page:7/section:{heading_token}/chunk:0000",
         f"page:7/section:{heading_token}-occurrence-02/chunk:0000",
+        f"page:7/section:{heading_token}-occurrence-03/chunk:0000",
     ]
-    assert "duplicate_heading_path_occurrence" in {
-        item.reason_code for item in result.diagnostics
-    }
+    diagnostics = [
+        item
+        for item in result.diagnostics
+        if item.reason_code == "duplicate_heading_path_occurrence"
+    ]
+    assert len(diagnostics) == 2
+    assert [
+        (
+            item.pageid,
+            item.revid,
+            item.source_content_sha256,
+            item.char_start,
+            item.char_end,
+            item.heading_path,
+        )
+        for item in diagnostics
+    ] == [
+        (
+            7,
+            70,
+            hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            section.char_start,
+            section.char_end,
+            section.heading_path,
+        )
+        for section in scan.sections[2:]
+    ]
 
 
 def test_page_chunking_targets_1200_caps_indivisible_blocks_at_1600_and_has_no_overlap() -> None:

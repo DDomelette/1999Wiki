@@ -4,8 +4,17 @@ import hashlib
 
 import pytest
 
-from src.huiji_rag.build.contracts import canonical_mapping_jsonl_bytes
-from src.huiji_rag.build.contracts import canonical_json_bytes
+from src.huiji_rag.build.contracts import (
+    CAPACITY_MARGIN_DENOMINATOR,
+    CAPACITY_MARGIN_NUMERATOR,
+    CLOUD_CAPACITY_MARGIN_MINIMUM_BYTES,
+    LOCAL_CAPACITY_MARGIN_MINIMUM_BYTES,
+    MIN_FREE_AFTER_COMMIT_BYTES as CONTRACT_MIN_FREE_AFTER_COMMIT_BYTES,
+    P0_MEDIA_NEW_BYTES_MAX as CONTRACT_P0_MEDIA_NEW_BYTES_MAX,
+    P1_MEDIA_CUMULATIVE_NEW_BYTES_MAX as CONTRACT_P1_MEDIA_CUMULATIVE_NEW_BYTES_MAX,
+    canonical_json_bytes,
+    canonical_mapping_jsonl_bytes,
+)
 from src.huiji_rag.build.media_download_plan import (
     GIB,
     MIN_FREE_AFTER_COMMIT_BYTES,
@@ -24,6 +33,15 @@ SHA1_C = "3" * 40
 SHA256_A = "a" * 64
 SHA256_B = "b" * 64
 SHA256_C = "c" * 64
+
+
+def test_planner_uses_shared_frozen_capacity_constants() -> None:
+    assert P0_MEDIA_NEW_BYTES_MAX == CONTRACT_P0_MEDIA_NEW_BYTES_MAX
+    assert P1_MEDIA_CUMULATIVE_NEW_BYTES_MAX == CONTRACT_P1_MEDIA_CUMULATIVE_NEW_BYTES_MAX
+    assert MIN_FREE_AFTER_COMMIT_BYTES == CONTRACT_MIN_FREE_AFTER_COMMIT_BYTES
+    assert LOCAL_CAPACITY_MARGIN_MINIMUM_BYTES == 2 * GIB
+    assert CLOUD_CAPACITY_MARGIN_MINIMUM_BYTES == GIB
+    assert (CAPACITY_MARGIN_NUMERATOR, CAPACITY_MARGIN_DENOMINATOR) == (1, 5)
 
 
 def media_row(
@@ -145,6 +163,83 @@ def test_allowlist_preserves_all_bindings_while_physical_bytes_are_deduplicated(
     ]
     assert result.report["capacity_totals"]["declared_bytes_total"] == 50
     assert result.report["capacity_totals"]["selected_media_new_bytes"] == 50
+
+
+def test_not_downloaded_sha1_identity_is_selected_as_new_without_sha256_reuse() -> None:
+    row = media_row(
+        f"resource:predownload-sha1:{SHA1_A}",
+        binding="binding:pending",
+        owner_id="page:pending",
+        size=123,
+    )
+    row["content_sha256"] = None
+    baseline = {
+        "object_key": row["object_key"],
+        "sha1": row["sha1"],
+        "content_sha256": SHA256_A,
+        "size": row["size"],
+    }
+
+    result = build_media_download_plan(request([row], baseline_rows=(baseline,)))
+
+    assert [item["resource_id"] for item in result.allowlist_rows] == [
+        f"resource:predownload-sha1:{SHA1_A}"
+    ]
+    assert result.allowlist_rows[0]["content_sha256"] is None
+    assert result.allowlist_rows[0]["new_object_bytes"] == 123
+    assert result.report["capacity_totals"]["MinIO_existing_object_bytes"] == 0
+    assert result.report["capacity_totals"]["MinIO_new_object_bytes"] == 123
+
+
+@pytest.mark.parametrize(
+    ("download_status", "local_present"),
+    [("downloaded", False), ("downloaded", True), ("not_downloaded", True)],
+)
+def test_sha256_remains_required_outside_absent_not_downloaded_state(
+    download_status: str,
+    local_present: bool,
+) -> None:
+    row = media_row(
+        "invalid-missing-sha256",
+        binding="binding:invalid",
+        owner_id="page:invalid",
+        local_present=local_present,
+    )
+    row["download_status"] = download_status
+    row["content_sha256"] = None
+
+    with pytest.raises(ValueError, match="candidate resource identity"):
+        build_media_download_plan(request([row]))
+
+
+def test_incomplete_referenced_resource_keeps_capacity_unknown() -> None:
+    complete = media_row(
+        "complete",
+        binding="binding:complete",
+        owner_id="page:complete",
+        size=25,
+    )
+    incomplete = {
+        "resource_id": "",
+        "binding_id": "binding:incomplete",
+        "owner_id": "page:incomplete",
+        "owner_type": "page",
+        "media_role": "page_image",
+        "capacity_planning_incomplete": True,
+        "planning_shortfall_reason": "resource_direct_url_invalid",
+    }
+
+    result = build_media_download_plan(request([complete, incomplete]))
+
+    assert result.state == "unknown_capacity"
+    assert [row["resource_id"] for row in result.allowlist_rows] == ["complete"]
+    assert result.report["capacity_sufficient"] is None
+    assert result.report["not_eligible"][-1]["reason_code"] == (
+        "capacity_planning_incomplete"
+    )
+    assert result.report["not_eligible"][-1]["binding_ids"] == [
+        "binding:incomplete"
+    ]
 
 
 def test_p0_shared_object_covers_uncovered_owner_without_losing_bindings() -> None:

@@ -21,6 +21,7 @@ from .contracts import (
     MEDIA_V3_SCHEMA_VERSION,
     PARENT_BLOCK_SCHEMA_VERSION,
     BuildState,
+    DIAGNOSTIC_ONLY_NEXT_GATE,
     CorpusSourceInventory,
     VoiceBindingResult,
     canonical_json_bytes,
@@ -51,6 +52,7 @@ class CandidateArtifactInput:
     fidelity_baseline_path: str
     fidelity_baseline_sha256: str
     blockers: tuple[str, ...] = ()
+    diagnostic_reasons: tuple[str, ...] = ()
     protected_state_references: Mapping[str, Any] = field(default_factory=dict)
     embedding_config_fingerprint_sha256: str = ""
     forbidden_collection_names: tuple[str, ...] = ()
@@ -60,6 +62,11 @@ class CandidateArtifactInput:
         object.__setattr__(self, "media_rows", tuple(self.media_rows))
         object.__setattr__(self, "binding_inventory", tuple(self.binding_inventory))
         object.__setattr__(self, "blockers", tuple(sorted(set(self.blockers))))
+        object.__setattr__(
+            self,
+            "diagnostic_reasons",
+            tuple(sorted(set(self.diagnostic_reasons))),
+        )
         object.__setattr__(
             self,
             "protected_state_references",
@@ -160,7 +167,15 @@ def write_candidate_artifacts(
             )
         )
     )
-    state = BuildState.BLOCKED if blockers else BuildState.READY_FOR_EMBEDDING
+    state = (
+        BuildState.BLOCKED
+        if blockers
+        else (
+            BuildState.DIAGNOSTIC_ONLY
+            if request.diagnostic_reasons
+            else BuildState.READY_FOR_EMBEDDING
+        )
+    )
     paths.build_root.mkdir(parents=True, exist_ok=False)
 
     files: dict[str, dict[str, Any]] = {}
@@ -383,11 +398,16 @@ def write_candidate_artifacts(
         "row_counts": row_counts,
         "voice_status_counts": dict(request.voice_result.status_counts),
         "blockers": blockers,
+        "diagnostic_reasons": list(request.diagnostic_reasons),
         "handoff_created": handoff_created,
         "next_gate": (
             "user_run_embedding"
             if handoff_created
-            else "resolve_blockers_and_rebuild_under_new_version"
+            else (
+                DIAGNOSTIC_ONLY_NEXT_GATE
+                if state is BuildState.DIAGNOSTIC_ONLY
+                else "resolve_blockers_and_rebuild_under_new_version"
+            )
         ),
     }
     _write_json_artifact(
@@ -405,6 +425,7 @@ def write_candidate_artifacts(
         "artifact_schema_version": MEDIA_V3_ROW_SCHEMA_VERSION,
         "build_version": request.build_version,
         "state": state.value,
+        "diagnostic_reasons": list(request.diagnostic_reasons),
         "source_inventory": request.source_inventory.to_json(),
         "code_fingerprint_sha256": request.code_fingerprint_sha256,
         "config_fingerprint_sha256": request.config_fingerprint_sha256,
@@ -524,10 +545,28 @@ def verify_candidate_manifest(
 
     state = str(manifest.get("state") or "")
     handoff_path = "handoff/embedding_handoff.v1.json"
-    if state == BuildState.BLOCKED.value and handoff_path in by_path:
-        raise ValueError("blocked candidate must not contain an embedding handoff")
+    allowed_states = {item.value for item in BuildState}
+    if state not in allowed_states:
+        raise ValueError("candidate manifest state is unsupported")
+    if state != BuildState.READY_FOR_EMBEDDING.value and handoff_path in by_path:
+        raise ValueError("non-ready candidate must not contain an embedding handoff")
     if state == BuildState.READY_FOR_EMBEDDING.value and handoff_path not in by_path:
         raise ValueError("ready candidate is missing its embedding handoff")
+    report_path = root / "build_report.json"
+    report = json.loads(report_path.read_bytes())
+    if str(report.get("state") or "") != state:
+        raise ValueError("candidate manifest and report states differ")
+    manifest_diagnostics = manifest.get("diagnostic_reasons")
+    report_diagnostics = report.get("diagnostic_reasons")
+    if (
+        not isinstance(manifest_diagnostics, list)
+        or not isinstance(report_diagnostics, list)
+        or manifest_diagnostics != sorted(set(str(item) for item in manifest_diagnostics))
+        or report_diagnostics != manifest_diagnostics
+    ):
+        raise ValueError("candidate manifest and report diagnostic reasons differ")
+    if bool(report.get("handoff_created")) != (handoff_path in by_path):
+        raise ValueError("candidate report handoff state is inconsistent")
     return manifest
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Mapping
 
 import pytest
@@ -373,6 +373,60 @@ def test_topic_without_eligible_evidence_emits_shortfall_not_synthetic_content()
     assert result.children == ()
     assert result.diagnostics[0].reason_code == "topic_evidence_shortfall"
     assert result.diagnostics[0].details == {"selector_count": 1}
+
+
+def test_empty_content_with_valid_source_refs_is_ignored_as_topic_evidence() -> None:
+    catalog = validate_topic_catalog(
+        _catalog(_topic("sparse", "Sparse", exact_heading_titles=["lead"]))
+    )
+    source = _page_child("sparse-child", title="Other", content="")
+
+    result = project_topics([source], catalog=catalog)
+
+    assert result.parents == ()
+    assert result.children == ()
+    assert [(item.topic_id, item.reason_code) for item in result.diagnostics] == [
+        ("sparse", "topic_evidence_shortfall")
+    ]
+
+
+def test_empty_content_exact_title_source_cannot_create_topic_child() -> None:
+    catalog = validate_topic_catalog(
+        _catalog(_topic("sparse", "Sparse", exact_page_titles=["Sparse"]))
+    )
+    source = _page_child("sparse-title", title="Sparse", content="")
+
+    result = project_topics([source], catalog=catalog)
+
+    assert result.parents == ()
+    assert result.children == ()
+    assert result.diagnostics[0].reason_code == "topic_evidence_shortfall"
+
+
+def test_topic_source_missing_source_refs_remains_fail_closed() -> None:
+    catalog = validate_topic_catalog(
+        _catalog(_topic("sparse", "Sparse", exact_page_titles=["Sparse"]))
+    )
+    source = replace(
+        _page_child("missing-refs", title="Sparse", content="Evidence."),
+        source_refs=(),
+    )
+
+    with pytest.raises(ValueError, match="source refs"):
+        project_topics([source], catalog=catalog)
+
+
+def test_non_empty_topic_source_missing_heading_path_remains_fail_closed() -> None:
+    catalog = validate_topic_catalog(
+        _catalog(_topic("sparse", "Sparse", exact_page_titles=["Sparse"]))
+    )
+    source = replace(
+        _page_child("missing-heading", title="Sparse", content="Evidence."),
+        heading_path=(),
+    )
+
+    with pytest.raises(ValueError, match="heading path"):
+        project_topics([source], catalog=catalog)
 
 
 def test_topic_page_story_rows_share_exact_public_child_contract() -> None:

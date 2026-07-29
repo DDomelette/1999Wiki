@@ -323,7 +323,17 @@ def _reconcile_exclusions(
     active_rows: Sequence[Mapping[str, Any]], projection: CorpusProjection
 ) -> tuple[list[dict[str, Any]], list[str]]:
     candidate_by_source: dict[str, list[Any]] = defaultdict(list)
+    candidate_by_identity: dict[str, Any] = {}
     for exclusion in projection.exclusions:
+        candidate_identity = _exclusion_candidate_identity(exclusion)
+        existing = candidate_by_identity.get(candidate_identity)
+        if existing is not None:
+            if existing.to_json() != exclusion.to_json():
+                raise ValueError(
+                    "fidelity ledger contains conflicting candidate exclusion identity"
+                )
+            continue
+        candidate_by_identity[candidate_identity] = exclusion
         candidate_by_source[exclusion.source_title].append(exclusion)
     ledger: list[dict[str, Any]] = []
     blockers: list[str] = []
@@ -341,7 +351,7 @@ def _reconcile_exclusions(
             blockers.append(f"unexplained_exclusion_missing:{source or index}")
         candidate_ids = sorted(
             {
-                f"{item.source_title}#{item.json_path}:{item.reason_code}"
+                _exclusion_candidate_identity(item)
                 for item in candidates
             }
         )
@@ -370,11 +380,11 @@ def _reconcile_exclusions(
                 "details": {},
             }
         )
-    for exclusion in projection.exclusions:
+    for exclusion in candidate_by_identity.values():
         key = (exclusion.source_title, exclusion.reason_code)
         if key in matched:
             continue
-        candidate_id = f"{exclusion.source_title}#{exclusion.json_path}:{exclusion.reason_code}"
+        candidate_id = _exclusion_candidate_identity(exclusion)
         ledger.append(
             {
                 "schema_version": "huiji.fidelity-ledger/v1",
@@ -389,6 +399,7 @@ def _reconcile_exclusions(
                 "source_evidence": [
                     {
                         "source_title": exclusion.source_title,
+                        "source_identity": exclusion.source_identity,
                         "source_content_sha256": exclusion.source_content_sha256,
                         "json_path": exclusion.json_path,
                     }
@@ -397,6 +408,13 @@ def _reconcile_exclusions(
             }
         )
     return ledger, blockers
+
+
+def _exclusion_candidate_identity(exclusion: Any) -> str:
+    return (
+        f"{exclusion.source_title}#{exclusion.json_path}:{exclusion.reason_code}:"
+        f"source:{exclusion.source_identity}"
+    )
 
 
 def _reconcile_child_bm25(

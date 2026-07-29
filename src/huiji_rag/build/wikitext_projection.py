@@ -110,9 +110,15 @@ class PageDiagnostic:
     pageid: int
     source_title: str
     details: Mapping[str, Any] = field(default_factory=dict)
+    revid: int = 0
+    source_content_sha256: str = ""
+    char_start: int = -1
+    char_end: int = -1
+    heading_path: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "details", MappingProxyType(dict(self.details)))
+        object.__setattr__(self, "heading_path", tuple(self.heading_path))
 
 
 @dataclass(frozen=True)
@@ -479,7 +485,19 @@ def project_wikitext_pages(
         scan = scan_wikitext(str(row.get("content") or ""))
         scans[match.page.pageid] = (match, item, scan)
         diagnostics.extend(
-            PageDiagnostic(diag.reason_code, match.page.pageid, match.page.title)
+            PageDiagnostic(
+                reason_code=diag.reason_code,
+                pageid=match.page.pageid,
+                source_title=match.page.title,
+                details=diag.details,
+                revid=match.revision.revid,
+                source_content_sha256=str(
+                    row.get("content_sha256") or match.revision.content_sha256
+                ),
+                char_start=diag.char_start,
+                char_end=diag.char_end,
+                heading_path=diag.heading_path,
+            )
             for diag in scan.diagnostics
         )
 
@@ -568,6 +586,11 @@ def project_wikitext_pages(
                         pageid,
                         joined_item.page.title,
                         {"occurrence": occurrence, "heading_depth": len(section.heading_path)},
+                        revid=joined_item.revision.revid,
+                        source_content_sha256=source_content_sha256,
+                        char_start=section.char_start,
+                        char_end=section.char_end,
+                        heading_path=section.heading_path,
                     )
                 )
             section_parent_id = f"page:{pageid}/section:{section_token}"
@@ -701,6 +724,11 @@ def project_wikitext_pages(
                                 ),
                                 "parser_config_sha256": _PARSER_CONFIG_SHA256,
                             },
+                            revid=joined_item.revision.revid,
+                            source_content_sha256=source_content_sha256,
+                            char_start=image.char_start,
+                            char_end=image.char_end,
+                            heading_path=image.heading_path,
                         )
                     )
                     continue
@@ -798,7 +826,14 @@ def project_wikitext_pages(
         )
         children.extend(page_children)
 
-    diagnostics.sort(key=lambda item: (item.pageid, item.reason_code))
+    diagnostics.sort(
+        key=lambda item: (
+            item.pageid,
+            item.reason_code,
+            item.char_start,
+            item.char_end,
+        )
+    )
     return PageProjection(
         pages=tuple(pages),
         sections=tuple(sections),

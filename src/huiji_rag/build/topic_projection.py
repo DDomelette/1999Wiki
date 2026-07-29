@@ -193,7 +193,11 @@ def project_topics(
 ) -> TopicProjection:
     """Copy eligible source children into deterministic Topic ownership."""
     selected_catalog = catalog or load_topic_catalog()
-    sources = tuple(_source_child(item) for item in source_children)
+    sources = tuple(
+        source
+        for item in source_children
+        if (source := _source_child(item)) is not None
+    )
     parents: list[ParentBlock] = []
     children: list[TopicChildProjection] = []
     diagnostics: list[TopicDiagnostic] = []
@@ -338,13 +342,15 @@ def _required_string(raw: Any, field_name: str) -> str:
     return raw
 
 
-def _source_child(raw: Any) -> _SourceChild:
+def _source_child(raw: Any) -> _SourceChild | None:
     block = getattr(raw, "block", None)
     public = block if isinstance(block, ChildBlock) else raw
     content = str(getattr(public, "content", getattr(public, "text", "")))
     source_refs = tuple(dict(item) for item in getattr(public, "source_refs", ()))
-    if not content or not source_refs:
-        raise ValueError("Topic source child must have content and source refs")
+    if not source_refs:
+        raise ValueError("Topic source child must have source refs")
+    if not content:
+        return None
     heading_path = tuple(str(item) for item in getattr(public, "heading_path", ()))
     if not heading_path or any(not item for item in heading_path):
         raise ValueError("Topic source child must have a non-empty heading path")

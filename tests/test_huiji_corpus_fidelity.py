@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from src.huiji_rag.build.fidelity import build_fidelity_ledger
 from src.huiji_rag.build.media_v3 import LegacyMediaReconciliation
 from src.huiji_rag.build.projection import (
@@ -248,6 +250,94 @@ def test_fidelity_ledger_accepts_legacy_items_parent_for_culture_dossier() -> No
     assert ["items", "culture_dossier"] in result.build_diff[
         "allowed_section_corrections"
     ]
+
+
+def test_fidelity_exclusion_ledger_uses_source_stable_occurrence_identity() -> None:
+    values = _fixture()
+    exclusions = (
+        ProjectionExclusion(
+            reason_code="unsupported_template_media",
+            source_title="Page",
+            source_identity="occurrence-" + "1" * 64,
+            source_content_sha256="e" * 64,
+            details={"pageid": 7, "revid": 11, "char_start": 10, "char_end": 20},
+        ),
+        ProjectionExclusion(
+            reason_code="unsupported_template_media",
+            source_title="Page",
+            source_identity="occurrence-" + "2" * 64,
+            source_content_sha256="e" * 64,
+            details={"pageid": 7, "revid": 11, "char_start": 30, "char_end": 40},
+        ),
+    )
+    values["projection"] = replace(values["projection"], exclusions=exclusions)
+    values["active_excluded"] = ()
+
+    first = _build(values)
+    second = _build(values)
+    first_rows = [
+        row for row in first.ledger_rows if row["record_kind"] == "excluded"
+    ]
+    second_rows = [
+        row for row in second.ledger_rows if row["record_kind"] == "excluded"
+    ]
+
+    assert len(first_rows) == 2
+    assert len({row["ledger_id"] for row in first_rows}) == 2
+    assert [row["ledger_id"] for row in first_rows] == [
+        row["ledger_id"] for row in second_rows
+    ]
+    assert {
+        row["candidate_identities"][0].rsplit(":", 1)[-1] for row in first_rows
+    } == {item.source_identity for item in exclusions}
+
+
+def test_fidelity_exclusion_ledger_deduplicates_exact_duplicate_occurrence() -> None:
+    values = _fixture()
+    exclusion = ProjectionExclusion(
+        reason_code="unsupported_template_media",
+        source_title="Page",
+        source_identity="occurrence-" + "1" * 64,
+        source_content_sha256="e" * 64,
+        details={"pageid": 7, "revid": 11, "char_start": 10, "char_end": 20},
+    )
+    values["projection"] = replace(
+        values["projection"], exclusions=(exclusion, exclusion)
+    )
+    values["active_excluded"] = ()
+
+    first = _build(values)
+    second = _build(values)
+    first_rows = [
+        row for row in first.ledger_rows if row["record_kind"] == "excluded"
+    ]
+    second_rows = [
+        row for row in second.ledger_rows if row["record_kind"] == "excluded"
+    ]
+
+    assert len(first_rows) == 1
+    assert [row["ledger_id"] for row in first_rows] == [
+        row["ledger_id"] for row in second_rows
+    ]
+
+
+def test_fidelity_exclusion_ledger_rejects_conflicting_duplicate_identity() -> None:
+    values = _fixture()
+    first = ProjectionExclusion(
+        reason_code="unsupported_template_media",
+        source_title="Page",
+        source_identity="occurrence-" + "1" * 64,
+        source_content_sha256="e" * 64,
+        details={"pageid": 7, "revid": 11, "char_start": 10, "char_end": 20},
+    )
+    conflicting = replace(first, details={**first.details, "char_end": 21})
+    values["projection"] = replace(
+        values["projection"], exclusions=(first, conflicting)
+    )
+    values["active_excluded"] = ()
+
+    with pytest.raises(ValueError, match="conflicting candidate exclusion identity"):
+        _build(values)
 
 
 def test_fidelity_ledger_blocks_missing_candidate_and_bm25_sequence_drift() -> None:

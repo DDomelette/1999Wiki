@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
+from urllib.parse import urlparse
 
 from src.huiji_rag.media import (
     build_media_object_key,
@@ -26,6 +27,7 @@ from .contracts import (
     compute_resource_id,
     ordered_media_v3_row,
 )
+from .media_download_plan import media_selection_priority
 from .projection import CorpusProjection, MediaBindingIntent, SemanticChild
 from .wikitext_projection import normalize_wikitext_filename
 
@@ -462,6 +464,8 @@ def assemble_media_v3(
                 )
             except _ResourceResolutionError as error:
                 reason_code = error.reason_code
+                planning_evidence: dict[str, Any] | None = None
+                planning_shortfall_reason = ""
                 if (
                     intent.resolver_mode == "wikitext_exact"
                     and reason_code in {"local_path_missing", "local_file_missing"}
@@ -470,6 +474,18 @@ def assemble_media_v3(
                     .casefold()
                     == "not_downloaded"
                 ):
+                    try:
+                        planning_evidence = _not_downloaded_planning_evidence(
+                            config,
+                            intent,
+                            child,
+                            source_row,
+                            object_kind=object_kind,
+                        )
+                    except _ResourceResolutionError as planning_error:
+                        planning_shortfall_reason = planning_error.reason_code
+                    else:
+                        pass
                     reason_code = "referenced_resource_not_downloaded"
                 unresolved.append(
                     {
@@ -477,6 +493,16 @@ def assemble_media_v3(
                         "filename": _resource_filename(source_row),
                         "local_relpath": str(source_row.get("local_relpath") or ""),
                         "detail": error.detail,
+                        **(
+                            {"planning_evidence": planning_evidence}
+                            if planning_evidence is not None
+                            else {}
+                        ),
+                        **(
+                            {"planning_shortfall_reason": planning_shortfall_reason}
+                            if planning_shortfall_reason
+                            else {}
+                        ),
                     }
                 )
                 if reason_code != "referenced_resource_not_downloaded":
@@ -1336,6 +1362,110 @@ def _unresolved_intent(intent: MediaBindingIntent, reason_code: str) -> dict[str
         "exact_filename": intent.exact_filename,
         "missing_policy": intent.missing_policy,
     }
+
+
+def _not_downloaded_planning_evidence(
+    config: MediaV3Config,
+    intent: MediaBindingIntent,
+    child: SemanticChild,
+    source_row: Mapping[str, Any],
+    *,
+    object_kind: str,
+) -> dict[str, Any]:
+    filename = _resource_filename(source_row)
+    sha1 = str(source_row.get("sha1") or "").strip().casefold()
+    sha256 = str(
+        source_row.get("sha256") or source_row.get("content_sha256") or ""
+    ).strip().casefold()
+    size = source_row.get("size")
+    local_relpath = str(source_row.get("local_relpath") or "")
+    source_url = str(
+        source_row.get("url")
+        or source_row.get("source_url")
+        or source_row.get("descriptionurl")
+        or ""
+    )
+    if (
+        not filename
+        or not _SHA1_RE.fullmatch(sha1)
+        or (sha256 and not _SHA256_RE.fullmatch(sha256))
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or size < 0
+        or not local_relpath
+    ):
+        raise _ResourceResolutionError(
+            "resource_planning_identity_invalid",
+            "not-downloaded resource planning identity is incomplete",
+        )
+    parsed_source_url = urlparse(source_url)
+    source_host = (parsed_source_url.hostname or "").casefold()
+    if (
+        parsed_source_url.scheme.casefold() != "https"
+        or not source_host
+        or not (
+            source_host == "huijistatic.com"
+            or source_host.endswith(".huijistatic.com")
+        )
+    ):
+        raise _ResourceResolutionError(
+            "resource_direct_url_invalid",
+            "not-downloaded resource URL is not a direct approved-host URL",
+        )
+    expected_object_key = build_media_object_key(
+        config.object_prefix, object_kind, sha1, filename
+    )
+    declared_object_key = str(source_row.get("object_key") or "")
+    if declared_object_key and declared_object_key != expected_object_key:
+        raise _ResourceResolutionError(
+            "resource_planning_object_key_mismatch",
+            "not-downloaded resource object key differs from deterministic key",
+        )
+    binding_id = "planning-binding:sha256:" + hashlib.sha256(
+        intent.source_binding_token.encode("utf-8")
+    ).hexdigest()
+    resource_id = (
+        compute_resource_id(sha256)
+        if sha256
+        else f"resource:predownload-sha1:{sha1}"
+    )
+    return {
+        "resource_id": resource_id,
+        "binding_id": binding_id,
+        "source_binding_token": intent.source_binding_token,
+        "owner_id": intent.owner_page_id,
+        "owner_type": _planning_owner_type(intent.owner_page_id),
+        "category": child.block.category,
+        "parent_id": intent.parent_id,
+        "child_id": intent.child_id,
+        "section": intent.section,
+        "heading_path": list(intent.heading_path),
+        "media_role": intent.media_role,
+        "selection_priority": media_selection_priority(intent.media_role),
+        "eligible": True,
+        "filename": filename,
+        "url": source_url,
+        "mime": str(
+            source_row.get("mime")
+            or mimetypes.guess_type(filename)[0]
+            or "application/octet-stream"
+        ),
+        "sha1": sha1,
+        "content_sha256": sha256 or None,
+        "size": size,
+        "local_relpath": local_relpath,
+        "object_key": expected_object_key,
+        "download_status": "not_downloaded",
+        "local_present": False,
+        "source_refs": [dict(item) for item in intent.source_refs],
+    }
+
+
+def _planning_owner_type(owner_id: str) -> str:
+    prefix = str(owner_id).split(":", 1)[0].casefold()
+    return {"activity": "activity", "chapter": "chapter", "page": "page"}.get(
+        prefix, prefix or "unknown"
+    )
 
 
 def _asset_type_for_role(media_role: str, filename: str) -> str:
