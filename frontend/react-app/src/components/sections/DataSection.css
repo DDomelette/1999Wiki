@@ -8,14 +8,19 @@
 
 .data-section__panels {
   overflow: visible;
+  margin-top: -100vh;
+  margin-top: -100dvh;
 }
 
-/* 粘性导航外壳:高度为 0,在整个资料序列范围内保持可见,不拦截面板交互 */
+/* 粘性导航外壳:占满一屏高度,由 panels 的等量负 margin-top 抵消;外壳自身
+   保持真实高度参与底边界约束,使子导航在资料序列内 sticky,但不会溢出到
+   chat,且不拦截面板交互 */
 .data-section__nav-shell {
   position: sticky;
   top: 0;
   z-index: 5;
-  height: 0;
+  height: 100vh;
+  height: 100dvh;
   pointer-events: none;
 }
 

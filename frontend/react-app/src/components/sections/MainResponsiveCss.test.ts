@@ -55,6 +55,16 @@ describe('main page responsive CSS contract', () => {
     expect(mobileCopy).toContain('text-shadow:')
   })
 
+  it('constrains the sticky data navigation to the data sequence', () => {
+    expect(dataCss).toMatch(
+      /\.data-section__nav-shell\s*\{[^}]*height:\s*100vh[^}]*height:\s*100dvh/s,
+    )
+    expect(dataCss).toMatch(
+      /\.data-section__panels\s*\{[^}]*margin-top:\s*-100vh[^}]*margin-top:\s*-100dvh/s,
+    )
+    expect(dataCss).not.toMatch(/\.data-section__nav-shell\s*\{[^}]*margin-bottom:\s*-100/s)
+  })
+
   it('keeps the chat toolbar below navigation and the mobile input shrinkable', () => {
     expect(chatCss).toContain('@media (max-width: 720px)')
     expect(chatCss).toMatch(/\.chat-section\s*\{[^}]*background:\s*linear-gradient[^}]*backdrop-filter:\s*blur\(2px\)/s)
