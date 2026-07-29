@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useUIStore } from './store/uiStore'
 import { useScrollSpy } from './hooks/useScrollSpy'
 import { useWheelSnapNavigation } from './hooks/useWheelSnapNavigation'
+import { useMainViewportAlignment } from './hooks/useMainViewportAlignment'
+import type { MainSnapId } from './navigation/mainSectionNavigation'
 import { navigateToMainSection, parseMainHash } from './navigation/mainSectionNavigation'
 import { fetchCategories } from './api/http'
 import { RouteAwareCardNav } from './components/navigation/RouteAwareCardNav'
@@ -35,9 +37,19 @@ export default function App() {
 function MainApp() {
   const setCategoriesMeta = useUIStore((s) => s.setCategoriesMeta)
   const categoriesMeta = useUIStore((s) => s.categoriesMeta)
+  const currentSection = useUIStore((s) => s.currentSection)
+  const currentCategory = useUIStore((s) => s.currentCategory)
   const snapContainerRef = useRef<HTMLElement>(null)
   useScrollSpy()
   useWheelSnapNavigation()
+
+  const activeSnapId: MainSnapId =
+    currentSection === 'data'
+      ? currentCategory
+        ? `data:${currentCategory}`
+        : 'data:loading'
+      : currentSection
+  useMainViewportAlignment(snapContainerRef, activeSnapId)
 
   useEffect(() => {
     fetchCategories()

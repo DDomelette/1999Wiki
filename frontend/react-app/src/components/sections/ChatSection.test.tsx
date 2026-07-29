@@ -15,18 +15,25 @@ describe('ChatSection', () => {
     })
   })
 
-  it('provides a return-home button that scrolls to the home section', () => {
-    const homeSection = document.createElement('section')
-    homeSection.setAttribute('data-snap-section', 'home')
-    const scrollIntoView = vi.fn()
-    homeSection.scrollIntoView = scrollIntoView
-    document.body.appendChild(homeSection)
-
-    render(<ChatSection />)
+  it('provides a return-home button that uses semantic main navigation', () => {
+    const { container } = render(
+      <main className="snap-container">
+        <section data-snap-section="home" />
+        <ChatSection />
+      </main>,
+    )
+    const scroller = container.querySelector('.snap-container') as HTMLElement
+    const homeSection = container.querySelector('[data-snap-section="home"]') as HTMLElement
+    const scrollTo = vi.fn()
+    scroller.scrollTo = scrollTo
+    Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 400 })
+    scroller.getBoundingClientRect = vi.fn(() => ({ top: 20 }) as DOMRect)
+    homeSection.getBoundingClientRect = vi.fn(() => ({ top: -380 }) as DOMRect)
 
     fireEvent.click(screen.getByRole('button', { name: '返回首页' }))
 
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 0 })
+    expect(window.location.hash).toBe('#home')
   })
 
   it('does not cover the global background with a solid section fill', () => {

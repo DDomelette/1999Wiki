@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useChatStore } from '../../store/chatStore'
+import { useChatPageBoundaryNavigation } from '../../hooks/useChatPageBoundaryNavigation'
+import { navigateToMainSection } from '../../navigation/mainSectionNavigation'
 import { MessageBubble } from '../chat/MessageBubble'
 import { ChatInput } from '../chat/ChatInput'
 import { AutoHideScrollbar } from '../ui/AutoHideScrollbar'
@@ -11,6 +13,7 @@ export function ChatSection() {
   const messages = useChatStore((s) => s.messages)
   const clear = useChatStore((s) => s.clear)
   const scrollRef = useRef<HTMLDivElement>(null)
+  useChatPageBoundaryNavigation(scrollRef)
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -19,9 +22,8 @@ export function ChatSection() {
   }, [messages])
 
   const jumpHome = () => {
-    document
-      .querySelector('[data-snap-section="home"]')
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    navigateToMainSection({ kind: 'home' }, { behavior: reducedMotion ? 'auto' : 'smooth', history: 'push' })
   }
 
   return (
