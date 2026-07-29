@@ -131,22 +131,47 @@ describe('App wheel snap navigation', () => {
     consoleError.mockRestore()
   })
 
+  it('flattens data categories into leaf snap targets owned by the main scroller', async () => {
+    const { container } = render(<App />)
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-snap-section="data:人物"]')).toBeInTheDocument()
+      expect(document.querySelector('[data-snap-section="data:心相"]')).toBeInTheDocument()
+    })
+
+    const dataScroller = container.querySelector('[data-testid="data-section-scroll"]') as HTMLElement
+    expect(dataScroller.scrollHeight).toBe(dataScroller.clientHeight)
+    expect(dataScroller).not.toHaveStyle({ overflowY: 'scroll' })
+    expect(document.querySelector('[data-snap-section="data"]')).toBeNull()
+    expect(document.querySelector('[data-snap-section="data:人物"]')).toBeInTheDocument()
+
+    const flatIds = [...container.querySelectorAll('.snap-container [data-snap-section]')].map(
+      (el) => el.getAttribute('data-snap-section'),
+    )
+    expect(flatIds).toEqual(['home', 'data:人物', 'data:心相', 'chat'])
+  })
+
   it('does not skip the data page while category panels are still unavailable', async () => {
     fetchCategoriesMock.mockReturnValue(new Promise(() => {}))
     const { container } = render(<App />)
 
     await waitFor(() => {
-      expect(document.querySelector('[data-snap-section="data"]')).toBeInTheDocument()
+      expect(document.querySelector('[data-snap-section="data:loading"]')).toBeInTheDocument()
     })
+
+    const flatIds = [...container.querySelectorAll('.snap-container [data-snap-section]')].map(
+      (el) => el.getAttribute('data-snap-section'),
+    )
+    expect(flatIds).toEqual(['home', 'data:loading', 'chat'])
 
     vi.useFakeTimers()
 
     const scroller = container.querySelector('.snap-container') as HTMLElement
-    const dataSection = document.querySelector('[data-snap-section="data"]') as HTMLElement
+    const loadingPanel = document.querySelector('[data-snap-section="data:loading"]') as HTMLElement
     const chatSection = document.querySelector('[data-snap-section="chat"]') as HTMLElement
-    const dataScroll = vi.fn()
+    const loadingScroll = vi.fn()
     const chatScroll = vi.fn()
-    dataSection.scrollIntoView = dataScroll
+    loadingPanel.scrollIntoView = loadingScroll
     chatSection.scrollIntoView = chatScroll
 
     const wheel = new WheelEvent('wheel', { deltaY: 160, bubbles: true, cancelable: true })
@@ -155,7 +180,7 @@ describe('App wheel snap navigation', () => {
     })
 
     expect(wheel.defaultPrevented).toBe(true)
-    expect(dataScroll).toHaveBeenCalledTimes(1)
+    expect(loadingScroll).toHaveBeenCalledTimes(1)
     expect(chatScroll).not.toHaveBeenCalled()
   })
 

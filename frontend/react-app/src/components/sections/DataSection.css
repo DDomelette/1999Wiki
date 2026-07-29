@@ -1,29 +1,34 @@
 /* Data section: desktop showcase grid and mobile image-dominant poster. */
 
 /* --- Section shell ------------------------------------------------------- */
+/* 资料分组不再拥有纵向滚动;.snap-container 是唯一页面级滚动所有者 */
 .data-section {
   position: relative;
-  overflow: hidden;
 }
 
-.data-section__scroll {
-  height: 100%;
-  overflow-x: hidden;
-  overflow-y: scroll;
-  scroll-snap-type: y mandatory;
-  scroll-behavior: smooth;
+.data-section__panels {
+  overflow: visible;
+}
+
+/* 粘性导航外壳:高度为 0,在整个资料序列范围内保持可见,不拦截面板交互 */
+.data-section__nav-shell {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 0;
+  pointer-events: none;
 }
 
 /* --- Category navigation ------------------------------------------------- */
 .data-section__nav {
   position: absolute;
   left: 24px;
-  top: 50%;
+  top: 50vh;
   transform: translateY(-50%);
-  z-index: 5;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  pointer-events: auto;
 }
 
 .data-section__nav-button {
@@ -149,10 +154,6 @@
 
 /* --- Mobile poster layout ------------------------------------------------ */
 @media (max-width: 980px) {
-  .data-section__scroll {
-    scroll-snap-type: y proximity;
-  }
-
   .data-section__nav {
     left: 12px;
     right: 12px;

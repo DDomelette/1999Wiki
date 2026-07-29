@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { getMainSnapIds } from '../navigation/mainSectionNavigation'
 import { useUIStore } from '../store/uiStore'
 
 const WHEEL_DELTA_THRESHOLD = 24
@@ -8,10 +9,12 @@ function getSnapId(el: HTMLElement) {
   return el.getAttribute('data-snap-section') ?? ''
 }
 
-function getNavigableSnapTargets() {
-  const targets = Array.from(document.querySelectorAll<HTMLElement>('[data-snap-section]'))
-  const hasDataPanels = targets.some((el) => getSnapId(el).startsWith('data:'))
-  return targets.filter((el) => getSnapId(el) !== 'data' || !hasDataPanels)
+/** 主容器内的扁平叶目标序列:home → data:loading 或全部 data:{key} → chat。 */
+function getNavigableSnapTargets(scroller: HTMLElement) {
+  const leaves = [...scroller.querySelectorAll<HTMLElement>('[data-snap-section]')]
+  return getMainSnapIds(scroller)
+    .map((snapId) => leaves.find((el) => getSnapId(el) === snapId))
+    .filter((el): el is HTMLElement => el !== undefined)
 }
 
 function getActiveSnapId() {
@@ -72,7 +75,7 @@ export function useWheelSnapNavigation(lockMs = WHEEL_NAV_LOCK_MS) {
       event.preventDefault()
       if (lockedRef.current) return
 
-      const targets = getNavigableSnapTargets()
+      const targets = getNavigableSnapTargets(scroller)
       if (targets.length === 0) return
 
       const activeSnapId = getActiveSnapId()

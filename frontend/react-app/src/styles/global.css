@@ -59,13 +59,12 @@ button {
 a { color: var(--link-accent); text-decoration: none; }
 a:hover { text-shadow: 0 0 8px var(--border-glow); }
 
-/* scroll-snap 主容器 */
+/* scroll-snap 主容器:页面级纵向滚动的唯一所有者 */
 .snap-container {
   height: 100vh;
   height: 100dvh;
   overflow-y: scroll;
   scroll-snap-type: y mandatory;
-  scroll-behavior: smooth;
 }
 
 .native-scrollbar-hidden {
@@ -257,15 +256,6 @@ a:hover { text-shadow: 0 0 8px var(--border-glow); }
   scroll-snap-align: start;
   scroll-snap-stop: always;
   position: relative;
-}
-
-@media (max-width: 720px) {
-  .snap-container {
-    scroll-snap-type: y proximity;
-  }
-  .snap-section {
-    scroll-snap-stop: normal;
-  }
 }
 
 /* 卡片基础样式 */
