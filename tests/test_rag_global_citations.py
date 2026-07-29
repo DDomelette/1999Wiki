@@ -89,4 +89,3 @@ def test_global_validation_enforces_branch_whitelists_and_ungrounded_cleanup():
     )
     assert invalid.valid is False
     assert invalid.invalid_ids == ("S02",)
-
