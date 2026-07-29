@@ -333,7 +333,7 @@ Kimi CLI 的每次调用都必须以该工作树或其 `frontend/react-app` 子�
 
 - 可执行文件：`D:\KIMI\Kimi_Cli\bin\kimi.exe`
 - 已验证版本：`0.26.0`
-- 调用模式：非交互 `--auto -p`
+- 调用模式：非交互 `--yolo --prompt`；Kimi CLI 0.26.0 明确禁止组合 `--auto` 与 `--prompt`
 
 每次提示必须包含：
 
