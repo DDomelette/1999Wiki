@@ -81,6 +81,52 @@ describe('streamAsk SSE 解析', () => {
     expect(done).toBe(true)
   })
 
+  it('parses phases, ignores heartbeat, replaces answer, and stops at done', async () => {
+    const chunks = [
+      'event: status\ndata: {"phase":"understanding"}\n\n: heartbeat\n\nevent: status\ndata: {"phase":"generating"}\n\n',
+      'event: token\ndata: {"token":"draft"}\n\nevent: status\ndata: {"phase":"validating"}\n\nevent: answer_',
+      'replace\ndata: {"answer":"final [S01]","reason":"citation_validation"}\n\nevent: status\ndata: {"phase":"corrected"}\n\nevent: done\ndata: {"answer":"final [S01]","sources":[],"corrected":true}\n\nevent: token\ndata: {"token":"ignored"}\n\n',
+    ]
+    vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse(chunks))
+    const phases: string[] = []
+    const replacements: Array<{ answer: string; reason: string }> = []
+    const tokens: string[] = []
+
+    await streamAsk('q', null, {
+      onSources: () => {},
+      onStatus: phase => phases.push(phase),
+      onToken: token => tokens.push(token),
+      onAnswerReplace: (answer, reason) => replacements.push({ answer, reason }),
+      onDone: () => {},
+      onError: () => {},
+    })
+
+    expect(phases).toEqual(['understanding', 'generating', 'validating', 'corrected'])
+    expect(replacements).toEqual([{
+      answer: 'final [S01]',
+      reason: 'citation_validation',
+    }])
+    expect(tokens).toEqual(['draft'])
+  })
+
+  it('parses partial stream error metadata and stops after error', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse([
+      'event: token\ndata: {"token":"partial"}\n\nevent: error\ndata: {"message":"回答生成失败","phase":"generating","partial":true}\n\nevent: done\ndata: {"answer":"ignored","sources":[]}\n\n',
+    ]))
+    let errorInfo: unknown
+    let done = false
+
+    await streamAsk('q', null, {
+      onSources: () => {},
+      onToken: () => {},
+      onDone: () => { done = true },
+      onError: (_message, info) => { errorInfo = info },
+    })
+
+    expect(errorInfo).toEqual({ phase: 'generating', partial: true })
+    expect(done).toBe(false)
+  })
+
   it('HTTP 错误抛异常', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503 } as Response)
     await expect(streamAsk('q', null, {

@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .contracts import ResponsePacket, SubtaskInfo, freeze_value
+from .contracts import FrozenRetrievalPacket, ResponsePacket, SubtaskInfo, freeze_value
 
 _SOURCE_FIELDS = (
     "citation_id",
@@ -120,11 +120,28 @@ class SSEEvent:
 
 
 def response_packet_to_public_dict(packet: ResponsePacket) -> dict[str, Any]:
-    retrieval = packet.retrieval_packet
+    public = retrieval_packet_to_public_dict(
+        packet.retrieval_packet,
+        grounding_mode=packet.grounding_mode,
+        citation_warning=",".join(packet.citation_validation.warnings),
+        memory_info=packet.memory_info,
+    )
+    public["subtasks"] = [
+        _branch_to_public(branch) for branch in packet.branch_results
+    ]
+    return {"answer": packet.answer, **public}
+
+
+def retrieval_packet_to_public_dict(
+    retrieval: FrozenRetrievalPacket,
+    *,
+    grounding_mode: str,
+    citation_warning: str,
+    memory_info: Mapping[str, object],
+) -> dict[str, Any]:
     route = retrieval.diagnostics.get("route", {})
     return {
-        "answer": packet.answer,
-        "grounding_mode": packet.grounding_mode,
+        "grounding_mode": grounding_mode,
         "sources": [_source_to_public(row) for row in retrieval.sources],
         "assets": [
             item for row in retrieval.assets if (item := _asset_to_public(row)) is not None
@@ -141,11 +158,11 @@ def response_packet_to_public_dict(packet: ResponsePacket) -> dict[str, Any]:
         "planning_status": retrieval.planning_status,
         "planning_warning": retrieval.planning_warning,
         "planning_error": retrieval.planning_error,
-        "citation_warning": ",".join(packet.citation_validation.warnings),
+        "citation_warning": citation_warning,
         "omitted_actions": [_action_to_public(row) for row in retrieval.omitted_actions],
         "failure_actions": [_action_to_public(row) for row in retrieval.failure_actions],
-        "subtasks": [_branch_to_public(branch) for branch in packet.branch_results],
-        "memory": dict(packet.memory_info),
+        "subtasks": [],
+        "memory": dict(memory_info),
     }
 
 
@@ -411,6 +428,7 @@ def _plain(value: Any) -> Any:
 __all__ = [
     "SSEEvent",
     "response_packet_to_public_dict",
+    "retrieval_packet_to_public_dict",
     "response_packet_to_sse_events",
     "response_packet_to_sse_strings",
 ]

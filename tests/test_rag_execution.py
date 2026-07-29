@@ -297,6 +297,25 @@ def test_composite_duplicate_identical_sources_keep_one_aligned_citation(tmp_pat
     assert [row["citation_id"] for row in packet.retrieval_packet.sources] == ["S01"]
 
 
+def test_composite_prepare_returns_one_validated_immediate_packet(tmp_path):
+    chain, _planner, _retriever, _registry, _llm = _chain(
+        tmp_path,
+        ["Knowledge [S01]"],
+    )
+
+    prepared = chain.prepare_execution("你好，你是谁，请介绍一下十四行诗")
+    packet = chain.finalize_execution(prepared, None)
+
+    assert prepared.generation_mode == "none"
+    assert prepared.immediate_packet is packet
+    assert [branch.subtask_id for branch in packet.branch_results] == [
+        "T01",
+        "T02",
+        "T03",
+    ]
+    assert packet.answer.index("T01") < packet.answer.index("T02") < packet.answer.index("T03")
+
+
 def test_composite_recovery_action_requires_exact_subtask_binding(tmp_path):
     chain, _planner, retriever, _registry, _llm = _chain(tmp_path, ["unused"])
 
@@ -311,6 +330,43 @@ def test_composite_recovery_action_requires_exact_subtask_binding(tmp_path):
         )
 
     assert retriever.calls == 0
+
+
+def test_prepare_freezes_one_retrieval_snapshot_and_does_not_call_answer_llm(tmp_path):
+    chain, planner, retriever, registry, llm = _chain(tmp_path, ["unused"])
+
+    prepared = chain.prepare_execution("Question")
+
+    assert prepared.generation_mode == "grounded"
+    assert prepared.retrieval_packet.sources[0]["name"] == "Fixture"
+    assert planner.calls == 1
+    assert retriever.calls == 1
+    assert registry.calls == 1
+    assert llm.calls == 0
+
+
+def test_finalize_uses_supplied_draft_and_shared_citation_rules(tmp_path):
+    chain, _planner, _retriever, _registry, llm = _chain(tmp_path, ["unused"])
+    prepared = chain.prepare_execution("Question")
+
+    packet = chain.finalize_execution(prepared, "Answer [S01]")
+
+    assert packet.answer == "Answer [S01]"
+    assert packet.citation_validation.valid is True
+    assert packet.turn_outcome == "grounded"
+    assert llm.calls == 0
+
+
+def test_execute_is_prepare_generate_finalize_once(tmp_path):
+    chain, planner, retriever, registry, llm = _chain(tmp_path, ["Answer [S01]"])
+
+    packet = chain.execute("Question")
+
+    assert packet.answer == "Answer [S01]"
+    assert planner.calls == 1
+    assert retriever.calls == 1
+    assert registry.calls == 1
+    assert llm.calls == 1
 
 
 def test_execute_retries_one_transient_answer_failure(tmp_path):

@@ -7,7 +7,7 @@ import { ChatInput } from './ChatInput'
 import { MessageActions } from './MessageActions'
 import { clearVoiceSessionPreferencesForTest, VoicePanel } from './VoicePanel'
 import { VideoPanel } from './VideoPanel'
-import type { MediaItem, Message, VoiceLineGroup, VoicePanelPage } from '../../types'
+import type { MediaItem, Message, StreamPhase, VoiceLineGroup, VoicePanelPage } from '../../types'
 import { useChatStore } from '../../store/chatStore'
 
 const originalSend = useChatStore.getState().send
@@ -84,6 +84,75 @@ function stubAudio() {
 }
 
 describe('MessageBubble', () => {
+  it.each([
+    ['understanding', '正在理解问题…'],
+    ['retrieving', '正在检索资料…'],
+    ['generating', '正在生成回答…'],
+    ['validating', '正在校验引用…'],
+  ] as Array<[StreamPhase, string]>)('renders the backend phase %s', (phase, label) => {
+    render(<MessageBubble message={{
+      id: 'phase',
+      role: 'assistant',
+      content: 'Draft',
+      streaming: true,
+      phase,
+    }} />)
+
+    expect(screen.getByRole('status')).toHaveTextContent(label)
+  })
+
+  it('shows the correction notice after finalization without hiding final media', () => {
+    render(<MessageBubble message={{
+      id: 'corrected',
+      role: 'assistant',
+      content: 'Final',
+      finalized: true,
+      correctionNotice: true,
+      media: [{
+        media_id: 'image-1',
+        asset_type: 'portrait',
+        alt: 'Final portrait',
+        url: '/media/final.webp',
+      }],
+    }} />)
+
+    expect(screen.getByText('已完成引用校验并修正')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Final portrait' })).toHaveAttribute(
+      'src',
+      '/media/final.webp',
+    )
+  })
+
+  it('labels a preserved partial answer as incomplete and unvalidated', () => {
+    render(<MessageBubble message={{
+      id: 'partial',
+      role: 'assistant',
+      content: 'Partial draft',
+      streaming: false,
+      partialError: true,
+    }} />)
+
+    expect(screen.getByText('Partial draft')).toBeInTheDocument()
+    expect(screen.getByText('回答未完成，未经过引用校验')).toBeInTheDocument()
+  })
+
+  it('does not render pending media before done', () => {
+    render(<MessageBubble message={{
+      id: 'pending',
+      role: 'assistant',
+      content: 'Draft',
+      streaming: true,
+      pendingMedia: [{
+        media_id: 'pending-1',
+        asset_type: 'portrait',
+        alt: 'Pending portrait',
+        url: '/media/pending.webp',
+      }],
+    }} />)
+
+    expect(screen.queryByRole('img', { name: 'Pending portrait' })).not.toBeInTheDocument()
+  })
+
   it('renders the server-provided citation ID without inferring array order', () => {
     const message: Message = {
       id: 'citation-message',

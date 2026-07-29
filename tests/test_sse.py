@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,8 @@ from langchain_core.messages import AIMessageChunk
 
 from src.rag.conversation import ConversationMemoryStore
 from src.rag.contracts import BranchResult, CitationValidation, EntityRef
+from src.rag.execution import AskExecutionInput, PreparedExecution
+from src.rag.serializers import response_packet_to_public_dict
 from tests.conftest import CONVERSATION_ID, ExecutionAdapter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -46,6 +49,430 @@ def _stream_events(client, question: str, conversation_id: str):
 class _ExecuteProtocol:
     def execute(self, *args, **kwargs):
         return ExecutionAdapter(self).execute(*args, **kwargs)
+
+
+class _TrueStreamingChain:
+    def __init__(self, chunks=("first", " second"), final_answer="first second"):
+        class _PacketFixture:
+            def ask(self, question, **_kwargs):
+                return {
+                    "answer": "unused",
+                    "sources": [{
+                        "name": "Fixture",
+                        "category": "fixture",
+                        "source": "fixture.md",
+                        "score": 1.0,
+                        "content": "Evidence",
+                    }],
+                    "context": "Evidence",
+                }
+
+        self.packet = ExecutionAdapter(_PacketFixture()).execute("Question")
+        self.chunks = tuple(chunks)
+        self.final_answer = final_answer
+        self.finished = False
+
+    def prepare_execution(
+        self,
+        question,
+        category=None,
+        route_options=None,
+        action_payload=None,
+        conversation=None,
+        memory_status="disabled",
+        memory_turns_used=0,
+        trace=None,
+    ):
+        del trace
+        return PreparedExecution(
+            request=AskExecutionInput(
+                question=question,
+                category=category,
+                route_options=route_options or {},
+                action_payload=action_payload,
+                memory_status=memory_status,
+                memory_turns_used=memory_turns_used,
+            ),
+            conversation=conversation,
+            retrieval_packet=self.packet.retrieval_packet,
+            answer_context="Evidence",
+            generation_messages=(),
+            generation_mode="grounded",
+            immediate_answer=None,
+            missing_intents=(),
+        )
+
+    async def astream_prepared(self, prepared):
+        del prepared
+        for chunk in self.chunks:
+            yield chunk
+            await asyncio.sleep(0)
+        self.finished = True
+
+    def finalize_execution(self, prepared, draft, trace=None):
+        del prepared
+        if trace is not None:
+            trace.mark_validated_ready()
+        return replace(self.packet, answer=self.final_answer or draft)
+
+
+def test_stream_emits_real_model_chunk_before_generation_finishes():
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        chain = _TrueStreamingChain()
+        generator = rag_stream_generator(chain, "Question", None)
+        first_blocks = [await anext(generator) for _ in range(5)]
+        first_events = _parse_sse("".join(first_blocks))
+
+        assert [name for name, _data in first_events] == [
+            "status",
+            "status",
+            "sources",
+            "status",
+            "token",
+        ]
+        assert first_events[-1][1]["token"] == "first"
+        assert chain.finished is False
+        await generator.aclose()
+
+    asyncio.run(scenario())
+
+
+def test_stream_orders_early_token_before_validation_and_authoritative_done():
+    from backend.sse import rag_stream_generator
+
+    class GatedStreamingChain(_TrueStreamingChain):
+        def __init__(self):
+            super().__init__(
+                chunks=(),
+                final_answer="Validated answer [S01]",
+            )
+            self.release_model = asyncio.Event()
+            self.packet = replace(
+                self.packet,
+                retrieval_packet=replace(
+                    self.packet.retrieval_packet,
+                    media=({
+                        "media_id": "portrait-1",
+                        "asset_type": "portrait",
+                        "alt": "Fixture portrait",
+                        "url": "/media/portrait.webp",
+                    },),
+                ),
+            )
+
+        async def astream_prepared(self, prepared):
+            del prepared
+            yield "Draft"
+            await self.release_model.wait()
+            yield " answer"
+            self.finished = True
+
+    async def scenario():
+        chain = GatedStreamingChain()
+        generator = rag_stream_generator(chain, "Question", None)
+        blocks = []
+
+        while True:
+            block = await anext(generator)
+            blocks.append(block)
+            if block.startswith("event: token"):
+                break
+
+        first_token_received_before_model_finished = not chain.finished
+        chain.release_model.set()
+        blocks.extend([block async for block in generator])
+        return (
+            _parse_sse("".join(blocks)),
+            first_token_received_before_model_finished,
+        )
+
+    events, first_token_received_before_model_finished = asyncio.run(scenario())
+    names = [name for name, _data in events]
+    sources = next(data for name, data in events if name == "sources")
+    done = next(data for name, data in events if name == "done")
+
+    assert names.index("token") < next(
+        index
+        for index, (name, data) in enumerate(events)
+        if name == "status" and data["phase"] == "validating"
+    ) < names.index("done")
+    assert first_token_received_before_model_finished is True
+    assert sources["media"][0]["url"] == "/media/portrait.webp"
+    assert done["media"] == sources["media"]
+    assert done["answer"] == "Validated answer [S01]"
+    assert names.count("done") == 1
+
+
+def _collect_true_stream(chain):
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        return _parse_sse("".join([
+            block
+            async for block in rag_stream_generator(chain, "Question", None)
+        ]))
+
+    return asyncio.run(scenario())
+
+
+def test_stream_replaces_draft_once_when_validation_changes_answer():
+    events = _collect_true_stream(
+        _TrueStreamingChain(chunks=("Draft",), final_answer="Final [S01]")
+    )
+
+    assert [name for name, _data in events] == [
+        "status",
+        "status",
+        "sources",
+        "status",
+        "token",
+        "status",
+        "answer_replace",
+        "status",
+        "done",
+    ]
+    assert next(data for name, data in events if name == "answer_replace") == {
+        "answer": "Final [S01]",
+        "reason": "citation_validation",
+    }
+    assert events[-1][1]["corrected"] is True
+
+
+def test_stream_does_not_replace_when_final_answer_matches_chunks():
+    events = _collect_true_stream(
+        _TrueStreamingChain(chunks=("Final", " [S01]"), final_answer="Final [S01]")
+    )
+
+    assert not any(name == "answer_replace" for name, _data in events)
+    assert not any(
+        name == "status" and data.get("phase") == "corrected"
+        for name, data in events
+    )
+    assert events[-1][1]["corrected"] is False
+
+
+def test_no_model_branch_emits_no_fake_tokens():
+    class NoModelChain(_TrueStreamingChain):
+        def prepare_execution(self, *args, **kwargs):
+            prepared = super().prepare_execution(*args, **kwargs)
+            return replace(
+                prepared,
+                generation_mode="none",
+                immediate_answer="No model answer",
+            )
+
+        def finalize_execution(self, prepared, draft, trace=None):
+            assert draft is None
+            if trace is not None:
+                trace.mark_validated_ready()
+            return replace(
+                self.packet,
+                answer=prepared.immediate_answer,
+                grounding_mode="none",
+                turn_outcome="not_committable",
+            )
+
+    events = _collect_true_stream(NoModelChain())
+
+    assert not any(name == "token" for name, _data in events)
+    assert not any(
+        name == "status" and data.get("phase") in {"generating", "validating"}
+        for name, data in events
+    )
+    assert events[-1][1]["answer"] == "No model answer"
+
+
+def test_sources_and_done_share_one_frozen_retrieval_snapshot():
+    events = _collect_true_stream(_TrueStreamingChain())
+    sources = next(data for name, data in events if name == "sources")
+    done = next(data for name, data in events if name == "done")
+
+    assert sources["sources"] == done["sources"]
+    assert sources["memory"] == done["memory"]
+
+
+def test_sync_and_stream_done_are_publicly_equivalent_for_same_draft():
+    chain = _TrueStreamingChain(
+        chunks=("Final", " [S01]"),
+        final_answer="Final [S01]",
+    )
+    events = _collect_true_stream(chain)
+    done = next(data for name, data in events if name == "done")
+    expected = response_packet_to_public_dict(
+        replace(chain.packet, answer="Final [S01]")
+    )
+
+    assert {key: done[key] for key in expected} == expected
+
+
+def test_long_prepare_emits_heartbeat_comment_without_repeating_status():
+    class SlowPrepareChain(_TrueStreamingChain):
+        def prepare_execution(self, *args, **kwargs):
+            time.sleep(0.03)
+            return super().prepare_execution(*args, **kwargs)
+
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        return [
+            block
+            async for block in rag_stream_generator(
+                SlowPrepareChain(),
+                "Question",
+                None,
+                heartbeat_seconds=0.005,
+            )
+        ]
+
+    blocks = asyncio.run(scenario())
+    events = _parse_sse("".join(blocks))
+
+    assert ": heartbeat\n\n" in blocks
+    assert [
+        data["phase"] for name, data in events if name == "status"
+    ] == [
+        "understanding",
+        "retrieving",
+        "generating",
+        "validating",
+    ]
+
+
+def test_generation_failure_before_first_token_has_partial_false():
+    class FailingChain(_TrueStreamingChain):
+        async def astream_prepared(self, prepared):
+            del prepared
+            raise RuntimeError("secret upstream detail")
+            yield ""
+
+    events = _collect_true_stream(FailingChain())
+    error = next(data for name, data in events if name == "error")
+
+    assert error == {
+        "message": "回答生成失败，请稍后重试。",
+        "phase": "generating",
+        "partial": False,
+    }
+    assert events[-2] == ("status", {"phase": "failed"})
+    assert not any(name == "done" for name, _data in events)
+
+
+def test_generation_failure_after_first_token_preserves_partial_draft():
+    class PartiallyFailingChain(_TrueStreamingChain):
+        async def astream_prepared(self, prepared):
+            del prepared
+            yield "Partial"
+            raise RuntimeError("secret upstream detail")
+
+    events = _collect_true_stream(PartiallyFailingChain())
+    error = next(data for name, data in events if name == "error")
+
+    assert next(data for name, data in events if name == "token")["token"] == "Partial"
+    assert error == {
+        "message": "回答生成失败，请稍后重试。",
+        "phase": "generating",
+        "partial": True,
+    }
+    assert not any(name == "done" for name, _data in events)
+
+
+def test_validation_failure_replaces_draft_with_safe_fallback_and_errors():
+    class ValidationFailureChain(_TrueStreamingChain):
+        def finalize_execution(self, prepared, draft, trace=None):
+            del prepared, draft, trace
+            raise ValueError("secret validation detail")
+
+    events = _collect_true_stream(ValidationFailureChain(chunks=("Draft",)))
+    replacement = next(
+        data for name, data in events if name == "answer_replace"
+    )
+    error = next(data for name, data in events if name == "error")
+
+    assert replacement == {
+        "answer": "回答校验失败，未展示未经验证的草稿。",
+        "reason": "safe_fallback",
+    }
+    assert error == {
+        "message": "回答校验失败，请稍后重试。",
+        "phase": "validating",
+        "partial": False,
+    }
+    assert not any(name == "done" for name, _data in events)
+
+
+def test_disconnect_closes_upstream_and_never_commits_memory():
+    class ClosableChain(_TrueStreamingChain):
+        def __init__(self):
+            super().__init__(chunks=("Partial", " ignored"))
+            self.closed = False
+
+        async def astream_prepared(self, prepared):
+            del prepared
+            try:
+                yield "Partial"
+                await asyncio.sleep(0)
+                yield " ignored"
+            finally:
+                self.closed = True
+
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        chain = ClosableChain()
+        store = ConversationMemoryStore()
+        disconnected = False
+
+        async def is_disconnected():
+            return disconnected
+
+        generator = rag_stream_generator(
+            chain,
+            "Question",
+            None,
+            memory_store=store,
+            conversation_id=UUID(CONVERSATION_ID),
+            is_disconnected=is_disconnected,
+        )
+        async for block in generator:
+            if block.startswith("event: token"):
+                disconnected = True
+        lease = await store.acquire(UUID(CONVERSATION_ID))
+        try:
+            turns = lease.projection.turns
+        finally:
+            await store.release(lease)
+        return chain.closed, turns
+
+    closed, turns = asyncio.run(scenario())
+
+    assert closed is True
+    assert turns == ()
+
+
+def test_success_commits_only_the_final_corrected_answer():
+    from backend.sse import rag_stream_generator
+
+    async def scenario():
+        store = ConversationMemoryStore()
+        async for _block in rag_stream_generator(
+            _TrueStreamingChain(chunks=("Draft",), final_answer="Final corrected [S01]"),
+            "Question",
+            None,
+            memory_store=store,
+            conversation_id=UUID(CONVERSATION_ID),
+        ):
+            pass
+        lease = await store.acquire(UUID(CONVERSATION_ID))
+        try:
+            return lease.projection.turns
+        finally:
+            await store.release(lease)
+
+    turns = asyncio.run(scenario())
+
+    assert turns[-1].answer == "Final corrected [S01]"
 
 
 def test_sse_sources_and_done_have_identical_memory_metadata(client_with_memory_chain):

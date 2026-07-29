@@ -44,7 +44,7 @@ describe('chatStore', () => {
     expect(useChatStore.getState().sending).toBe(false)
   })
 
-  it('marks assistant as generating after sources arrive before tokens', async () => {
+  it('shows backend phases while preserving streamed text', async () => {
     let callbacks: any
     let finishStream!: () => void
     vi.spyOn(sse, 'streamAsk').mockImplementation(async (_q, _c, cb) => {
@@ -56,18 +56,115 @@ describe('chatStore', () => {
 
     const pending = useChatStore.getState().send('who is Matilda')
     await Promise.resolve()
-    callbacks.onSources([{ name: 'Matilda', category: '人物', source: 'x.md', score: 0.6 }])
+    callbacks.onStatus('retrieving')
 
     let assistant = useChatStore.getState().messages[1]
-    expect(assistant.status).toBe('DeepSeek 正在根据检索来源生成回答...')
+    expect(assistant.phase).toBe('retrieving')
 
+    callbacks.onStatus('generating')
     callbacks.onToken('M')
     assistant = useChatStore.getState().messages[1]
-    expect(assistant.status).toBeUndefined()
+    expect(assistant.phase).toBe('generating')
+    expect(assistant.content).toBe('M')
 
-    callbacks.onDone('Matilda', assistant.sources ?? [])
+    callbacks.onDone('Matilda', [])
     finishStream()
     await pending
+  })
+
+  it('keeps sources and media pending until done', async () => {
+    let callbacks: any
+    let finishStream!: () => void
+    vi.spyOn(sse, 'streamAsk').mockImplementation(async (_q, _c, cb) => {
+      callbacks = cb
+      await new Promise<void>((resolve) => { finishStream = resolve })
+    })
+    const source = { name: 'Matilda', category: '人物', source: 'x.md', score: 0.6 }
+    const asset = { asset_id: 'a1', role: 'portrait', alt: 'Matilda', url: '/media/a1.webp' }
+    const media = { media_id: 'm1', asset_type: 'portrait', url: '/media/a1.webp' }
+
+    const pending = useChatStore.getState().send('show Matilda')
+    await Promise.resolve()
+    callbacks.onSources([source], [asset], [media])
+
+    let assistant = useChatStore.getState().messages[1]
+    expect(assistant.sources).toBeUndefined()
+    expect(assistant.media).toBeUndefined()
+    expect(assistant.pendingSources).toEqual([source])
+    expect(assistant.pendingMedia).toEqual([media])
+
+    callbacks.onDone('Final', [source], [asset], [media])
+    assistant = useChatStore.getState().messages[1]
+    expect(assistant.finalized).toBe(true)
+    expect(assistant.sources).toEqual([source])
+    expect(assistant.media).toEqual([media])
+    expect(assistant.pendingMedia).toBeUndefined()
+    finishStream()
+    await pending
+  })
+
+  it('atomically replaces the draft and keeps correction notice after done', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(sse, 'streamAsk').mockImplementation(async (_q, _c, callbacks) => {
+      callbacks.onStatus?.('generating')
+      callbacks.onToken('Draft')
+      callbacks.onAnswerReplace?.('Final [S01]', 'citation_validation')
+      callbacks.onStatus?.('corrected')
+      callbacks.onDone('Final [S01]', [])
+    })
+
+    await useChatStore.getState().send('question')
+    let assistant = useChatStore.getState().messages[1]
+    expect(assistant).toMatchObject({
+      content: 'Final [S01]',
+      finalized: true,
+      corrected: true,
+      correctionNotice: true,
+      streaming: false,
+    })
+
+    vi.advanceTimersByTime(2500)
+    assistant = useChatStore.getState().messages[1]
+    expect(assistant.correctionNotice).toBe(false)
+    vi.useRealTimers()
+  })
+
+  it('keeps a partial draft but clears pending media on streamed error', async () => {
+    const media = { media_id: 'm1', asset_type: 'portrait', url: '/media/a1.webp' }
+    vi.spyOn(sse, 'streamAsk').mockImplementation(async (_q, _c, callbacks) => {
+      callbacks.onSources([], [], [media])
+      callbacks.onToken('Partial')
+      callbacks.onError('回答生成失败', { phase: 'generating', partial: true })
+    })
+
+    await useChatStore.getState().send('question')
+    const assistant = useChatStore.getState().messages[1]
+
+    expect(assistant).toMatchObject({
+      content: 'Partial',
+      partialError: true,
+      streaming: false,
+    })
+    expect(assistant.pendingMedia).toBeUndefined()
+    expect(assistant.media).toBeUndefined()
+  })
+
+  it('marks user abort as cancelled without turning AbortError into request failure', async () => {
+    let rejectStream!: (error: Error) => void
+    vi.spyOn(sse, 'streamAsk').mockImplementation(
+      () => new Promise<void>((_resolve, reject) => { rejectStream = reject }),
+    )
+
+    const pending = useChatStore.getState().send('question')
+    await Promise.resolve()
+    useChatStore.getState().abort()
+    rejectStream(new DOMException('Aborted', 'AbortError'))
+    await pending
+    const assistant = useChatStore.getState().messages[1]
+
+    expect(assistant.phase).toBe('cancelled')
+    expect(assistant.content).not.toContain('请求失败')
+    expect(assistant.streaming).toBe(false)
   })
 
   it('setCategory 更新 category', () => {

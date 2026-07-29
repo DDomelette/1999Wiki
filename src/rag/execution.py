@@ -38,6 +38,7 @@ from .local_responses import render_local_response
 from .tracing import NullTrace, RequestTrace
 
 MemoryStatus = Literal["disabled", "new", "hit", "expired"]
+GenerationMode = Literal["grounded", "free_supplement", "none"]
 _MEMORY_STATUSES = frozenset({"disabled", "new", "hit", "expired"})
 RetrieveBranch = Callable[[Any], Mapping[str, Any]]
 AnswerBranch = Callable[
@@ -63,6 +64,23 @@ class AskExecutionInput:
             raise ValueError("unsupported memory status")
         if self.memory_turns_used < 0:
             raise ValueError("memory_turns_used must not be negative")
+
+
+@dataclass(frozen=True)
+class PreparedExecution:
+    request: AskExecutionInput
+    conversation: ConversationProjection
+    retrieval_packet: FrozenRetrievalPacket
+    answer_context: str
+    generation_messages: tuple[Any, ...]
+    generation_mode: GenerationMode
+    immediate_answer: str | None
+    missing_intents: tuple[str, ...]
+    immediate_packet: ResponsePacket | None = None
+    subtask: Any | None = None
+    local_response: bool = False
+    retrieval_failed: bool = False
+    free_supplement: bool = False
 
 
 def normalize_memory_status(value: object) -> MemoryStatus:
@@ -313,14 +331,32 @@ class RAGExecutionService:
         trace: RequestTrace | NullTrace | None = None,
     ) -> ResponsePacket:
         active_trace = trace or NullTrace()
-        return self._execute_once(request, conversation, active_trace)
+        prepared = self.prepare(request, conversation, active_trace)
+        if prepared.generation_mode == "none":
+            return self.finalize(prepared, None, active_trace)
+        try:
+            with active_trace.span("answer.llm"):
+                response = _invoke_with_retry(
+                    self._chain._llm,
+                    list(prepared.generation_messages),
+                )
+                draft = response.content if hasattr(response, "content") else str(response)
+            active_trace.mark_model_first_token()
+        except Exception as exc:
+            return self.finalize(
+                prepared,
+                None,
+                active_trace,
+                generation_error=exc,
+            )
+        return self.finalize(prepared, str(draft), active_trace)
 
-    def _execute_once(
+    def prepare(
         self,
         request: AskExecutionInput,
         conversation: ConversationProjection,
         trace: RequestTrace | NullTrace,
-    ) -> ResponsePacket:
+    ) -> PreparedExecution:
         from .chain import (
             _API_KEY_EMPTY_MSG,
             _EMPTY_RETRIEVAL_MSG,
@@ -338,11 +374,22 @@ class RAGExecutionService:
             trace=trace,
         )
         if retrieved.get("composite_pending", False):
-            return self._execute_composite(
+            packet = self._execute_composite(
                 request,
                 retrieved["request_plan"],
                 conversation,
                 trace,
+            )
+            return PreparedExecution(
+                request=request,
+                conversation=conversation,
+                retrieval_packet=packet.retrieval_packet,
+                answer_context=packet.retrieval_packet.context,
+                generation_messages=(),
+                generation_mode="none",
+                immediate_answer=packet.answer,
+                missing_intents=(),
+                immediate_packet=packet,
             )
         plan = retrieved["plan"]
         source_map = tuple(retrieved.get("source_map", ()))
@@ -351,130 +398,21 @@ class RAGExecutionService:
         answer_context = _answer_context(context, retrieved)
         route_decision = retrieved["route_decision"]
         subtask = retrieved.get("subtask")
-
-        answer: str
-        grounding_mode: Literal["grounded", "ungrounded", "none"] = "none"
-        turn_outcome: Literal["grounded", "ungrounded", "not_committable"] = "not_committable"
-        validation = CitationValidation(valid=True)
-
-        if retrieved.get("local_response", False):
-            answer = render_local_response(
-                str(getattr(subtask, "task_type", "out_of_scope")),
-                request.question,
-                reason=str(retrieved.get("local_response_reason", "")),
-            )
-        elif retrieved.get("retrieval_failed", False):
-            answer = _RETRIEVAL_FAILED_MSG
-        elif not self._chain.llm_ready():
-            answer = _API_KEY_EMPTY_MSG
-        elif not sources and retrieved.get("free_supplement", False):
-            try:
-                with trace.span("answer.llm"):
-                    draft = self._chain._invoke_free_supplement(request.question, conversation)
-                trace.mark_model_first_token()
-            except Exception:
-                answer = "回答服务暂时不可用。"
-                validation = CitationValidation(
-                    valid=False,
-                    warnings=("answer_generation_failed",),
-                )
-            else:
-                answer, validation = validate_or_repair_answer(
-                    draft=draft,
-                    context="",
-                    source_map=(),
-                    grounding_mode="ungrounded",
-                    trace=trace,
-                )
-                grounding_mode = "ungrounded"
-                if validation.valid:
-                    turn_outcome = "ungrounded"
-        elif not sources:
-            answer = _empty_retrieval_answer(plan, _EMPTY_RETRIEVAL_MSG)
-        else:
-            normalized_question = _answer_question(plan, request.question)
-            messages = self._chain._prompt.format_messages(
-                context=answer_context,
-                history=history_messages(conversation),
-                question=normalized_question,
-            )
-            try:
-                with trace.span("answer.llm"):
-                    response = _invoke_with_retry(self._chain._llm, messages)
-                    draft = response.content if hasattr(response, "content") else str(response)
-                trace.mark_model_first_token()
-            except Exception:
-                answer = "回答服务暂时不可用。"
-                validation = CitationValidation(
-                    valid=False,
-                    warnings=("answer_generation_failed",),
-                )
-            else:
-                missing_intents = _missing_intents(retrieved)
-                intents = requested_intents(plan)
-                draft_text = _normalize_structured_values(str(draft), answer_context)
-                draft_text = _remove_unsupported_system_membership(
-                    draft_text,
-                    answer_context,
-                )
-                draft_text = _normalize_voice_scope(
-                    draft_text,
-                    intents,
-                    tuple(retrieved.get("assets", ())),
-                )
-                draft_text = _normalize_media_scope(
-                    draft_text,
-                    intents,
-                    tuple(retrieved.get("assets", ())),
-                    plan,
-                    source_map,
-                )
-                draft_text = _preserve_evidence_qualifiers(
-                    draft_text,
-                    answer_context,
-                )
-                draft_text = _neutralize_unsupported_attributions(
-                    draft_text,
-                    answer_context,
-                )
-                draft_text = _normalize_answer_scope(
-                    draft_text,
-                    plan,
-                    answer_context,
-                    missing_intents,
-                )
-                disclosure = _shortfall_disclosure(missing_intents)
-                if disclosure:
-                    draft_text = f"{disclosure}\n\n{draft_text}"
-                answer, validation = validate_or_repair_answer(
-                    draft=draft_text,
-                    context=answer_context,
-                    source_map=source_map,
-                    grounding_mode="grounded",
-                    repair=self._chain._repair_citations,
-                    trace=trace,
-                )
-                if disclosure and disclosure not in answer:
-                    answer = f"{disclosure}\n\n{answer}"
-                grounding_mode = "grounded"
-                if validation.valid and "citation_safe_fallback" not in validation.warnings:
-                    turn_outcome = "grounded"
-
-        entity_ref = _entity_ref(plan)
         requested = tuple(route_decision.authorization.semantic_intents) or tuple(
             requested_intents(plan)
         )
+        subtask_id = str(getattr(subtask, "subtask_id", "T01"))
         omitted_actions = tuple(
-            {**dict(item), "subtask_id": subtask.subtask_id}
+            {**dict(item), "subtask_id": subtask_id}
             for item in retrieved.get("omitted_actions", ())
         )
         failure_actions = tuple(
-            {**dict(item), "subtask_id": subtask.subtask_id}
+            {**dict(item), "subtask_id": subtask_id}
             for item in retrieved.get("failure_actions", ())
         )
         retrieval_packet = FrozenRetrievalPacket(
             plan=plan,
-            entity_ref=entity_ref,
+            entity_ref=_entity_ref(plan),
             route_decision=route_decision,
             requested_intents=requested,
             sources=sources,
@@ -490,22 +428,174 @@ class RAGExecutionService:
             planning_error=str(retrieved.get("planning_error", "")),
             assets=tuple(retrieved.get("assets", ())),
         )
+        generation_mode: GenerationMode
+        immediate_answer: str | None = None
+        generation_messages: tuple[Any, ...] = ()
+        if retrieved.get("local_response", False):
+            generation_mode = "none"
+            immediate_answer = render_local_response(
+                str(getattr(subtask, "task_type", "out_of_scope")),
+                request.question,
+                reason=str(retrieved.get("local_response_reason", "")),
+            )
+        elif retrieved.get("retrieval_failed", False):
+            generation_mode = "none"
+            immediate_answer = _RETRIEVAL_FAILED_MSG
+        elif not self._chain.llm_ready():
+            generation_mode = "none"
+            immediate_answer = _API_KEY_EMPTY_MSG
+        elif not sources and retrieved.get("free_supplement", False):
+            generation_mode = "free_supplement"
+            generation_messages = tuple(
+                self._chain._free_supplement_messages(request.question, conversation)
+            )
+        elif not sources:
+            generation_mode = "none"
+            immediate_answer = _empty_retrieval_answer(plan, _EMPTY_RETRIEVAL_MSG)
+        else:
+            generation_mode = "grounded"
+            normalized_question = _answer_question(plan, request.question)
+            generation_messages = tuple(self._chain._prompt.format_messages(
+                context=answer_context,
+                history=history_messages(conversation),
+                question=normalized_question,
+            ))
+        return PreparedExecution(
+            request=request,
+            conversation=conversation,
+            retrieval_packet=retrieval_packet,
+            answer_context=answer_context,
+            generation_messages=generation_messages,
+            generation_mode=generation_mode,
+            immediate_answer=immediate_answer,
+            missing_intents=_missing_intents(retrieved),
+            subtask=subtask,
+            local_response=bool(retrieved.get("local_response", False)),
+            retrieval_failed=bool(retrieved.get("retrieval_failed", False)),
+            free_supplement=bool(retrieved.get("free_supplement", False)),
+        )
+
+    def finalize(
+        self,
+        prepared: PreparedExecution,
+        draft: str | None,
+        trace: RequestTrace | NullTrace | None = None,
+        *,
+        generation_error: Exception | None = None,
+    ) -> ResponsePacket:
+        active_trace = trace or NullTrace()
+        if prepared.immediate_packet is not None:
+            active_trace.mark_validated_ready()
+            return prepared.immediate_packet
+        retrieval_packet = prepared.retrieval_packet
+        plan = retrieval_packet.plan
+        answer: str
+        grounding_mode: Literal["grounded", "ungrounded", "none"] = "none"
+        turn_outcome: Literal["grounded", "ungrounded", "not_committable"] = "not_committable"
+        validation = CitationValidation(valid=True)
+
+        if generation_error is not None:
+            answer = f"LLM invocation failed: {type(generation_error).__name__}"
+            validation = CitationValidation(
+                valid=False,
+                warnings=("answer_generation_failed",),
+            )
+        elif prepared.generation_mode == "none":
+            answer = prepared.immediate_answer or ""
+        elif prepared.generation_mode == "free_supplement":
+            from .chain import _FREE_SUPPLEMENT_PREFIX
+
+            raw_draft = draft or ""
+            supplemented = (
+                raw_draft
+                if raw_draft.startswith(_FREE_SUPPLEMENT_PREFIX)
+                else f"{_FREE_SUPPLEMENT_PREFIX}{raw_draft}"
+            )
+            answer, validation = validate_or_repair_answer(
+                draft=supplemented,
+                context="",
+                source_map=(),
+                grounding_mode="ungrounded",
+                trace=active_trace,
+            )
+            grounding_mode = "ungrounded"
+            if validation.valid:
+                turn_outcome = "ungrounded"
+        else:
+            intents = tuple(retrieval_packet.requested_intents)
+            draft_text = _normalize_structured_values(
+                str(draft or ""),
+                prepared.answer_context,
+            )
+            draft_text = _remove_unsupported_system_membership(
+                draft_text,
+                prepared.answer_context,
+            )
+            draft_text = _normalize_voice_scope(
+                draft_text,
+                intents,
+                tuple(retrieval_packet.assets),
+            )
+            draft_text = _normalize_media_scope(
+                draft_text,
+                intents,
+                tuple(retrieval_packet.assets),
+                plan,
+                tuple(retrieval_packet.source_map),
+            )
+            draft_text = _preserve_evidence_qualifiers(
+                draft_text,
+                prepared.answer_context,
+            )
+            draft_text = _neutralize_unsupported_attributions(
+                draft_text,
+                prepared.answer_context,
+            )
+            draft_text = _normalize_answer_scope(
+                draft_text,
+                plan,
+                prepared.answer_context,
+                prepared.missing_intents,
+            )
+            disclosure = _shortfall_disclosure(prepared.missing_intents)
+            if disclosure:
+                draft_text = f"{disclosure}\n\n{draft_text}"
+            answer, validation = validate_or_repair_answer(
+                draft=draft_text,
+                context=prepared.answer_context,
+                source_map=tuple(retrieval_packet.source_map),
+                grounding_mode="grounded",
+                repair=self._chain._repair_citations,
+                trace=active_trace,
+            )
+            if disclosure and disclosure not in answer:
+                answer = f"{disclosure}\n\n{answer}"
+            grounding_mode = "grounded"
+            if validation.valid and "citation_safe_fallback" not in validation.warnings:
+                turn_outcome = "grounded"
+
         memory_info = {
-            "status": request.memory_status,
-            "turns_used": request.memory_turns_used,
+            "status": prepared.request.memory_status,
+            "turns_used": prepared.request.memory_turns_used,
             "rewrite_mode": str(getattr(plan, "context_rewrite_mode", "none") or "none"),
         }
-        if retrieved.get("local_response", False):
+        subtask = prepared.subtask
+        route_decision = retrieval_packet.route_decision
+        source_map = tuple(retrieval_packet.source_map)
+        sources = tuple(retrieval_packet.sources)
+        entity_ref = retrieval_packet.entity_ref
+        request = prepared.request
+        if prepared.local_response:
             branch_status = (
                 "denied"
                 if str(getattr(subtask, "task_type", "")) == "general_open"
                 else "succeeded"
             )
             public_error = ""
-        elif retrieved.get("retrieval_failed", False):
+        elif prepared.retrieval_failed:
             branch_status = "failed"
             public_error = "branch_retrieval_failed"
-        elif not sources and not retrieved.get("free_supplement", False):
+        elif not sources and not prepared.free_supplement:
             branch_status = "empty"
             public_error = ""
         elif turn_outcome == "not_committable":
@@ -540,7 +630,7 @@ class RAGExecutionService:
             turn_outcome=turn_outcome,
             branch_results=(branch_result,),
         )
-        trace.mark_validated_ready()
+        active_trace.mark_validated_ready()
         return response_packet
 
     def _execute_composite(
@@ -1320,6 +1410,8 @@ def _plan_value(plan: Any, field: str) -> Any:
 
 __all__ = [
     "AskExecutionInput",
+    "GenerationMode",
+    "PreparedExecution",
     "RAGExecutionService",
     "build_completed_turn",
     "normalize_memory_status",
