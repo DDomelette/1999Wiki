@@ -16,7 +16,7 @@ from src.huiji_rag.text import clean_huiji_text, compact_lines
 from .contracts import canonical_json_bytes
 from .story_projection import is_story_source_title, project_stories
 from .topic_projection import TopicCatalog, TopicProjection, project_topics
-from .wikitext_projection import PageProjection, project_wikitext_pages
+from .wikitext_projection import PageProjection, WikitextMediaIntent, project_wikitext_pages
 
 
 _CHAR_TITLE_RE = re.compile(r"Data:Char/[^/]+\.json\Z")
@@ -72,6 +72,42 @@ def project_topic_semantics(
         for child in tuple(getattr(projection, "children"))
     ]
     return project_topics(source_children, catalog=catalog)
+
+
+def project_wikitext_media_intents(
+    page_projection: PageProjection,
+    topic_projection: TopicProjection | None = None,
+) -> tuple["MediaBindingIntent", ...]:
+    """Adapt exact Page occurrences and preserve Topic source multiplicity."""
+    result = [
+        _wikitext_media_binding_intent(intent)
+        for intent in page_projection.media_intents
+    ]
+    if topic_projection is None:
+        return tuple(result)
+    by_source_child: dict[str, list[Any]] = {}
+    for child in topic_projection.children:
+        source_child_id = str(child.source_fields.get("source_child_id") or "")
+        if source_child_id:
+            by_source_child.setdefault(source_child_id, []).append(child)
+    for intent in page_projection.media_intents:
+        for topic_child in by_source_child.get(intent.child_id, ()):
+            topic_digest = hashlib.sha256(
+                topic_child.block.child_id.encode("utf-8")
+            ).hexdigest()[:12]
+            result.append(
+                _wikitext_media_binding_intent(
+                    intent,
+                    source_binding_token=(
+                        f"{intent.source_binding_token}:topic:{topic_digest}"
+                    ),
+                    owner_entity_id=topic_child.owner_entity_id,
+                    owner_page_id=topic_child.owner_page_id,
+                    parent_id=topic_child.block.parent_id,
+                    child_id=topic_child.block.child_id,
+                )
+            )
+    return tuple(result)
 
 
 @dataclass(frozen=True)
@@ -133,6 +169,25 @@ class MediaBindingIntent:
     sort_order: int = 0
     source_refs: tuple[dict[str, Any], ...] = ()
     missing_policy: str = "text_only"
+    resolver_mode: str = "legacy_stem"
+    exact_filename: str = ""
+    original_filename: str = ""
+    heading_path: tuple[str, ...] = ()
+    title_source: str = ""
+    caption: str = ""
+    alt: str = ""
+    link_target: str = ""
+    layout_options: tuple[str, ...] = ()
+    unknown_options: tuple[str, ...] = ()
+    adjacent_context_sha256: str = ""
+    source_kind: str = ""
+    occurrence: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_refs", tuple(dict(item) for item in self.source_refs))
+        object.__setattr__(self, "heading_path", tuple(self.heading_path))
+        object.__setattr__(self, "layout_options", tuple(self.layout_options))
+        object.__setattr__(self, "unknown_options", tuple(self.unknown_options))
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -152,7 +207,59 @@ class MediaBindingIntent:
             "sort_order": self.sort_order,
             "source_refs": [dict(item) for item in self.source_refs],
             "missing_policy": self.missing_policy,
+            "resolver_mode": self.resolver_mode,
+            "exact_filename": self.exact_filename,
+            "original_filename": self.original_filename,
+            "heading_path": list(self.heading_path),
+            "title_source": self.title_source,
+            "caption": self.caption,
+            "alt": self.alt,
+            "link_target": self.link_target,
+            "layout_options": list(self.layout_options),
+            "unknown_options": list(self.unknown_options),
+            "adjacent_context_sha256": self.adjacent_context_sha256,
+            "source_kind": self.source_kind,
+            "occurrence": self.occurrence,
         }
+
+
+def _wikitext_media_binding_intent(
+    intent: WikitextMediaIntent,
+    *,
+    source_binding_token: str | None = None,
+    owner_entity_id: str | None = None,
+    owner_page_id: str | None = None,
+    parent_id: str | None = None,
+    child_id: str | None = None,
+) -> MediaBindingIntent:
+    return MediaBindingIntent(
+        source_binding_token=source_binding_token or intent.source_binding_token,
+        owner_entity_id=owner_entity_id or intent.owner_entity_id,
+        owner_page_id=owner_page_id or intent.owner_page_id,
+        parent_id=parent_id or intent.parent_id,
+        child_id=child_id or intent.child_id,
+        section=intent.heading_path[-1],
+        media_role=intent.media_role,
+        resource_stem="",
+        title=intent.title,
+        source_refs=(dict(intent.source_ref),),
+        missing_policy="text_only",
+        resolver_mode="wikitext_exact",
+        exact_filename=intent.normalized_filename,
+        original_filename=intent.original_filename,
+        heading_path=intent.heading_path,
+        title_source=intent.title_source,
+        caption=intent.caption,
+        alt=intent.alt,
+        link_target=intent.link_target,
+        layout_options=intent.layout_options,
+        unknown_options=intent.unknown_options,
+        adjacent_context_sha256=str(
+            intent.source_ref.get("adjacent_context_sha256") or ""
+        ),
+        source_kind=intent.source_kind,
+        occurrence=intent.occurrence,
+    )
 
 
 @dataclass(frozen=True)

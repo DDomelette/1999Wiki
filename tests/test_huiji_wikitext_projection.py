@@ -17,11 +17,17 @@ from src.huiji_rag.build.page_sources import (
     RevisionMetadata,
     build_page_revision_join,
 )
-from src.huiji_rag.build.projection import project_page_semantics
+from src.huiji_rag.build.projection import (
+    project_page_semantics,
+    project_wikitext_media_intents,
+)
+from src.huiji_rag.build.topic_projection import TopicChildProjection, TopicProjection
 from src.huiji_rag.build.wikitext_projection import (
+    normalize_wikitext_filename,
     project_wikitext_pages,
     scan_wikitext,
 )
+from src.huiji_rag.models import ChildBlock
 
 
 def _joined(pageid: int, title: str, revid: int) -> JoinedPageRevision:
@@ -55,6 +61,17 @@ def _project(specs: list[tuple[int, str, str]], **kwargs):
     joined = tuple(_joined(pageid, title, pageid * 10) for pageid, title, _ in specs)
     rows = tuple(_row(pageid, title, pageid * 10, content) for pageid, title, content in specs)
     return project_wikitext_pages(PageRevisionJoin(joined, (), ()), rows, **kwargs)
+
+
+def _project_revision(
+    pageid: int,
+    title: str,
+    revid: int,
+    content: str,
+):
+    joined = (_joined(pageid, title, revid),)
+    rows = (_row(pageid, title, revid, content),)
+    return project_wikitext_pages(PageRevisionJoin(joined, (), ()), rows)
 
 
 def test_scanner_tracks_lead_h2_h3_through_h6_heading_paths_and_offsets() -> None:
@@ -336,3 +353,295 @@ def test_named_four_file_fixture_projects_through_independent_page_stage() -> No
         ("章节", "表格"),
     ]
     assert result.image_references[0].image.filename == "Banner_测试页面.png"
+
+
+def test_wikitext_relation_token_is_stable_without_revision_caption_or_time() -> None:
+    first = _project_revision(
+        7,
+        "Stable",
+        10,
+        "== Art ==\n[[File:Same Image.PNG|thumb|First caption]]",
+    )
+    second = _project_revision(
+        7,
+        "Stable",
+        99,
+        "== Art ==\n[[File:Same Image.PNG|thumb|Changed caption]]",
+    )
+
+    first_intent = first.media_intents[0]
+    second_intent = second.media_intents[0]
+    assert first_intent.source_binding_token == second_intent.source_binding_token
+    assert first_intent.source_binding_token.startswith("wiki:7:")
+    assert "caption" not in first_intent.source_binding_token.casefold()
+
+
+def test_file_and_gallery_bind_exact_page_section_chunk_and_heading_path() -> None:
+    result = _project(
+        [
+            (
+                5,
+                "Media Page",
+                "Lead.\n== Art ==\nBefore.\n"
+                "[[File:Inline.png|thumb|Inline caption]]\n"
+                "<gallery>\nFile:Gallery.jpg|Gallery caption\n</gallery>\nAfter.",
+            )
+        ]
+    )
+
+    assert len(result.media_intents) == 2
+    assert [item.source_kind for item in result.media_intents] == [
+        "file_link",
+        "gallery",
+    ]
+    assert all(item.owner_entity_id == "page:5" for item in result.media_intents)
+    assert all(item.owner_page_id == "page:5" for item in result.media_intents)
+    assert all(
+        item.parent_id.startswith("page:5/section:")
+        for item in result.media_intents
+    )
+    assert all(
+        item.child_id in {child.child_id for child in result.children}
+        for item in result.media_intents
+    )
+    assert all(item.heading_path == ("Art",) for item in result.media_intents)
+    assert [item.normalized_filename for item in result.media_intents] == [
+        "Inline.png",
+        "Gallery.jpg",
+    ]
+    assert all(
+        item.source_ref["char_start"] < item.source_ref["char_end"]
+        for item in result.media_intents
+    )
+
+
+def test_inline_image_after_split_block_binds_child_containing_visible_context() -> None:
+    result = _project(
+        [
+            (
+                6,
+                "Split Context",
+                "A" * 1700
+                + "[[File:Late.png|Inline marker]]"
+                + "B" * 100,
+            )
+        ]
+    )
+
+    intent = result.media_intents[0]
+    child = next(item for item in result.children if item.child_id == intent.child_id)
+    assert "Inline marker" in child.content
+    assert intent.source_ref["context_before"] in child.content
+    assert intent.source_ref["context_after"] in child.content
+
+
+def test_same_filename_in_same_section_increments_occurrence_only() -> None:
+    result = _project(
+        [
+            (
+                3,
+                "Occurrences",
+                "== One ==\n[[File:Same.png|A]]\n[[File:Same.png|B]]\n"
+                "== Two ==\n[[File:Same.png|C]]",
+            )
+        ]
+    )
+
+    assert [item.occurrence for item in result.media_intents] == [1, 2, 1]
+    assert not result.media_intents[0].source_binding_token.endswith(":1")
+    assert result.media_intents[1].source_binding_token.endswith(":2")
+    assert not result.media_intents[2].source_binding_token.endswith(":1")
+    assert result.media_intents[0].normalized_filename == "Same.png"
+    assert (
+        result.media_intents[0].source_binding_token
+        != result.media_intents[2].source_binding_token
+    )
+
+
+def test_same_resource_across_pages_sections_and_topics_preserves_all_bindings() -> None:
+    pages = _project(
+        [
+            (1, "Page A", "== One ==\n[[File:Shared.png|A]]"),
+            (2, "Page B", "== Two ==\n[[File:Shared.png|B]]"),
+        ]
+    )
+    source_child_id = pages.media_intents[0].child_id
+    source_child = next(
+        child for child in pages.children if child.child_id == source_child_id
+    )
+    topic_block = ChildBlock(
+        child_id="topic:shared/topic/source:1",
+        parent_id="topic:shared/topic",
+        entity_id="shared",
+        entity_name="Shared Topic",
+        category="topic",
+        section_kind="topic",
+        title="Shared Topic",
+        text=source_child.content,
+        search_text=source_child.search_text,
+        chunk_index=0,
+        media_ids=(),
+        media_policy="text_only",
+        source_refs=source_child.source_refs,
+        content_hash=source_child.content_hash,
+        entity_type="topic",
+        ancestor_ids=("topic:shared", "topic:shared/topic"),
+        route_tags=("topic",),
+        heading_path=source_child.heading_path,
+    )
+    topic = TopicProjection(
+        parents=(),
+        children=(
+            TopicChildProjection(
+                block=topic_block,
+                owner_entity_id="topic:shared",
+                owner_page_id="topic:shared",
+                source_fields={
+                    "source_child_id": source_child_id,
+                    "source_parent_id": source_child.parent_id,
+                    "source_owner_entity_id": source_child.owner_entity_id,
+                    "source_owner_page_id": source_child.owner_page_id,
+                    "source_entity_type": "page",
+                    "evidence_kind": "exact_heading",
+                },
+            ),
+        ),
+        diagnostics=(),
+        catalog_fingerprint_sha256="a" * 64,
+    )
+
+    intents = project_wikitext_media_intents(pages, topic)
+
+    assert len(intents) == 3
+    assert len({item.source_binding_token for item in intents}) == 3
+    assert {item.owner_page_id for item in intents} == {
+        "page:1",
+        "page:2",
+        "topic:shared",
+    }
+    assert {item.exact_filename for item in intents} == {"Shared.png"}
+
+
+def test_display_title_precedence_records_explicit_adjacent_heading_page_filename_source() -> None:
+    result = _project(
+        [
+            (1, "Caption Page", "[[File:A.png|Explicit caption]]"),
+            (2, "Link Page", "[[Target|Adjacent label]] [[File:B.png]]"),
+            (3, "Heading Page", "== Heading title ==\n[[File:C.png]]"),
+            (4, "Page title", "[[File:D.png]]"),
+            (5, "", "[[File:E.png]]"),
+        ]
+    )
+
+    assert [(item.title, item.title_source) for item in result.media_intents] == [
+        ("Explicit caption", "explicit_caption"),
+        ("Adjacent label", "adjacent_link_label"),
+        ("Heading title", "heading"),
+        ("Page title", "page_title"),
+        ("E.png", "filename_fallback"),
+    ]
+
+
+def test_media_source_ref_keeps_filename_caption_link_offsets_title_source_and_context_hash() -> None:
+    result = _project(
+        [
+            (
+                8,
+                "Evidence",
+                "== Art ==\nBefore "
+                "[[File:Original Name.PNG|thumb|alt=Alt text|link=Target|"
+                "mystery=yes|Caption]] after.",
+            )
+        ]
+    )
+    intent = result.media_intents[0]
+    ref = intent.source_ref
+
+    assert ref["original_filename"] == "Original Name.PNG"
+    assert ref["normalized_filename"] == "Original_Name.png"
+    assert ref["original_caption"] == "Caption"
+    assert ref["alt"] == "Alt text"
+    assert ref["link_target"] == "Target"
+    assert ref["layout_options"] == ("thumb",)
+    assert ref["unknown_options"] == ("mystery=yes",)
+    assert ref["heading_path"] == ("Art",)
+    assert ref["char_start"] < ref["char_end"]
+    assert ref["display_title_source"] == "explicit_caption"
+    assert len(ref["adjacent_context_sha256"]) == 64
+
+
+def test_context_uses_at_most_200_visible_chars_each_side_without_crossing_heading() -> None:
+    result = _project(
+        [
+            (
+                9,
+                "Context",
+                "== Here ==\n"
+                + "A" * 250
+                + "[[File:Context.png|Caption]]"
+                + "B" * 250
+                + "\n== Other ==\n"
+                + "MUST_NOT_CROSS",
+            )
+        ]
+    )
+    ref = result.media_intents[0].source_ref
+
+    assert ref["context_before"] == "A" * 200
+    assert ref["context_after"] == "B" * 200
+    assert "MUST_NOT_CROSS" not in ref["context_after"]
+
+
+def test_media_role_uses_location_options_and_caption_not_filename_prefix_only() -> None:
+    result = _project(
+        [
+            (
+                10,
+                "Roles",
+                "[[File:Lead.png|center|800px]]\n"
+                "[[File:Banner_named_only.png]]\n"
+                "== Posters ==\n[[File:X.png|Event poster]]\n"
+                "<gallery>\nFile:G.png|Gallery\n</gallery>",
+            )
+        ]
+    )
+
+    assert [item.media_role for item in result.media_intents] == [
+        "banner",
+        "page_image",
+        "poster",
+        "gallery_image",
+    ]
+
+
+def test_small_navigation_icon_is_decorative_exclusion_with_fingerprinted_threshold() -> None:
+    result = _project(
+        [(11, "Decorative", "[[File:Nav.png|32x32px|link=Next|Navigation icon]]")]
+    )
+
+    assert result.media_intents == ()
+    diagnostic = next(
+        item
+        for item in result.diagnostics
+        if item.reason_code == "decorative_media_excluded"
+    )
+    assert diagnostic.details["minimum_dimension_px"] == 96
+    assert diagnostic.details["declared_width"] == 32
+    assert diagnostic.details["declared_height"] == 32
+    assert len(diagnostic.details["parser_config_sha256"]) == 64
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("File:My Image.PNG", "My_Image.png"),
+        ("Image:%EF%BC%A6oo_bar.JpG", "Foo_bar.jpg"),
+        ("https://example.test/wiki/File:Space%20Name.WEBP", "Space_Name.webp"),
+        ("文件:示例 图像.SVG", "示例_图像.svg"),
+    ],
+)
+def test_wikitext_filename_normalizes_prefix_url_nfkc_space_underscore_and_extension_case(
+    raw: str,
+    expected: str,
+) -> None:
+    assert normalize_wikitext_filename(raw) == expected

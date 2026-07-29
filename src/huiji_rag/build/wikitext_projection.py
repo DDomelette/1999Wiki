@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import unicodedata
+from urllib.parse import parse_qs, unquote, urlsplit
 from dataclasses import asdict, dataclass, field
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
@@ -22,6 +25,17 @@ _LAYOUT_OPTIONS = frozenset(
 _SIZE_RE = re.compile(r"(?:\d+(?:x\d+)?|x\d+)px\Z", re.IGNORECASE)
 _DEFINITION_RE = re.compile(r"(?:\bis\b|\bare\b|是|指的是|定义为)", re.IGNORECASE)
 _IMAGE_URL_RE = re.compile(r"https?://\S+\.(?:png|jpe?g|gif|webp|svg)(?:\?\S*)?", re.IGNORECASE)
+_DECORATIVE_MINIMUM_DIMENSION_PX = 96
+_PARSER_CONFIG_SHA256 = hashlib.sha256(
+    json.dumps(
+        {
+            "decorative_minimum_dimension_px": _DECORATIVE_MINIMUM_DIMENSION_PX,
+            "schema_version": "huiji.wikitext-media-parser/v1",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -193,11 +207,43 @@ class PageImageReference:
 
 
 @dataclass(frozen=True)
+class WikitextMediaIntent:
+    source_binding_token: str
+    owner_entity_id: str
+    owner_page_id: str
+    parent_id: str
+    child_id: str
+    heading_path: tuple[str, ...]
+    normalized_filename: str
+    original_filename: str
+    source_kind: str
+    occurrence: int
+    media_role: str
+    title: str
+    title_source: str
+    caption: str
+    alt: str
+    link_target: str
+    layout_options: tuple[str, ...]
+    unknown_options: tuple[str, ...]
+    source_ref: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "heading_path", tuple(self.heading_path))
+        object.__setattr__(self, "layout_options", tuple(self.layout_options))
+        object.__setattr__(self, "unknown_options", tuple(self.unknown_options))
+        source_ref = dict(self.source_ref)
+        source_ref["heading_path"] = tuple(source_ref.get("heading_path", ()))
+        object.__setattr__(self, "source_ref", MappingProxyType(source_ref))
+
+
+@dataclass(frozen=True)
 class PageProjection:
     pages: tuple[PageParentProjection, ...]
     sections: tuple[PageSectionProjection, ...]
     children: tuple[PageChildProjection, ...]
     image_references: tuple[PageImageReference, ...]
+    media_intents: tuple[WikitextMediaIntent, ...]
     redirects: tuple[tuple[str, str], ...]
     diagnostics: tuple[PageDiagnostic, ...]
     exclusions: tuple[PageExclusion, ...]
@@ -392,6 +438,26 @@ def scan_wikitext(content: str) -> WikitextScan:
     )
 
 
+def normalize_wikitext_filename(value: str) -> str:
+    """Normalize a complete Wikitext filename without stem or fuzzy matching."""
+    raw = str(value).strip()
+    parsed = urlsplit(raw)
+    if parsed.scheme and parsed.netloc:
+        query_title = parse_qs(parsed.query).get("title", ())
+        raw = query_title[0] if query_title else parsed.path.rsplit("/", 1)[-1]
+    raw = unicodedata.normalize("NFKC", unquote(raw)).strip()
+    folded = raw.casefold()
+    for prefix in ("file:", "image:", "文件:", "图像:"):
+        if folded.startswith(prefix.casefold()):
+            raw = raw[len(prefix) :].strip()
+            break
+    raw = re.sub(r"[ _]+", "_", raw)
+    stem, separator, extension = raw.rpartition(".")
+    if separator and stem and extension:
+        return f"{stem}.{extension.lower()}"
+    return raw
+
+
 def project_wikitext_pages(
     page_join: PageRevisionJoin,
     revision_rows: Iterable[JsonlRow],
@@ -467,6 +533,7 @@ def project_wikitext_pages(
     sections: list[PageSectionProjection] = []
     children: list[PageChildProjection] = []
     image_references: list[PageImageReference] = []
+    media_intents: list[WikitextMediaIntent] = []
     exclusions: list[PageExclusion] = []
     route_evidence = structured_route_tags or {}
     redirect_pageids = {pageid for pageid, (_, _, scan) in scans.items() if scan.redirect_targets}
@@ -482,6 +549,12 @@ def project_wikitext_pages(
         )
         page_children: list[PageChildProjection] = []
         section_occurrences: dict[str, int] = {}
+        media_occurrences: dict[tuple[str, str], int] = {}
+        source_content = str(source_row.row.get("content") or "")
+        source_content_sha256 = str(
+            source_row.row.get("content_sha256")
+            or joined_item.revision.content_sha256
+        )
         for section in scan.sections:
             if not section.visible_text and not section.links and not section.images:
                 continue
@@ -569,7 +642,32 @@ def project_wikitext_pages(
                 )
             )
             for image in section.images:
-                binding_child = _image_binding_child(image, section_children)
+                context_before, context_after = _adjacent_context(
+                    source_content,
+                    section,
+                    image,
+                )
+                binding_child = _image_binding_child(
+                    image,
+                    section_children,
+                    context_before,
+                    context_after,
+                )
+                context_before, context_after = _context_for_child(
+                    binding_child,
+                    image,
+                    context_before,
+                    context_after,
+                )
+                image_source_ref = _source_ref(
+                    joined_item.page.title,
+                    pageid,
+                    joined_item.revision.revid,
+                    source_content_sha256,
+                    image.heading_path or ("lead",),
+                    image.char_start,
+                    image.char_end,
+                )
                 image_references.append(
                     PageImageReference(
                         image=image,
@@ -580,18 +678,97 @@ def project_wikitext_pages(
                         owner_page_id=f"page:{pageid}",
                         parent_id=section_parent_id,
                         child_id=binding_child.child_id,
-                        source_ref=_source_ref(
-                            joined_item.page.title,
+                        source_ref=image_source_ref,
+                    )
+                )
+                declared_width, declared_height = _declared_dimensions(
+                    image.layout_options
+                )
+                if (
+                    0 < declared_width < _DECORATIVE_MINIMUM_DIMENSION_PX
+                    and 0 < declared_height < _DECORATIVE_MINIMUM_DIMENSION_PX
+                ):
+                    diagnostics.append(
+                        PageDiagnostic(
+                            "decorative_media_excluded",
                             pageid,
-                            joined_item.revision.revid,
-                            str(
-                                source_row.row.get("content_sha256")
-                                or joined_item.revision.content_sha256
-                            ),
-                            image.heading_path or ("lead",),
-                            image.char_start,
-                            image.char_end,
+                            joined_item.page.title,
+                            {
+                                "declared_width": declared_width,
+                                "declared_height": declared_height,
+                                "minimum_dimension_px": (
+                                    _DECORATIVE_MINIMUM_DIMENSION_PX
+                                ),
+                                "parser_config_sha256": _PARSER_CONFIG_SHA256,
+                            },
+                        )
+                    )
+                    continue
+                normalized_filename = normalize_wikitext_filename(image.filename)
+                occurrence_key = (section_parent_id, normalized_filename)
+                media_occurrences[occurrence_key] = (
+                    media_occurrences.get(occurrence_key, 0) + 1
+                )
+                media_occurrence = media_occurrences[occurrence_key]
+                title, title_source = _media_display_title(
+                    image,
+                    section,
+                    joined_item.page.title,
+                    source_content,
+                    normalized_filename,
+                )
+                context_sha256 = hashlib.sha256(
+                    f"{context_before}\0{context_after}".encode("utf-8")
+                ).hexdigest()
+                media_source_ref = {
+                    **image_source_ref,
+                    "original_filename": image.filename,
+                    "normalized_filename": normalized_filename,
+                    "original_caption": image.caption,
+                    "alt": image.alt,
+                    "link_target": image.link_target,
+                    "display_title_source": title_source,
+                    "context_before": context_before,
+                    "context_after": context_after,
+                    "adjacent_context_sha256": context_sha256,
+                    "layout_options": tuple(image.layout_options),
+                    "unknown_options": tuple(image.unknown_options),
+                    "source_kind_detail": image.source_kind,
+                }
+                filename_sha20 = hashlib.sha256(
+                    normalized_filename.encode("utf-8")
+                ).hexdigest()[:20]
+                relation_token = (
+                    f"wiki:{pageid}:{section_token}:{filename_sha20}"
+                )
+                if media_occurrence > 1:
+                    relation_token = f"{relation_token}:{media_occurrence}"
+                media_intents.append(
+                    WikitextMediaIntent(
+                        source_binding_token=relation_token,
+                        owner_entity_id=f"page:{pageid}",
+                        owner_page_id=f"page:{pageid}",
+                        parent_id=section_parent_id,
+                        child_id=binding_child.child_id,
+                        heading_path=image.heading_path or ("lead",),
+                        normalized_filename=normalized_filename,
+                        original_filename=image.filename,
+                        source_kind=image.source_kind,
+                        occurrence=media_occurrence,
+                        media_role=_wikitext_media_role(
+                            image,
+                            section,
+                            declared_width,
+                            declared_height,
                         ),
+                        title=title,
+                        title_source=title_source,
+                        caption=image.caption,
+                        alt=image.alt,
+                        link_target=image.link_target,
+                        layout_options=image.layout_options,
+                        unknown_options=image.unknown_options,
+                        source_ref=media_source_ref,
                     )
                 )
         if not page_children:
@@ -639,10 +816,105 @@ def project_wikitext_pages(
                 ),
             )
         ),
+        media_intents=tuple(media_intents),
         redirects=tuple(sorted(redirects)),
         diagnostics=tuple(diagnostics),
         exclusions=tuple(sorted(exclusions, key=lambda item: item.pageid)),
     )
+
+
+def _declared_dimensions(options: Sequence[str]) -> tuple[int, int]:
+    for option in options:
+        folded = option.casefold()
+        if not _SIZE_RE.fullmatch(folded):
+            continue
+        value = folded[:-2]
+        if "x" in value:
+            width_text, height_text = value.split("x", 1)
+            return (
+                int(width_text) if width_text else 0,
+                int(height_text) if height_text else 0,
+            )
+        dimension = int(value)
+        return dimension, dimension
+    return 0, 0
+
+
+def _media_display_title(
+    image: WikitextImage,
+    section: WikitextSection,
+    page_title: str,
+    source_content: str,
+    normalized_filename: str,
+) -> tuple[str, str]:
+    if image.caption:
+        return image.caption, "explicit_caption"
+    adjacent = _adjacent_link_label(image, section.links, source_content)
+    if adjacent:
+        return adjacent, "adjacent_link_label"
+    if image.heading_path:
+        return image.heading_path[-1], "heading"
+    if page_title:
+        return page_title, "page_title"
+    return normalized_filename, "filename_fallback"
+
+
+def _adjacent_link_label(
+    image: WikitextImage,
+    links: Sequence[WikitextLink],
+    source_content: str,
+) -> str:
+    candidates: list[tuple[int, int, str]] = []
+    for link in links:
+        if link.char_end <= image.char_start:
+            gap = source_content[link.char_end : image.char_start]
+            distance = image.char_start - link.char_end
+        elif image.char_end <= link.char_start:
+            gap = source_content[image.char_end : link.char_start]
+            distance = link.char_start - image.char_end
+        else:
+            continue
+        if distance <= 80 and not gap.strip(" \t\r\n.,;:()[]"):
+            candidates.append((distance, link.char_start, link.label))
+    return min(candidates)[2] if candidates else ""
+
+
+def _adjacent_context(
+    source_content: str,
+    section: WikitextSection,
+    image: WikitextImage,
+) -> tuple[str, str]:
+    before_raw = source_content[section.char_start : image.char_start]
+    after_raw = source_content[image.char_end : section.char_end]
+    before = _visible_fragment(before_raw).strip()[-200:]
+    after = _visible_fragment(after_raw).strip()[:200]
+    return before, after
+
+
+def _visible_fragment(value: str) -> str:
+    visible, _, _, _ = _scan_inline(value, 0, (), [], [])
+    return visible
+
+
+def _wikitext_media_role(
+    image: WikitextImage,
+    section: WikitextSection,
+    declared_width: int,
+    declared_height: int,
+) -> str:
+    if image.source_kind == "gallery":
+        return "gallery_image"
+    caption_heading = " ".join((image.caption, *image.heading_path)).casefold()
+    if "poster" in caption_heading or "海报" in caption_heading:
+        return "poster"
+    is_lead = not section.heading_path
+    is_large = max(declared_width, declared_height) >= 600
+    has_banner_layout = "center" in {
+        option.casefold() for option in image.layout_options
+    } and max(declared_width, declared_height) >= 300
+    if is_lead and (is_large or has_banner_layout):
+        return "banner"
+    return "page_image"
 
 
 def _scan_inline(
@@ -1047,7 +1319,32 @@ def _combine_blocks(blocks: Sequence[WikitextBlock]) -> tuple[str, int, int, boo
 def _image_binding_child(
     image: WikitextImage,
     children: Sequence[PageChildProjection],
+    context_before: str = "",
+    context_after: str = "",
 ) -> PageChildProjection:
+    if image.caption:
+        caption_matches = [
+            child for child in children if image.caption in child.content
+        ]
+        if len(caption_matches) == 1:
+            return caption_matches[0]
+    context_matches = sorted(
+        (
+            (
+                int(bool(_suffix_overlap(context_before, child.content)))
+                + int(bool(_prefix_overlap(context_after, child.content))),
+                len(_suffix_overlap(context_before, child.content))
+                + len(_prefix_overlap(context_after, child.content)),
+                -index,
+                child,
+            )
+            for index, child in enumerate(children)
+        ),
+        key=lambda item: item[:3],
+        reverse=True,
+    )
+    if context_matches and context_matches[0][0] > 0:
+        return context_matches[0][3]
     for child in children:
         source_ref = child.source_refs[0]
         if source_ref["char_start"] <= image.char_start < source_ref["char_end"]:
@@ -1056,6 +1353,43 @@ def _image_binding_child(
         if image.char_start < child.source_refs[0]["char_end"]:
             return child
     return children[-1]
+
+
+def _context_for_child(
+    child: PageChildProjection,
+    image: WikitextImage,
+    context_before: str,
+    context_after: str,
+) -> tuple[str, str]:
+    if image.caption and image.caption in child.content:
+        caption_start = child.content.find(image.caption)
+        caption_end = caption_start + len(image.caption)
+        return (
+            child.content[:caption_start][-200:],
+            child.content[caption_end:][:200],
+        )
+    return (
+        _suffix_overlap(context_before, child.content),
+        _prefix_overlap(context_after, child.content),
+    )
+
+
+def _suffix_overlap(value: str, content: str) -> str:
+    limit = min(200, len(value), len(content))
+    for length in range(limit, 0, -1):
+        candidate = value[-length:]
+        if candidate in content:
+            return candidate
+    return ""
+
+
+def _prefix_overlap(value: str, content: str) -> str:
+    limit = min(200, len(value), len(content))
+    for length in range(limit, 0, -1):
+        candidate = value[:length]
+        if candidate in content:
+            return candidate
+    return ""
 
 
 def _source_ref(

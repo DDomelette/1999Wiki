@@ -27,6 +27,7 @@ from .contracts import (
     ordered_media_v3_row,
 )
 from .projection import CorpusProjection, MediaBindingIntent, SemanticChild
+from .wikitext_projection import normalize_wikitext_filename
 
 
 _SHA1_RE = re.compile(r"[0-9a-f]{40}\Z")
@@ -198,6 +199,9 @@ class _ResourceCatalog:
         self.config = config
         self.rows = tuple(dict(row) for row in rows)
         self.by_stem: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        self.by_exact_normalized_filename: dict[
+            str, list[dict[str, Any]]
+        ] = defaultdict(list)
         self.by_filename_sha1: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
         self._file_cache: dict[Path, tuple[str, str, int]] = {}
         for row in self.rows:
@@ -205,12 +209,21 @@ class _ResourceCatalog:
             if not filename:
                 continue
             self.by_stem[_normalized_stem(filename)].append(row)
+            for exact_filename in _resource_exact_filenames(row):
+                self.by_exact_normalized_filename[exact_filename].append(row)
             sha1 = str(row.get("sha1") or "").lower()
             self.by_filename_sha1[(_normalized_filename(filename), sha1)].append(row)
-        for values in (*self.by_stem.values(), *self.by_filename_sha1.values()):
+        for values in (
+            *self.by_stem.values(),
+            *self.by_exact_normalized_filename.values(),
+            *self.by_filename_sha1.values(),
+        ):
             values.sort(key=_resource_row_sort_key)
 
     def match_intent(self, intent: MediaBindingIntent) -> tuple[dict[str, Any], ...]:
+        if intent.resolver_mode == "wikitext_exact":
+            exact_filename = normalize_wikitext_filename(intent.exact_filename)
+            return tuple(self.by_exact_normalized_filename.get(exact_filename, ()))
         stems = [_normalized_stem(intent.resource_stem)] if intent.resource_stem else []
         if intent.media_role == "skill" and intent.resource_stem.casefold().startswith("skill-"):
             stems.append(_normalized_stem(intent.resource_stem[6:]))
@@ -229,7 +242,11 @@ class _ResourceCatalog:
         return tuple(self.by_filename_sha1.get(key, ()))
 
     def resolve(
-        self, row: Mapping[str, Any], *, expected_object_kind: str
+        self,
+        row: Mapping[str, Any],
+        *,
+        expected_object_kind: str,
+        require_sha256: bool = False,
     ) -> _ResolvedResource:
         filename = _resource_filename(row)
         if not filename:
@@ -253,6 +270,11 @@ class _ResourceCatalog:
                 "local_size_mismatch", f"local size differs from manifest for {filename}"
             )
         declared_sha256 = str(row.get("sha256") or row.get("content_sha256") or "").lower()
+        if require_sha256 and not declared_sha256:
+            raise _ResourceResolutionError(
+                "resource_sha256_missing",
+                f"manifest SHA-256 is missing for {filename}",
+            )
         if declared_sha256 and (
             not _SHA256_RE.fullmatch(declared_sha256) or declared_sha256 != actual_sha256
         ):
@@ -371,7 +393,15 @@ def assemble_media_v3(
             unresolved.append(_unresolved_intent(intent, "unknown_child"))
             blockers.append(f"media_intent_unknown_child:{intent.source_binding_token}")
             continue
-        if not intent.resource_stem:
+        if intent.resolver_mode == "wikitext_exact":
+            closure_error = _validate_wikitext_intent(intent, child)
+            if closure_error is not None:
+                unresolved.append(_unresolved_intent(intent, closure_error))
+                blockers.append(
+                    f"media_intent_invalid:{intent.source_binding_token}:{closure_error}"
+                )
+                continue
+        if intent.resolver_mode != "wikitext_exact" and not intent.resource_stem:
             unresolved.append(_unresolved_intent(intent, "source_has_no_resource_reference"))
             continue
         matches = catalog.match_intent(intent)
@@ -380,15 +410,41 @@ def assemble_media_v3(
             if intent.missing_policy != "text_only":
                 blockers.append(f"media_resource_missing:{intent.source_binding_token}")
             continue
-        preferred_score = max(
-            preferred_format_score(_resource_filename(source_row))
-            for source_row in matches
-        )
-        preferred_matches = tuple(
-            source_row
-            for source_row in matches
-            if preferred_format_score(_resource_filename(source_row)) == preferred_score
-        )
+        if intent.resolver_mode == "wikitext_exact":
+            signatures = {
+                (
+                    str(source_row.get("sha1") or "").lower(),
+                    _nonnegative_int(source_row.get("size"), default=-1),
+                )
+                for source_row in matches
+            }
+            if len(signatures) != 1:
+                unresolved.append(
+                    {
+                        **_unresolved_intent(intent, "resource_filename_conflict"),
+                        "candidate_signatures": [
+                            {"sha1": sha1, "size": size}
+                            for sha1, size in sorted(signatures)
+                        ],
+                    }
+                )
+                blockers.append(
+                    f"resource_filename_conflict:{intent.source_binding_token}"
+                )
+                continue
+            preferred_score = 0
+            preferred_matches = matches
+        else:
+            preferred_score = max(
+                preferred_format_score(_resource_filename(source_row))
+                for source_row in matches
+            )
+            preferred_matches = tuple(
+                source_row
+                for source_row in matches
+                if preferred_format_score(_resource_filename(source_row))
+                == preferred_score
+            )
         resolved_groups: dict[
             tuple[str, str, str],
             list[tuple[_ResolvedResource, Mapping[str, Any]]],
@@ -400,20 +456,34 @@ def assemble_media_v3(
             )
             try:
                 resource = catalog.resolve(
-                    source_row, expected_object_kind=object_kind
+                    source_row,
+                    expected_object_kind=object_kind,
+                    require_sha256=intent.resolver_mode == "wikitext_exact",
                 )
             except _ResourceResolutionError as error:
+                reason_code = error.reason_code
+                if (
+                    intent.resolver_mode == "wikitext_exact"
+                    and reason_code in {"local_path_missing", "local_file_missing"}
+                    and str(source_row.get("download_status") or "")
+                    .strip()
+                    .casefold()
+                    == "not_downloaded"
+                ):
+                    reason_code = "referenced_resource_not_downloaded"
                 unresolved.append(
                     {
-                        **_unresolved_intent(intent, error.reason_code),
+                        **_unresolved_intent(intent, reason_code),
                         "filename": _resource_filename(source_row),
                         "local_relpath": str(source_row.get("local_relpath") or ""),
                         "detail": error.detail,
                     }
                 )
-                blockers.append(
-                    f"media_resource_invalid:{intent.source_binding_token}:{error.reason_code}"
-                )
+                if reason_code != "referenced_resource_not_downloaded":
+                    blockers.append(
+                        f"media_resource_invalid:{intent.source_binding_token}:"
+                        f"{reason_code}"
+                    )
                 continue
             resolved_groups[(resource.sha256, asset_type, object_kind)].append(
                 (resource, source_row)
@@ -1185,6 +1255,72 @@ def _normalize_source_ref(raw_ref: Mapping[str, Any]) -> dict[str, Any]:
     return ref
 
 
+def _validate_wikitext_intent(
+    intent: MediaBindingIntent,
+    child: SemanticChild,
+) -> str | None:
+    if (
+        intent.owner_entity_id != child.owner_entity_id
+        or intent.owner_page_id != child.owner_page_id
+        or intent.parent_id != child.block.parent_id
+        or intent.child_id != child.block.child_id
+    ):
+        return "invalid_wikitext_owner_closure"
+    if (
+        not intent.exact_filename
+        or normalize_wikitext_filename(intent.original_filename)
+        != intent.exact_filename
+        or not intent.heading_path
+        or not _SHA256_RE.fullmatch(intent.adjacent_context_sha256)
+        or not intent.source_refs
+    ):
+        return "invalid_wikitext_source_ref"
+    child_sources = {
+        (
+            str(ref.get("source_title") or ref.get("title") or ""),
+            str(
+                ref.get("source_content_sha256")
+                or ref.get("content_sha256")
+                or ""
+            ).lower(),
+        )
+        for ref in child.block.source_refs
+    }
+    for ref in intent.source_refs:
+        required = (
+            str(ref.get("source_kind") or "") == "crawler_wikitext"
+            and str(ref.get("original_filename") or "")
+            == intent.original_filename
+            and str(ref.get("normalized_filename") or "")
+            == intent.exact_filename
+            and tuple(ref.get("heading_path") or ()) == intent.heading_path
+            and isinstance(ref.get("char_start"), int)
+            and isinstance(ref.get("char_end"), int)
+            and int(ref["char_start"]) < int(ref["char_end"])
+            and str(ref.get("display_title_source") or "")
+            == intent.title_source
+            and str(ref.get("adjacent_context_sha256") or "")
+            == intent.adjacent_context_sha256
+        )
+        if not required:
+            return "invalid_wikitext_source_ref"
+        expected_context_sha256 = hashlib.sha256(
+            (
+                f"{str(ref.get('context_before') or '')}\0"
+                f"{str(ref.get('context_after') or '')}"
+            ).encode("utf-8")
+        ).hexdigest()
+        if expected_context_sha256 != intent.adjacent_context_sha256:
+            return "invalid_wikitext_source_ref"
+        source_identity = (
+            str(ref.get("source_title") or ""),
+            str(ref.get("source_content_sha256") or "").lower(),
+        )
+        if source_identity not in child_sources:
+            return "invalid_wikitext_source_ref"
+    return None
+
+
 def _unresolved_intent(intent: MediaBindingIntent, reason_code: str) -> dict[str, Any]:
     return {
         "reason_code": reason_code,
@@ -1196,6 +1332,8 @@ def _unresolved_intent(intent: MediaBindingIntent, reason_code: str) -> dict[str
         "section": intent.section,
         "media_role": intent.media_role,
         "resource_stem": intent.resource_stem,
+        "resolver_mode": intent.resolver_mode,
+        "exact_filename": intent.exact_filename,
         "missing_policy": intent.missing_policy,
     }
 
@@ -1242,7 +1380,22 @@ def _voice_language(filename: str) -> str | None:
 
 def _resource_filename(row: Mapping[str, Any]) -> str:
     value = str(row.get("filename") or row.get("name") or "").replace("\\", "/")
-    return value.rsplit("/", 1)[-1]
+    if value:
+        return value.rsplit("/", 1)[-1]
+    return normalize_wikitext_filename(str(row.get("title") or ""))
+
+
+def _resource_exact_filenames(row: Mapping[str, Any]) -> tuple[str, ...]:
+    values = {
+        normalize_wikitext_filename(value)
+        for value in (
+            _resource_filename(row),
+            str(row.get("title") or ""),
+        )
+        if value
+    }
+    values.discard("")
+    return tuple(sorted(values))
 
 
 def _normalized_filename(value: str) -> str:
@@ -1266,7 +1419,11 @@ def _intent_sort_key(intent: MediaBindingIntent) -> tuple[str, int, str, str]:
         intent.owner_page_id,
         intent.sort_order,
         intent.source_binding_token,
-        intent.resource_stem.casefold(),
+        (
+            intent.exact_filename
+            if intent.resolver_mode == "wikitext_exact"
+            else intent.resource_stem.casefold()
+        ),
     )
 
 
