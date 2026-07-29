@@ -2,7 +2,7 @@
 
 日期：2026-07-30
 
-状态：完整 P0 范围已获用户批准；本文已按线程 D 审查补齐前置契约，等待用户最终复核，尚未授权实施
+状态：完整 P0 范围已获用户批准；本文已按线程 D 两轮审查补齐前置契约，等待用户最终复核，尚未授权实施
 
 负责人：线程 E；规格、集成、向量重建与发布审核：线程 D
 
@@ -56,7 +56,7 @@ Level 3：原子子块
 10. 在新的影子产物和评测证明收益后，才由线程 D 执行一次向量重建与后续发布审核。
 11. 从冻结 Story 来源发布可验证的 step/choice/分支/角色结构 sidecar，不把来源结构埋在 Segmenter 内部。
 12. 以 Typed Dense Retrieval Unit 同时承载非 Story Child 和 Story Segment，禁止身份复用。
-13. 通过受控 `story_mentions/story_examples` KB 分支扩展角色与 Topic 问答，同时保持现有 Owner Gate。
+13. 通过受控 `story_required/story_mentions/story_examples` KB 分支支持显式多 Story、角色剧情和 Topic 例证，同时保持现有 Owner Gate。
 14. 在真实 embedding 构建前冻结评测 gold、baseline 和 go/no-go 阈值。
 
 ## 3. 非目标
@@ -164,6 +164,8 @@ relation_source_refs
 structure_status
 diagnostic_codes
 content_sha256
+atom_char_count
+length_status
 entity_link_registry_identity
 structure_identity
 ```
@@ -176,7 +178,9 @@ structure_identity
 | `source_order` | 来源没有显式图字段，但线性顺序完整 | 仅生成 `source_order` 邻接 |
 | `blocked_invalid_graph` | 显式结构存在但字段、目标或闭包不合法 | 阻断该 Story 的 Segment 构建 |
 
-E0 必须先生成只读 `story_structure_taxonomy.v1.json`，至少统计所有 Story 的字段形态、step/choice 容器、目标多重性、悬空目标、入口、出口、汇合、环、speaker/head 取值形态和可证明实体映射覆盖率。taxonomy、解析配置和输入快照身份必须在 E1 Segment 实现前冻结并写入 `structure_identity`。
+E0 必须先生成只读 `story_structure_taxonomy.v1.json`，至少统计所有 Story 的字段形态、step/choice 容器、目标多重性、悬空目标、入口、出口、汇合、环、speaker/head 取值形态、可证明实体映射覆盖率，以及 Atom 字符数的 min/median/P95/P99/max 和超过 600/800/16,384 的动态计数。taxonomy、解析配置和输入快照身份必须在 E1 Segment 实现前冻结并写入 `structure_identity`。
+
+2026-07-30 的只读风险审计使用恢复快照 `data_pages.jsonl sha256=eb82b82e34300ee5d8beb27b13311fe530c59faeba3ae7883876b74b0eab9092` 和 C 检查点 `012c7ca6b3abaa0445ccd00a8974ea4fefcbd333`，在 142,811 个可见原始 Story step 中检测到 7 个超过 800 字符，最大 1,115。该统计只证明超长边界已真实出现；E0 仍须对最终规范 Atom 重新计算，不得把这些数值硬编码为验收结果。
 
 E0 同时生成 `story_entity_link_registry.v1.json`。注册表只能由同版规范 Parent 的稳定 `entity_id/entity_name/entity_aliases`、C 已验证关系和来源中已证明的稳定 speaker ID 构成；每个规范化精确键必须记录来源类型、目标实体 ID、歧义状态和注册表 SHA-256。
 
@@ -205,6 +209,12 @@ E0 同时生成 `story_entity_link_registry.v1.json`。注册表只能由同版�
 `ATOMSTRUCT-P0-12`：实体注册表的规范化只能做 Unicode 规范化、首尾空白处理和项目已冻结的大小写规则；纯数字名称（例如 `6`、`37`）、短名称和内部 ID 必须作为普通精确键保留，不得因长度、字符类型或质量标记被排除。
 
 `ATOMSTRUCT-P0-13`：同一精确键若映射到多个稳定实体，必须标记歧义并禁止发布到 `mentioned_entity_ids`；不得用角色白名单、查询上下文、出现频率或人工单例补丁选定目标。注册表身份必须进入结构产物、runtime snapshot 和评测 provenance。
+
+`ATOMSTRUCT-P0-14`：`atom_char_count` 按规范 Atom 可见正文的 Unicode code point 计算；`length_status` 只能为 `within_hard_max`、`oversize_atom` 或 `blocked_dense_limit`，并参与结构产物身份。
+
+`ATOMSTRUCT-P0-15`：正文超过 `hard_max_chars=800` 但仍满足 Typed Dense 字段和版本化 embedding 输入限制时，标记 `oversize_atom`；它不是低质量、不得从 BM25 删除，也不得触发软降权。
+
+`ATOMSTRUCT-P0-16`：正文或确定性 Segment search text 超过 `VARCHAR(16384)` 或冻结 embedding 输入硬限制时标记 `blocked_dense_limit`，阻断该 Story 的完整 P0 snapshot readiness；不得截断、跳过该 Atom、只构建 BM25 后仍声称完整 Segment 方案可用。
 
 ## 6. Story Segment 公共契约
 
@@ -351,6 +361,14 @@ target_max_atoms = 20
 
 `BOUNDARY-P0-08`：choice、split、merge、cycle 和 terminal 节点均为硬边界；任何 Segment 不得同时包含两个互斥 choice 分支的 Atom。
 
+`BOUNDARY-P0-09`：单个 Atom 的 `atom_char_count > hard_max_chars` 且 `length_status=oversize_atom` 时，生成只包含该 Atom 的 Segment，并确保 `quality_flags` 包含 `oversize_atom`。这是硬上限的唯一 P0 例外；不得与前后 Atom 合并。
+
+`BOUNDARY-P0-10`：超长单 Atom Segment 的 `char_count` 保留真实值，Atom span、source refs、citation 和 Segment 身份按普通 Segment 规则闭合；不得截断正文、拆分规范 Atom 或制造新的伪 Atom。
+
+`BOUNDARY-P0-11`：超长 Segment 仍受 Dense schema/embedding 输入验证、Atom citation 预算和最终渲染字符预算约束。若单个 Segment 无法装入 9,000 字符上下文，运行时返回 `context_char_shortfall`，不得截断后发送；若为 `blocked_dense_limit`，构建阶段直接 `no_go`。
+
+`BOUNDARY-P0-12`：测试必须至少包含 799、800、801 字符和超过 Dense 输入限制四个边界用例，并验证唯一例外、逐字节正文、映射闭合、预算 shortfall 和 fail-closed 行为。
+
 ## 8. 稳定身份
 
 `segment_id` 必须来自来源支持的边界证据，至少包括：
@@ -390,7 +408,7 @@ Segment 可以保存 `mentioned_entity_ids`，但只接受：
 
 `ENTITYLINK-P0-03`：缺少来源支持关系时不得把提到相似名称的 Story Segment 归属于该角色。
 
-### 9.1 受控 Story 补充分支
+### 9.1 受控 Story 检索分支
 
 不得把 Story Segment 直接塞入现有 `entity_strict` 或 `topic_strict` 结果，也不得放宽现有 Owner Gate。顶层知识任务新增受 Route Policy 授权的 `KnowledgeRetrievalBranch`：
 
@@ -398,8 +416,13 @@ Segment 可以保存 `mentioned_entity_ids`，但只接受：
 branch_id
 branch_kind
 query
+authorization_status
 authorization_reason
 primary_entity_ref
+requested_story_entity_refs
+required_story_entity_refs
+authorized_story_owner_ids
+continuation_actions
 allowed_retrieval_unit_types
 story_filter
 owner_policy
@@ -407,15 +430,39 @@ candidate_budget
 context_budget
 ```
 
+`authorization_status` 只允许 `proposed`、`authorized`、`denied`、`needs_continuation`。只有 Route Policy 能从 `proposed` 转换为后三种状态。
+
+P0 冻结 `StoryBranchConfig/v1`：
+
+```text
+required_story_owner_limit = 3
+requested_story_ref_limit = 32
+story_owner_page_size = 3
+```
+
+三个 Story 引用数组的元素使用 `StoryEntityRequestRef`：
+
+```text
+entity_ref
+query_char_start
+query_char_end
+mention_text_sha256
+resolution_kind       # exact_name | exact_alias | stable_id
+entity_registry_identity
+```
+
+query span 按原问题 Unicode code point 半开区间计算；规范 mention 只能做与实体注册表相同的 Unicode/大小写规范化。
+
 允许的 `branch_kind`：
 
 | 分支 | 触发条件 | 过滤与所有权 |
 |---|---|---|
-| `primary_owner` | 现有知识任务 | 保持 `entity_strict/topic_strict/corpus_topic` |
+| `primary_owner` | 现有非 Story 实体或 Topic 知识任务 | 保持 `entity_strict/topic_strict/corpus_topic` |
+| `story_required` | 原问题明确点名 Story，包括跨 Story 比较 | 1～3 个时只检索获批 Owner 集合并保证配额；4～32 个时只生成继续动作 |
 | `story_mentions` | 查询明确要求某角色在剧情中的行为/经历，且角色稳定 ID 已解析 | 只检索 `story_segment`，且 `mentioned_entity_ids` 精确包含角色 ID；结果 Owner 仍为 Story |
 | `story_examples` | Topic/Page 问题明确要求剧情例证、影响或出现位置 | 只检索 Story 域；Topic/Page 主分支先满足定义配额，结果 Owner 仍为 Story |
 
-`STORYBRANCH-P0-01`：Planner 只能提出补充分支；Route Policy 必须根据任务意图、稳定实体解析、E0 能力和用户原问题作最终授权。
+`STORYBRANCH-P0-01`：Planner 只能提出分支类型、查询和实体引用；Route Policy 必须根据任务意图、稳定实体解析、E0 能力和用户原问题作最终授权。
 
 `STORYBRANCH-P0-02`：普通角色介绍、技能、语音、物品等查询不得自动开启 `story_mentions`。角色 Story 意图必须由原问题明确表达，不能由 Dense 命中反向授权。
 
@@ -429,9 +476,35 @@ context_budget
 
 `STORYBRANCH-P0-07`：补充分支仍是 grounded KB 路线，不获得 `llm_general` 权限，也不改变自由补充双开关的既有授权语义。
 
-`STORYBRANCH-P0-08`：RequestPlan、Route Policy、Retriever、全局引用、REST/SSE 和会话记忆均须显式识别这些分支；只有 `primary_owner` 可以更新角色/Topic 会话锚点，Story 补充分支不能覆盖主实体锚点。
+`STORYBRANCH-P0-08`：RequestPlan、Route Policy、Retriever、全局引用、REST/SSE 和会话记忆均须显式识别这些分支；只有 `primary_owner` 可以更新角色/Topic 会话锚点。单 Owner 的 `story_required` 可更新 Story 锚点，2～3 Owner 时不得选择一个伪单一锚点；Story 补充分支不能覆盖主实体锚点。
 
-`STORYBRANCH-P0-09`：每个知识子任务最多包含一个 `primary_owner` 和一个获批 Story 补充分支；分支 ID、顺序和授权原因必须确定性生成并进入 trace。
+`STORYBRANCH-P0-09`：每个知识子任务最多包含一个主分支（`primary_owner` 或 `story_required`）和一个获批 Story 补充分支（`story_mentions` 或 `story_examples`）；分支 ID、顺序和授权原因必须确定性生成并进入 trace。
+
+`STORYBRANCH-P0-10`：`requested_story_entity_refs` 是 Planner 从原问题提出的有序去重 `StoryEntityRequestRef` 数组，最多 32 个。每个 `entity_ref` 必须携带 `entity_type=story`、稳定 `entity_id` 和规范名称；自由文本 Story 名不能直接进入该数组。超过 32 个或无法完整枚举时返回 `narrow_story_scope`，不得截断请求集合。
+
+`STORYBRANCH-P0-11`：Route Policy 必须逐项验证 requested 引用确实来自原问题、通过同版精确实体/别名注册表唯一解析，并能回查 Story Parent。requested 数量为 1 至 3 时，Policy 将同序引用复制为 `required_story_entity_refs` 并派生 `authorized_story_owner_ids`。任一引用未解析、歧义、类型错误或重复冲突时，整个 `story_required` 分支 `denied` 并返回 `story_owner_resolution_shortfall`；不得只授权可解析子集后声称完成比较。
+
+`STORYBRANCH-P0-12`：Retriever 只能消费 `authorization_status=authorized` 的 `authorized_story_owner_ids`，并将它作为严格 allowlist。BM25、Dense 命中、Planner 自由文本或上下文记忆均不能在 Route Policy 之后追加 Story Owner。
+
+`STORYBRANCH-P0-13`：显式 2～3 Story 查询保留为线程 A 定义的一个不可拆分 KB 任务、一个 `story_required` 主分支；不得拆成多个 subtask 后进行跨分支比较综合。
+
+`STORYBRANCH-P0-14`：显式请求 4～32 个 Story 时，P0 不创建 Composite 比较。Route Policy 令分支进入 `needs_continuation`、返回 `too_many_required_story_owners`，并按 requested 集合的原问题顺序生成每页最多 3 个 Owner 的确定性继续动作；初始分支不执行检索。单页结果必须标注范围，不得声称已完成跨全部 Story 的比较。
+
+`STORYBRANCH-P0-15`：`story_required` 只有在全部授权 Owner 至少获得一个可提交 Segment 时才能把比较覆盖标为完整；缺少任一 Owner 时保留已验证证据、返回 `story_owner_shortfall`，并禁止生成完整比较结论。
+
+`STORYBRANCH-P0-16`：每个继续动作固定包含 `action_type=continue_story_owner_page`、原 query SHA-256、requested 集合顺序哈希、page index/count、最多 3 个 `StoryEntityRequestRef` 和 Route Policy identity；`action_id` 由这些规范字段哈希生成。用户触发后仍须重新经过 Route Policy 校验，不能直接获得 Retriever 权限。
+
+`STORYBRANCH-P0-17`：测试必须覆盖 Story 引用顺序、精确别名、重复去重、歧义 fail-closed、2/3 Story 配额、4～32 分页动作、超过 32 的 narrowing、动作重验、Retriever allowlist 和“Dense 命中不能扩充授权集合”。
+
+`STORYBRANCH-P0-18`：字段互斥固定为：获批 `story_required` 的 `primary_entity_ref` 为空、requested/required/authorized 三组同序且数量为 1 至 3；`needs_continuation` 的 requested 为 4 至 32、required/authorized 为空且 actions 非空；`primary_owner`、`story_mentions`、`story_examples` 的三个 Story 集合与 actions 均为空，并按各自规则使用 `primary_entity_ref`。schema 验证失败时不得执行 Retriever。
+
+`STORYBRANCH-P0-19`：明确点名一个或多个 Story 且知识意图要求 Story 内容时统一使用 `story_required`；`primary_owner` 保留现有非 Story 实体/Topic 主路线，`story_examples` 只处理未要求固定 Story 集合的开放式剧情例证。
+
+`STORYBRANCH-P0-20`：本节所有数量限制、分页算法和 action schema 均属于 `StoryBranchConfig/v1` 身份；runtime、测试、trace 和 provenance 必须读取同一版本化配置，禁止在 Planner、Route Policy 和前端各维护一组常量。
+
+`STORYBRANCH-P0-21`：`needs_continuation` 和 `narrow_story_scope` 不属于检索 `empty`；它们产生确定性边界响应、`retrieval_outcome=not_applicable` 和恢复 action，不得触发常驻自由补充的 empty fallback。
+
+`STORYBRANCH-P0-22`：Route Policy 必须从 `query_char_start/end` 重新读取原问题 mention、验证 mention hash 与注册表 identity，并按首次 span 排序；span 越界、重叠冲突、hash 不符或 Planner 顺序与 span 顺序不一致时 fail-closed。
 
 ## 10. 索引与产物
 
@@ -588,7 +661,7 @@ Segment Dense hits + Atom-derived Segment signals
 
 `PIPE-P0-05`：Dense 命中必须先按 `retrieval_unit_type` 分派；`child` 行继续进入现有 Child 路径，`story_segment` 行只进入 Segment 路径，未知类型 fail-closed。
 
-`PIPE-P0-06`：`primary_owner`、`story_mentions` 和 `story_examples` 分支分别执行授权和过滤，再在预算层合并；不得先混合全部 Owner 后调用现有 Owner Gate。
+`PIPE-P0-06`：`primary_owner`、`story_required`、`story_mentions` 和 `story_examples` 分支分别执行授权和过滤，再在预算层合并；不得先混合全部 Owner 后调用现有 Owner Gate。
 
 `PIPE-P0-07`：同一知识子任务中，相同规范化 Dense query 与同一模型身份只能调用一次 query embedding API，向量在 Child/Story 过滤搜索间复用；每个子任务最多允许两个不同的 Dense query embedding，实际调用次数必须进入 trace 和延迟报告。
 
@@ -704,12 +777,12 @@ Story Owner 分数：
 ```text
 story_score =
   best_segment_score
-  + 0.25 * second_segment_score
+  + second_segment_factor * second_segment_score
 ```
 
 不得累加一个 Story 的全部 Segment 分数。显式点名 Story 通过配额保证覆盖，不使用额外浮点 bonus。
 
-`OWNERBUDGET-P0-01`：显式点名的 1 至 3 个 Story 必须全部获得最小配额。
+`OWNERBUDGET-P0-01`：`story_required` 中经 Route Policy 授权的 1 至 3 个 Story 必须全部获得最小配额；候选排序不得替换或删除该集合。
 
 `OWNERBUDGET-P0-02`：开放式推断查询最多自动选择 3 个 Story Owner。
 
@@ -717,7 +790,7 @@ story_score =
 
 `OWNERBUDGET-P0-04`：一个长 Story 不得在其他显式 Story 获得首个 Segment 前占用第二个 Segment。
 
-`OWNERBUDGET-P0-05`：显式请求 4 个以上 Story 时，由 Composite 分支或分页恢复动作处理，不在一个排行榜中静默裁掉 Story。
+`OWNERBUDGET-P0-05`：显式请求 4 个以上 Story 时只返回第 9.1 节定义的分页/继续动作；P0 不创建 Composite 比较，也不在一个排行榜中静默裁掉 Story。
 
 ## 15. 最终上下文预算
 
@@ -727,7 +800,7 @@ story_score =
 |---|---:|---:|---:|---|
 | 精确对白/单点事实 | 1 | 1～2 | 2,500 | 按意图 |
 | 单剧情经过/原因/关系 | 1 | 最多 6 | 6,000 | 保留其他请求意图 |
-| 显式比较两个剧情 | 2 | 每个 1～3；总计最多 6 | 6,000 | 按意图 |
+| 显式比较 2～3 个剧情 | 2～3 | 两个时每个 1～3；三个时每个 1～2；总计最多 6 | 6,000 | 按意图 |
 | 开放式多剧情例证 | 最多 3 | 每个 1～2 | 5,000～6,000 | 按意图 |
 | 世界观定义 + 剧情例证 | 最多 3 | 通常每个 1 | Story 最多 3,000 | 至少 2 条 Topic/Page |
 | 复合问题 | 按分支 | Story 最多 4 | 不超过全局预算 60% | 每个其他意图先保留一条 |
@@ -791,6 +864,10 @@ Story B
 
 `MULTISTORY-P0-03`：一个 Story 分支失败不得吞掉其他 Story 的已验证证据，但响应必须报告覆盖缺口。
 
+`MULTISTORY-P0-04`：显式比较的 Story 分组顺序使用 `required_story_entity_refs` 的原问题顺序，不按 Owner 分数、实体 ID 或检索完成顺序重排。
+
+`MULTISTORY-P0-05`：比较回答只能综合当前 `story_required` 分支中全部获批 Owner 的可提交证据；分页继续动作产生的是范围受限的独立结果，不得跨页自动合并成 P0 比较结论。
+
 ## 18. 上下文关系
 
 相邻扩展只允许：
@@ -849,6 +926,8 @@ context_char_shortfall
 citation_atom_shortfall
 story_relation_shortfall
 story_entity_link_shortfall
+story_owner_resolution_shortfall
+too_many_required_story_owners
 ```
 
 `SHORTFALL-P0-01`：显式 Story 未覆盖时，回答必须说明未覆盖范围并提供继续/展开动作。
@@ -897,7 +976,7 @@ Segment 和 Dense 产物身份至少包含：
 - Story Segment JSONL 哈希和行数；
 - SegmentContextUnit/AtomSpan schema 身份；
 - StoryFusionConfig/v1 身份；
-- Story 补充分支授权策略身份；
+- `StoryBranchConfig/v1` 与 Story 分支授权策略身份；
 - embedding 模型、维度和服务身份；
 - Typed Dense collection schema、unit 类型计数和 index 参数；
 - Analyzer/BM25 产物身份；
@@ -965,7 +1044,7 @@ max(1.20 * baseline_retrieval_p95_ms,
 | Topic/Page 定义 + Story 例证 | 8 |
 | 角色 Story mentions 与缺少精确关系的 shortfall | 4 |
 
-每个用例冻结 query、查询类型、期望 Story Owner、来源支持的 `required_atom_groups`、必要 Topic/Page source、禁止 Owner、分支边界、允许 shortfall 和来源相关性等级。D0 不预写尚不存在的 Segment ID；E1 后使用冻结规则从 Atom-to-Segment mapping 派生 relevant Segment。标签不得在观察候选检索结果后修改；修订标签必须生成新评测版本并同时重跑 baseline。
+每个用例冻结 query、查询类型、期望 Story Owner 集合及原问题顺序、来源支持的 `required_atom_groups`、必要 Topic/Page source、禁止 Owner、分支边界、允许 shortfall 和来源相关性等级。D0 不预写尚不存在的 Segment ID；E1 后使用冻结规则从 Atom-to-Segment mapping 派生 relevant Segment。标签不得在观察候选检索结果后修改；修订标签必须生成新评测版本并同时重跑 baseline。
 
 ### 25.1 精确性
 
@@ -989,7 +1068,7 @@ max(1.20 * baseline_retrieval_p95_ms,
 - 开放式寻找多个剧情例证；
 - 一个高频 Story 不得挤掉另一个显式 Story；
 - 三个 Story 达到配额；
-- 四个以上显式 Story 触发 Composite/继续动作。
+- 四个以上显式 Story 只触发确定性分页/继续动作，不创建 Composite 比较。
 
 ### 25.4 Topic 与 Story
 
@@ -1009,11 +1088,54 @@ max(1.20 * baseline_retrieval_p95_ms,
 
 `EVALSET-P0-02`：当前 `rag_full_chain_thresholds.v1.json` 的全链评测继续执行；Story Segment 专用评测是新增门禁，不替代现有可靠性、路由和安全评测。
 
-`EVALSET-P0-03`：不能从现有活动系统直接得到 Segment 标签不构成跳过理由；Segment/Atom gold 必须由冻结来源人工复核，baseline 只记录活动系统能否返回等价 Atom 证据。
+`EVALSET-P0-03`：不能从现有活动系统直接得到 Segment 标签不构成跳过理由；Segment/Atom gold 必须由冻结来源人工复核，baseline 只能按第 25.6 节的机器可执行规则记录活动系统是否实际返回等价 Atom 证据。
 
 `EVALSET-P0-04`：D 必须在创建真实影子向量前提交评测集、阈值、baseline receipt 及其 SHA-256，防止根据候选表现移动门槛。
 
 `EVALSET-P0-05`：一个 `required_atom_group` 被覆盖，当且仅当所选 Segment 至少包含该组一个 gold Atom；多细节用例包含多个独立 group，必须分别覆盖。relevant Segment ID 只能由固定 mapping 机械派生，禁止人工查看候选分数后补写。
+
+### 25.6 Baseline 等价 Atom 证据
+
+D0 生成 `story_baseline_atom_equivalence.v1.jsonl`。每个 gold Atom 先冻结：
+
+```text
+atom_id
+source_title
+source_revision_id
+source_content_sha256
+source_json_path
+canonical_evidence_text_sha256
+```
+
+规范证据文本只执行 Unicode NFC 和 `CRLF/CR -> LF`；不折叠空白、不删除标点、不做分词、摘要或语义相似匹配。
+
+“同一精确来源版本”定义为：`source_title` 相同，且双方非空 `source_content_sha256` 相同；只有活动 artifact 确实不保存内容哈希时，才允许双方非空 `source_revision_id` 相同作为替代。双方同时携带 revision 与哈希时两者都必须一致；字段缺失或互相冲突均不匹配。
+
+旧活动结果覆盖某个 gold Atom 只允许以下规则，按顺序判定：
+
+1. `exact_atom_identity`：活动结果已携带相同 `atom_id` 和规范内容哈希。
+2. `exact_source_path`：活动结果 source ref 与 gold Atom 属于同一精确来源版本，且 `source_json_path` 和规范证据文本哈希全部一致。
+3. `unique_exact_text_span`：活动结果与 gold Atom 属于同一精确来源版本，gold Atom 的规范证据文本在活动结果规范正文中恰好出现一次；receipt 必须记录 Unicode code point 半开 span 和匹配文本哈希。
+
+第三条只证明旧结果正文实际包含该 Atom 证据，不把旧聚合 Child 自动等同于整个 Story。
+
+`EVALSET-P0-06`：仅有同一 Story、同一 source title、Parent/Child migration link、`corrected_semantics` expansion group 或一对多候选集合，均不能自动算作覆盖任一或全部 Atom。
+
+`EVALSET-P0-07`：`unique_exact_text_span` 出现零次或多次均不计覆盖；不得使用模糊子串、分词重叠、编辑距离、Dense 相似度、LLM 判断或“旧块足够大”推断。
+
+`EVALSET-P0-08`：每条 baseline receipt 必须逐项记录 `query_id`、结果 rank、目标 `atom_id`、匹配规则、活动 source ref、目标 source ref、匹配 span、规范文本哈希和布尔结论；未匹配也必须记录确定性 reason code。
+
+`EVALSET-P0-09`：`required_atom_group` 的 baseline 覆盖率只由其成员 Atom 的上述逐项匹配汇总，migration expansion group 本身不增加分子。
+
+`EVALSET-P0-10`：等价匹配器、规范化配置、活动检索结果、gold Atom artifact 和 receipt 必须有 schema、代码提交与 SHA-256；这些身份在首次候选检索前冻结。
+
+`EVALSET-P0-11`：测试必须覆盖精确路径命中、唯一 span 命中、重复文本歧义、source version 不同、仅 migration group、空 source ref 和规范化边界，确保 baseline 不能被一对多迁移高估。
+
+`EVALSET-P0-12`：同一个活动结果文本 span 最多消费一次。若同一来源版本中多个 gold Atom 具有相同规范证据文本且活动结果缺少精确 path，相关 Atom 全部保持歧义，不得把一个唯一字符串位置重复计给多个目标。
+
+`EVALSET-P0-13`：receipt 必须区分 `retrieval_at_k` 与 `final_context`。前者只读取对应 K 内、通过活动 snapshot 验证的检索 Child 正文与 source refs；后者只读取经过当前 packer/预算后实际发送给生成模型的 grounded source 文本及其真实可见 span。
+
+`EVALSET-P0-14`：最终证据 Recall 只消费 `stage=final_context` 的匹配；未进入上下文或在最终渲染中不可见的旧 Child 内容不计覆盖。LLM 最终回答、Planner 重述、摘要文本或模型复述在任何阶段都不得作为 baseline Atom 覆盖证据。
 
 ## 26. 指标
 
@@ -1054,6 +1176,8 @@ max(1.20 * baseline_retrieval_p95_ms,
 | 当前系统难以召回的中/末段子集最终证据 Recall 提升 | baseline `< 0.90` 时至少 `+0.10`；否则不退化 |
 | 融合后 MRR、nDCG@8 | 各自不低于 baseline `-0.02` |
 | 显式 1～3 Story Owner 覆盖率 | `1.00` |
+| Required Story Owner 授权精确率 | `1.00` |
+| 4+ Story 分页/继续动作正确率 | `1.00`，Composite 比较次数为 `0` |
 | 单 Story 多细节覆盖率 | `>= 0.85` |
 | Topic/Page 必要来源保留率 | `1.00` |
 | Story 重复正文率 | `0` |
@@ -1063,13 +1187,15 @@ max(1.20 * baseline_retrieval_p95_ms,
 | 已发布角色关系精确率 | `1.00` |
 | 可评测精确角色关系召回率 | `>= 0.90` |
 | protected numeric/short-text/ID 查询不退化率 | `1.00` |
+| Baseline 等价 Atom 错误计覆盖数 | `0` |
+| 超长 Atom 映射、正文和引用闭合率 | `1.00` |
 | 全链成功率 | `>= 0.98` |
 | 每个知识子任务的 Dense query embedding API 调用 | `<= 2`，相同 query 不得重复调用 |
 | Reranker API 调用次数 | `0` |
 
 `GATE-P0-01`：任一硬门槛失败即 `no_go`；不得用其他指标平均分、人工主观印象或生成回答流畅度抵消。
 
-`GATE-P0-02`：引用闭合、重复正文、分支越界、Owner 越权、protected 零退化、容量和 provenance 属于零容忍门槛。
+`GATE-P0-02`：引用闭合、重复正文、分支越界、Owner 越权、required Story 授权、baseline 等价证据误判、超长 Atom 闭合、protected 零退化、容量和 provenance 属于零容忍门槛。
 
 `GATE-P0-03`：若 Segment Dense 未达阈值，允许保留 E 的代码与影子报告继续诊断，但不得重建为可激活候选，也不得临时开启 Reranker 掩盖问题。
 
@@ -1148,7 +1274,8 @@ max(1.20 * baseline_retrieval_p95_ms,
 - 冻结 `story_segment_eval.v1.jsonl`；
 - 冻结 `story_segment_thresholds.v1.json`；
 - 运行当前活动系统 baseline；
-- 提交评测与 baseline receipt；
+- 生成并验证 `story_baseline_atom_equivalence.v1.jsonl`；
+- 提交评测、等价匹配器身份与 baseline receipt；
 - 创建 E worktree；
 - E 只编写 Plan，等待审核。
 
@@ -1158,6 +1285,8 @@ max(1.20 * baseline_retrieval_p95_ms,
 - step/choice/merge/cycle/terminal 语义验证；
 - `story_atom_structure.v1.jsonl` 公共 schema；
 - 每个 Atom 一条结构行；
+- Atom 长度分布、超长计数和 `length_status`；
+- 超长单 Atom/Dense limit 边界证据；
 - 精确角色关系与未解析诊断；
 - 显式图闭包、blocked Story 和 source-order fallback；
 - 两次构建逐字节一致；
@@ -1188,7 +1317,9 @@ max(1.20 * baseline_retrieval_p95_ms,
 
 ### E3：受控分支、融合与预算
 
-- `primary_owner/story_mentions/story_examples` Route Policy 授权；
+- `primary_owner/story_required/story_mentions/story_examples` Route Policy 授权；
+- 1～3 个 required Story Owner allowlist；
+- 4+ Story 分页/继续动作且不创建 Composite 比较；
 - 现有 Owner Gate 保持严格；
 - Atom-to-Segment 映射；
 - Segment 去重；
@@ -1225,27 +1356,30 @@ max(1.20 * baseline_retrieval_p95_ms,
 
 1. D0 已为监督器增加独立 E worker，启动、恢复、停止、观察窗口和日志隔离测试通过。
 2. Story 专用评测集、阈值和当前活动 baseline 已在真实候选 embedding 前冻结并提交。
-3. 每个规范 Story Atom 恰好对应一条 E0 结构行；显式图零悬空，结构异常 Story 明确阻断，规范 Atom 零修改。
-4. 每个可用规范 Story Atom 在本版映射中恰好属于一个 Segment。
-5. Segment 构建确定、分支正确且来源闭合。
-6. `SegmentContextUnit`、Atom spans、Segment/Atom 双预算和请求级引用逐项闭合。
-7. Story Atom 不再进入 E 交付的新 Dense embedding 输入；D 创建的影子 collection 中也不得出现 Story Atom。
-8. 新 Dense 行全部满足 typed retrieval-unit schema；Segment 不冒充 Child，类型计数和 ID 哈希正确。
-9. Atom BM25 精确命中能稳定提升其所属 Segment，且通道内 Top-K 不被误当作跨通道最终截断。
-10. Segment 与 Atom 不作为重复正文进入上下文。
-11. `story_mentions/story_examples` 经 Route Policy 独立授权，现有 Owner Gate 未被放宽。
-12. `StoryFusionConfig/v1` 常数、公式、tie-break 和 provenance 已冻结并通过精确数值测试。
-13. 显式 1～3 个 Story 的覆盖配额有效。
-14. 单 Story 多细节不会只保留一个局部邻接簇。
-15. `暴雨是什么` 等 Topic 查询保留 Topic/Page 定义证据。
-16. 数字实体、短对白、精确标识和角色关系评测达到零退化/精度门槛。
-17. 重复正文、引用闭合、分支越界、Owner 越权和所有 go/no-go 指标达到第 26.1 节硬阈值。
-18. Reranker 保持关闭且调用次数为零。
-19. 影子产物不修改 active pointer。
-20. E 的完整回归、fixture 和离线评测通过。
-21. D 已审查 diff、产物身份、embedding 输入、容量报告和 baseline/candidate 逐项指标。
-22. D 合并后执行的真实 Typed Dense 影子构建和端到端评测通过。
-23. 激活仍停在独立 D 门禁。
+3. Baseline 等价匹配器和逐 Atom receipt 已冻结；一对多 migration group 未被自动计为覆盖。
+4. 每个规范 Story Atom 恰好对应一条 E0 结构行；显式图零悬空，长度分布完整，结构异常 Story 明确阻断，规范 Atom 零修改。
+5. 超过 800 字符的 Atom 只形成单 Atom Segment，`oversize_atom`、Dense limit 和上下文 shortfall 边界全部通过测试。
+6. 每个可用规范 Story Atom 在本版映射中恰好属于一个 Segment。
+7. Segment 构建确定、分支正确且来源闭合。
+8. `SegmentContextUnit`、Atom spans、Segment/Atom 双预算和请求级引用逐项闭合。
+9. Story Atom 不再进入 E 交付的新 Dense embedding 输入；D 创建的影子 collection 中也不得出现 Story Atom。
+10. 新 Dense 行全部满足 typed retrieval-unit schema；Segment 不冒充 Child，类型计数和 ID 哈希正确。
+11. Atom BM25 精确命中能稳定提升其所属 Segment，且通道内 Top-K 不被误当作跨通道最终截断。
+12. Segment 与 Atom 不作为重复正文进入上下文。
+13. `primary_owner/story_required/story_mentions/story_examples` 经 Route Policy 独立授权，现有 Owner Gate 未被放宽。
+14. `StoryFusionConfig/v1` 常数、公式、tie-break 和 provenance 已冻结并通过精确数值测试。
+15. 显式 1～3 个 Story 的授权集合、原问题顺序和覆盖配额有效。
+16. 4 个以上显式 Story 只产生确定性分页/继续动作，不创建 Composite 比较或虚假完整结论。
+17. 单 Story 多细节不会只保留一个局部邻接簇。
+18. `暴雨是什么` 等 Topic 查询保留 Topic/Page 定义证据。
+19. 数字实体、短对白、精确标识和角色关系评测达到零退化/精度门槛。
+20. 重复正文、引用闭合、分支越界、Owner 越权和所有 go/no-go 指标达到第 26.1 节硬阈值。
+21. Reranker 保持关闭且调用次数为零。
+22. 影子产物不修改 active pointer。
+23. E 的完整回归、fixture 和离线评测通过。
+24. D 已审查 diff、产物身份、embedding 输入、容量报告和 baseline/candidate 逐项指标。
+25. D 合并后执行的真实 Typed Dense 影子构建和端到端评测通过。
+26. 激活仍停在独立 D 门禁。
 
 ## 30. 后续候选
 
@@ -1277,3 +1411,16 @@ max(1.20 * baseline_retrieval_p95_ms,
 `REVIEW-P0-01`：上述七项不是可延后的建议。D0 和 E0 未完成时不得开始 E1；E0 至 E5 任一阶段不得通过实现细节绕开对应前置契约。
 
 `REVIEW-P0-02`：本次全量 P0 仍采用“先固定输入、身份、授权、预算和验收，再实现”的顺序。不得以兼容旧 schema、复用 `child_id`、放宽 Owner Gate、模糊角色映射、临时 reranker 或人工挑选评测样本来缩短落地路径。
+
+### 31.1 第二轮重审闭环
+
+| 重审项 | 本 Spec 的闭环位置 | 结果 |
+|---|---|---|
+| 多 Story 问题无法表达 | 第 9.1 节 `STORYBRANCH` 第 10～22 条、第 14/17 节 | 单个不可拆分 KB 任务携带 1～3 个授权 Story Owner；4+ 只分页继续，不创建 Composite 比较 |
+| Baseline 等价 Atom 未定义 | 第 25.6 节 `EVALSET` 第 6～14 条 | 只接受精确 Atom、精确路径或同版本唯一文本 span；migration group 本身不计覆盖 |
+| 单个超长 Atom 无规则 | 第 5.1 节 `ATOMSTRUCT` 第 14～16 条、第 7 节 `BOUNDARY` 第 9～12 条 | 单 Atom 超长 Segment 是唯一 800 字符例外；Dense/上下文超限继续 fail-closed |
+| Owner 公式重复常量 | 第 12/14 节 | 两处均引用唯一 `StoryFusionConfig/v1.second_segment_factor` |
+
+`REVIEW-P0-03`：线程 A 的不可拆分跨实体比较规则保持不变；线程 E 只在线程 A 已保留的单个 KB 任务内部增加受授权 Story Owner 集合，不引入 P2 跨分支聚合。
+
+`REVIEW-P0-04`：D0 未生成 baseline 等价 receipt，或 E0 未完成长度 taxonomy 与超长 Atom 边界测试时，不得启动真实候选 embedding 构建。
