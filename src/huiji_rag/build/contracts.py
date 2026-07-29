@@ -21,6 +21,13 @@ MEDIA_V3_MANIFEST_SCHEMA_VERSION = "evb.media-artifact-manifest/v3"
 CORPUS_BUILD_SCHEMA_VERSION = "huiji.corpus-build/v2"
 PARENT_BLOCK_SCHEMA_VERSION = "huiji.parent-blocks/v2"
 CHILD_BLOCK_SCHEMA_VERSION = "huiji.child-blocks/v2"
+REFERENCED_MEDIA_PLAN_SCHEMA_VERSION = "huiji.referenced-media-plan/v1"
+REFERENCED_MEDIA_ALLOWLIST_ENTRY_SCHEMA_VERSION = (
+    "huiji.referenced-media-allowlist-entry/v1"
+)
+MEDIA_CAPACITY_REPORT_SCHEMA_VERSION = "huiji.media-capacity-report/v1"
+MEDIA_DOWNLOAD_APPROVAL_SCHEMA_VERSION = "huiji.media-download-approval/v1"
+MEDIA_DOWNLOAD_RECEIPT_SCHEMA_VERSION = "huiji.media-download-receipt/v1"
 
 MEDIA_V3_FIELD_ORDER = (
     "artifact_schema_version",
@@ -310,6 +317,14 @@ def canonical_jsonl_bytes(rows: Iterable[Mapping[str, Any]]) -> bytes:
                 json.dumps(validated, ensure_ascii=False, separators=(",", ":")) + "\n"
             ).encode("utf-8")
         )
+    return b"".join(encoded)
+
+
+def canonical_mapping_jsonl_bytes(rows: Iterable[Mapping[str, Any]]) -> bytes:
+    """Encode arbitrary contract rows as canonical UTF-8 JSONL."""
+    encoded: list[bytes] = []
+    for row in rows:
+        encoded.append(canonical_json_bytes(dict(row)))
     return b"".join(encoded)
 
 
