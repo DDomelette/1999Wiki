@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Work only in `D:\1999Wiki\.worktrees\main-scroll-navigation-fix` on branch `codex/main-scroll-navigation-fix`.
-- Invoke Kimi CLI only through `D:\KIMI\Kimi_Cli\bin\kimi.exe --yolo --prompt`; Kimi CLI 0.26.0 rejects combining `--auto` with prompt mode.
+- Invoke Kimi CLI only through `D:\KIMI\Kimi_Cli\bin\kimi.exe --prompt`; Kimi CLI 0.26.0 prompt mode rejects both `--auto` and `--yolo`.
 - Kimi CLI must not commit, push, merge, rebase, reset, clean, install dependencies, edit plans/specs, or touch the main checkout.
 - Page-level vertical scrolling has exactly one owner: `.snap-container`.
 - Preserve a separate `.chat-section__messages` scroll owner for chat history.
