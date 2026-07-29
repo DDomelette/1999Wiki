@@ -2,7 +2,7 @@
 
 日期：2026-07-30
 
-状态：完整 P0 范围已获用户批准；本文已按线程 D 两轮审查补齐前置契约，等待用户最终复核，尚未授权实施
+状态：完整 P0 方向与 Policy 权威 Story 检测方案已获用户批准；本文等待最终规格复核，尚未授权实施
 
 负责人：线程 E；规格、集成、向量重建与发布审核：线程 D
 
@@ -14,6 +14,8 @@
 - `docs/superpowers/specs/2026-07-29-rag-thread-c-topic-story-media-projection-design.md`
 - `docs/superpowers/specs/2026-07-29-rag-thread-c-story-migration-decision.md`
 - `docs/superpowers/plans/2026-07-29-rag-thread-c-closure-gates.md`
+
+最后两项目前仍是主工作区中的待审核文件，不构成已发布依赖。D0 只有在它们随线程 C 的受审提交进入 `main` 后，才能把其路径、提交和 SHA-256 写入 E 的依赖回执；不得从未跟踪工作区文件读取实施契约。
 
 ## 1. 背景
 
@@ -86,6 +88,8 @@ Level 3：原子子块
 `SCOPE-P0-04`：E0 生成的 `story_atom_structure.v1.jsonl` 是附加派生视图，不修改规范 Atom 的 `child_id`、`parent_id`、正文、来源引用或排序。
 
 `SCOPE-P0-05`：P0 不降级为“只实现线性 Segment”。存在显式来源结构的 Story 必须验证并保留分支关系；结构缺失的 Story 才允许明确标记为 `source_order`。
+
+`SCOPE-P0-06`：E 的所有设计依赖必须是固定 `main` 提交中可追踪的文件或已发布 artifact；未跟踪文件、其他 worktree 路径和对话摘要只能作为审查线索，不能成为实现输入。
 
 ## 4. 方案选择
 
@@ -419,7 +423,8 @@ query
 authorization_status
 authorization_reason
 primary_entity_ref
-requested_story_entity_refs
+planner_story_entity_refs
+story_mention_detection
 required_story_entity_refs
 authorized_story_owner_ids
 continuation_actions
@@ -436,11 +441,13 @@ P0 冻结 `StoryBranchConfig/v1`：
 
 ```text
 required_story_owner_limit = 3
-requested_story_ref_limit = 32
+planner_story_ref_limit = 32
 story_owner_page_size = 3
+mention_detector_name = exact_story_mention
+mention_detector_version = 1
 ```
 
-三个 Story 引用数组的元素使用 `StoryEntityRequestRef`：
+Planner、Detector 和 Policy 输出中的 Story 引用均使用 `StoryEntityRequestRef`：
 
 ```text
 entity_ref
@@ -453,14 +460,32 @@ entity_registry_identity
 
 query span 按原问题 Unicode code point 半开区间计算；规范 mention 只能做与实体注册表相同的 Unicode/大小写规范化。
 
+`story_mention_detection` 使用不可变 `StoryMentionDetectionReceipt/v1`：
+
+```text
+schema_version
+detector_identity
+query_sha256
+entity_registry_identity
+detection_complete
+detected_story_count
+detected_story_entity_refs
+detected_story_refs_sha256
+mention_occurrences
+ambiguous_occurrences
+overlap_conflicts
+```
+
+`detected_story_entity_refs` 是按原问题首次非冲突 span 排序、按 Story Owner 去重的完整数组；`mention_occurrences` 保留同一 Owner 的所有不同出现位置。receipt 不保存原问题正文，只保存规范 mention 哈希、span、resolution kind、稳定 Story ID 和诊断 reason code。
+
 允许的 `branch_kind`：
 
 | 分支 | 触发条件 | 过滤与所有权 |
 |---|---|---|
 | `primary_owner` | 现有非 Story 实体或 Topic 知识任务 | 保持 `entity_strict/topic_strict/corpus_topic` |
 | `story_required` | 原问题明确点名 Story，包括跨 Story 比较 | 1～3 个时只检索获批 Owner 集合并保证配额；4～32 个时只生成继续动作 |
-| `story_mentions` | 查询明确要求某角色在剧情中的行为/经历，且角色稳定 ID 已解析 | 只检索 `story_segment`，且 `mentioned_entity_ids` 精确包含角色 ID；结果 Owner 仍为 Story |
-| `story_examples` | Topic/Page 问题明确要求剧情例证、影响或出现位置 | 只检索 Story 域；Topic/Page 主分支先满足定义配额，结果 Owner 仍为 Story |
+| `story_mentions` | 查询明确要求某角色在剧情中的行为/经历，且角色稳定 ID 已解析 | 只检索 `story_segment`，且 `mentioned_entity_ids` 精确包含角色 ID；存在显式 Story mention 时再与获批 Owner allowlist 取交集 |
+| `story_examples` | Topic/Page 问题明确要求剧情例证、影响或出现位置 | 只检索 Story 域；存在显式 Story mention 时只消费获批 Owner allowlist；Topic/Page 主分支先满足定义配额 |
 
 `STORYBRANCH-P0-01`：Planner 只能提出分支类型、查询和实体引用；Route Policy 必须根据任务意图、稳定实体解析、E0 能力和用户原问题作最终授权。
 
@@ -480,31 +505,57 @@ query span 按原问题 Unicode code point 半开区间计算；规范 mention �
 
 `STORYBRANCH-P0-09`：每个知识子任务最多包含一个主分支（`primary_owner` 或 `story_required`）和一个获批 Story 补充分支（`story_mentions` 或 `story_examples`）；分支 ID、顺序和授权原因必须确定性生成并进入 trace。
 
-`STORYBRANCH-P0-10`：`requested_story_entity_refs` 是 Planner 从原问题提出的有序去重 `StoryEntityRequestRef` 数组，最多 32 个。每个 `entity_ref` 必须携带 `entity_type=story`、稳定 `entity_id` 和规范名称；自由文本 Story 名不能直接进入该数组。超过 32 个或无法完整枚举时返回 `narrow_story_scope`，不得截断请求集合。
+`STORYBRANCH-P0-10`：`planner_story_entity_refs` 是 Planner 的不可信提案，不是授权事实来源。它是从原问题提出的有序去重数组，最多 32 个；每个引用必须携带 `entity_type=story`、稳定 `entity_id`、规范名称和原问题 span。自由文本 Story 名不能直接进入该数组。
 
-`STORYBRANCH-P0-11`：Route Policy 必须逐项验证 requested 引用确实来自原问题、通过同版精确实体/别名注册表唯一解析，并能回查 Story Parent。requested 数量为 1 至 3 时，Policy 将同序引用复制为 `required_story_entity_refs` 并派生 `authorized_story_owner_ids`。任一引用未解析、歧义、类型错误或重复冲突时，整个 `story_required` 分支 `denied` 并返回 `story_owner_resolution_shortfall`；不得只授权可解析子集后声称完成比较。
+`STORYBRANCH-P0-11`：Route Policy 在处理每个知识子任务时，必须使用同版 E0 实体注册表和固定 `StoryMentionDetector/v1` 独立扫描原问题。Detector 不能读取 `planner_story_entity_refs`、Planner span、Planner 解析结果、会话锚点、BM25/Dense 命中或 LLM 输出作为候选提示。
 
-`STORYBRANCH-P0-12`：Retriever 只能消费 `authorization_status=authorized` 的 `authorized_story_owner_ids`，并将它作为严格 allowlist。BM25、Dense 命中、Planner 自由文本或上下文记忆均不能在 Route Policy 之后追加 Story Owner。
+`STORYBRANCH-P0-12`：Detector 必须枚举全部精确 Story 规范名、别名和稳定 ID 出现位置，而不是复用只返回最长单一 Owner 的 EntityLexicon `match/resolve` 接口。中文键按规范 Unicode 字符串精确匹配；ASCII、数字和内部 ID 还必须满足版本化标识符边界，避免把较长标识中的子串误判为独立 Story。
 
-`STORYBRANCH-P0-13`：显式 2～3 Story 查询保留为线程 A 定义的一个不可拆分 KB 任务、一个 `story_required` 主分支；不得拆成多个 subtask 后进行跨分支比较综合。
+`STORYBRANCH-P0-13`：同一 span、同一 Owner 的重复 name/alias/ID 匹配按 `stable_id > exact_name > exact_alias` 选择一种规范表示；同一 Owner 的嵌套 span 选择来源支持的最长 span并保留其他 occurrence 证据。不同 Owner 的同 span或重叠 span、一个精确键映射多个 Owner、以及不能唯一归属的边界冲突必须记录歧义并令整个分支 `denied`。
 
-`STORYBRANCH-P0-14`：显式请求 4～32 个 Story 时，P0 不创建 Composite 比较。Route Policy 令分支进入 `needs_continuation`、返回 `too_many_required_story_owners`，并按 requested 集合的原问题顺序生成每页最多 3 个 Owner 的确定性继续动作；初始分支不执行检索。单页结果必须标注范围，不得声称已完成跨全部 Story 的比较。
+`STORYBRANCH-P0-14`：Detector 必须扫描完整原问题后才写 `detection_complete=true`。`detected_story_count` 等于完整 Owner 去重数组长度；数组顺序固定为 `(query_char_start, query_char_end, entity_id)`，`detected_story_refs_sha256` 对规范数组字节取哈希。不得为了适配 32 个 Planner 上限而提前停止扫描、截断数组或把“至少 33 个”伪装成精确数量。
 
-`STORYBRANCH-P0-15`：`story_required` 只有在全部授权 Owner 至少获得一个可提交 Segment 时才能把比较覆盖标为完整；缺少任一 Owner 时保留已验证证据、返回 `story_owner_shortfall`，并禁止生成完整比较结论。
+`STORYBRANCH-P0-15`：`story_required` 始终使用下表；`story_mentions/story_examples` 在 Detector 发现显式 Story scope 时也使用同一表，并把获批 Owner 作为附加过滤。任何未列组合均 `denied`，不得执行 Retriever。没有 Story mention 的普通非 Story 知识任务，以及没有显式 Story scope 的开放式 `story_mentions/story_examples`，继续按其原有分支授权，不套用本表：
 
-`STORYBRANCH-P0-16`：每个继续动作固定包含 `action_type=continue_story_owner_page`、原 query SHA-256、requested 集合顺序哈希、page index/count、最多 3 个 `StoryEntityRequestRef` 和 Route Policy identity；`action_id` 由这些规范字段哈希生成。用户触发后仍须重新经过 Route Policy 校验，不能直接获得 Retriever 权限。
+| 检测与提案状态 | `authorization_status` | `authorization_reason` | Policy 输出 |
+|---|---|---|---|
+| 检测不完整 | `denied` | `story_mention_detection_incomplete` | required/authorized 为空 |
+| `story_required` 检测为零，或任一 detected Story 无法唯一回查 Parent | `denied` | `story_owner_resolution_shortfall` | required/authorized 为空 |
+| 歧义或不同 Owner span 冲突 | `denied` | `story_mention_ambiguous` | required/authorized 为空 |
+| 检测 1～32 个，但 Planner 提案与检测数组不完全一致 | `denied` | `story_mention_set_mismatch` | required/authorized 为空 |
+| 检测 1～3 个且提案完全一致 | `authorized` | `authorized_story_owner_set` | detected 同序复制为 required/authorized |
+| 检测 4～32 个且提案完全一致 | `needs_continuation` | `too_many_required_story_owners` | required/authorized 为空，生成分页动作 |
+| 检测超过 32 个 | `denied` | `narrow_story_scope` | required/authorized 为空，只生成 narrowing action |
 
-`STORYBRANCH-P0-17`：测试必须覆盖 Story 引用顺序、精确别名、重复去重、歧义 fail-closed、2/3 Story 配额、4～32 分页动作、超过 32 的 narrowing、动作重验、Retriever allowlist 和“Dense 命中不能扩充授权集合”。
+`STORYBRANCH-P0-16`：1～32 个时，Planner 与 Detector 的“完全一致”要求数组长度、Owner ID、首次规范 span、mention hash、resolution kind、注册表 identity 和顺序逐项一致。遗漏、额外项、重复冲突或重排均是 `story_mention_set_mismatch`；Policy 不自动修正 Planner 后继续授权，也不得只授权双方交集。
 
-`STORYBRANCH-P0-18`：字段互斥固定为：获批 `story_required` 的 `primary_entity_ref` 为空、requested/required/authorized 三组同序且数量为 1 至 3；`needs_continuation` 的 requested 为 4 至 32、required/authorized 为空且 actions 非空；`primary_owner`、`story_mentions`、`story_examples` 的三个 Story 集合与 actions 均为空，并按各自规则使用 `primary_entity_ref`。schema 验证失败时不得执行 Retriever。
+`STORYBRANCH-P0-17`：Retriever 只能消费 `authorization_status=authorized` 的 `authorized_story_owner_ids`，并将它作为严格 allowlist。BM25、Dense 命中、Planner 自由文本、Detector 的未授权结果或上下文记忆均不能在 Route Policy 之后追加或替换 Story Owner。
 
-`STORYBRANCH-P0-19`：明确点名一个或多个 Story 且知识意图要求 Story 内容时统一使用 `story_required`；`primary_owner` 保留现有非 Story 实体/Topic 主路线，`story_examples` 只处理未要求固定 Story 集合的开放式剧情例证。
+`STORYBRANCH-P0-18`：显式 2～3 Story 查询保留为线程 A 定义的一个不可拆分 KB 任务、一个 `story_required` 主分支；不得拆成多个 subtask 后进行跨分支比较综合。`story_required` 只有在全部授权 Owner 至少获得一个可提交 Segment 时才能把比较覆盖标为完整。
 
-`STORYBRANCH-P0-20`：本节所有数量限制、分页算法和 action schema 均属于 `StoryBranchConfig/v1` 身份；runtime、测试、trace 和 provenance 必须读取同一版本化配置，禁止在 Planner、Route Policy 和前端各维护一组常量。
+`STORYBRANCH-P0-19`：显式请求 4～32 个 Story 时，P0 不创建 Composite 比较。Route Policy 只能从已完成且与 Planner 完全一致的 detected 数组生成每页最多 3 个 Owner 的确定性继续动作；初始分支不执行检索。单页结果必须标注范围，不得声称已完成跨全部 Story 的比较。
 
-`STORYBRANCH-P0-21`：`needs_continuation` 和 `narrow_story_scope` 不属于检索 `empty`；它们产生确定性边界响应、`retrieval_outcome=not_applicable` 和恢复 action，不得触发常驻自由补充的 empty fallback。
+`STORYBRANCH-P0-20`：每个分页动作固定包含 `action_type=continue_story_owner_page`、原 query SHA-256、detected 数组顺序哈希、page index/count、最多 3 个 `StoryEntityRequestRef`、Detector identity 和 Route Policy identity；`action_id` 由这些规范字段哈希生成。用户触发后必须对原问题、检测回执、页面引用和当前注册表重新校验，不能直接获得 Retriever 权限。
 
-`STORYBRANCH-P0-22`：Route Policy 必须从 `query_char_start/end` 重新读取原问题 mention、验证 mention hash 与注册表 identity，并按首次 span 排序；span 越界、重叠冲突、hash 不符或 Planner 顺序与 span 顺序不一致时 fail-closed。
+`STORYBRANCH-P0-21`：检测超过 32 个时必须明确使用 `authorization_status=denied` 和 `authorization_reason=narrow_story_scope`。`narrow_story_scope` 不是第五种授权状态，也不能复用 `needs_continuation`；Policy 不比较被上限截断的 Planner 提案，也不生成任何 Owner 检索页。
+
+`STORYBRANCH-P0-22`：narrowing action 固定包含 `action_type=narrow_story_scope`、原 query SHA-256、完整 detected count、detected 数组哈希、`planner_story_ref_limit=32`、`required_story_owner_limit=3`、Detector/Policy identity 和 `requires_new_user_query=true`。它不得自动挑选前 3/32 个 Story、携带 Retriever allowlist 或在点击后复用旧授权；用户必须提交收窄后的新问题。
+
+`STORYBRANCH-P0-23`：字段闭包固定为：获批且具有显式 Story scope 的 Story-bearing 分支，其 planner/detected/required/authorized 四组同序且数量为 1 至 3；其中 `story_required.primary_entity_ref` 为空，`story_mentions/story_examples.primary_entity_ref` 保留其角色或 Topic/Page 引用。`needs_continuation` 的 planner/detected 为 4 至 32、required/authorized 为空且分页动作非空；`authorization_status=denied` 且 `authorization_reason=narrow_story_scope` 时 detected 大于 32、required/authorized 为空且仅有 narrowing action。开放式 `story_mentions/story_examples` 的四组 Story 数组为空。schema 验证失败时不得执行 Retriever。
+
+`STORYBRANCH-P0-24`：`story_mention_detection` 对所有知识子任务运行。存在歧义或跨 Owner 重叠时，任何 Planner 分支形态都固定 `denied/story_mention_ambiguous`；明确检测到非歧义 Story 时，必须恰好有一个 Story-bearing 分支（`story_required`、`story_mentions` 或 `story_examples`）提交与 detected refs 完全一致的 Planner 提案。没有分支、多个分支竞争同一 scope 或任一分支只解释子集时，Route Policy 返回 `denied/story_scope_unaccounted`。Policy 不得仅凭 Detector 自动把非 Story 分支升级为 Story 检索权限。
+
+`STORYBRANCH-P0-25`：Story 本身是主问题或需要跨 Story 比较时使用 `story_required`；角色经历问题使用 `primary_owner + story_mentions`，Topic/Page 剧情例证使用 `primary_owner + story_examples`。后两类存在显式 Story scope 时，补充分支必须同时满足角色/Topic 语义过滤和 `authorized_story_owner_ids`，不能降为无约束 Story 搜索，也不能把补充分支提升为跨 Owner 比较结论。
+
+`STORYBRANCH-P0-26`：本节所有检测规范、边界规则、数量限制、状态机、分页算法和 action schema 均属于 `StoryBranchConfig/v1` 与 Detector identity；Planner、Route Policy、Retriever、前端、trace 和 provenance 必须读取同一版本化配置，禁止分别维护常量或匹配规则。
+
+`STORYBRANCH-P0-27`：`needs_continuation`、`narrow_story_scope`、`story_mention_set_mismatch` 和 `story_scope_unaccounted` 均不属于检索 `empty`；它们产生确定性边界响应、`retrieval_outcome=not_applicable` 和适用的恢复 action，不得触发自由补充 empty fallback。
+
+`STORYBRANCH-P0-28`：Route Policy 必须从 `query_char_start/end` 重新读取原问题 mention、验证 mention hash 与注册表 identity，并按 Detector 规范顺序比较；span 越界、hash 不符、Planner 顺序与 detected 顺序不一致或检测回执 query hash 不符时 fail-closed。
+
+`STORYBRANCH-P0-29`：测试必须覆盖 Planner 遗漏第 1/中间/最后一个 Story、额外 Story、重排、重复、精确别名、同 Owner 多次出现、不同 Owner span 重叠、歧义键、2/3 Owner 配额、4/32 分页、33+ narrowing、分支整体遗漏、角色在指定 Story、Topic 在指定 Story、两个分支竞争同一 scope、动作重验、Retriever allowlist 和“Dense 命中不能扩充授权集合”。
+
+`STORYBRANCH-P0-30`：Detector 单元测试必须使用包含长短名称、嵌套 alias、ASCII/数字边界和四个不同 Story 的注册表，证明它是完整多匹配扫描而非 longest-match 复用；真实评测必须记录 detected/Planner 一致率、拒绝 reason 分布和 Detector P95，不得只测试 Planner 给出完整数组的顺利路径。
 
 ## 10. 索引与产物
 
@@ -927,7 +978,12 @@ citation_atom_shortfall
 story_relation_shortfall
 story_entity_link_shortfall
 story_owner_resolution_shortfall
+story_mention_detection_incomplete
+story_mention_ambiguous
+story_mention_set_mismatch
+story_scope_unaccounted
 too_many_required_story_owners
+narrow_story_scope
 ```
 
 `SHORTFALL-P0-01`：显式 Story 未覆盖时，回答必须说明未覆盖范围并提供继续/展开动作。
@@ -977,6 +1033,7 @@ Segment 和 Dense 产物身份至少包含：
 - SegmentContextUnit/AtomSpan schema 身份；
 - StoryFusionConfig/v1 身份；
 - `StoryBranchConfig/v1` 与 Story 分支授权策略身份；
+- Story mention Detector、同版实体注册表和检测 receipt schema 身份；
 - embedding 模型、维度和服务身份；
 - Typed Dense collection schema、unit 类型计数和 index 参数；
 - Analyzer/BM25 产物身份；
@@ -1069,6 +1126,8 @@ max(1.20 * baseline_retrieval_p95_ms,
 - 一个高频 Story 不得挤掉另一个显式 Story；
 - 三个 Story 达到配额；
 - 四个以上显式 Story 只触发确定性分页/继续动作，不创建 Composite 比较。
+- Planner 在四个 Story 中遗漏首个、中间或末尾 Story时均被 Policy 拒绝；
+- 33 个以上 Story 只产生非授权 narrowing action。
 
 ### 25.4 Topic 与 Story
 
@@ -1177,6 +1236,9 @@ canonical_evidence_text_sha256
 | 融合后 MRR、nDCG@8 | 各自不低于 baseline `-0.02` |
 | 显式 1～3 Story Owner 覆盖率 | `1.00` |
 | Required Story Owner 授权精确率 | `1.00` |
+| Policy Story mention 检测完整率 | `1.00` |
+| Planner 遗漏/额外/重排后错误授权次数 | `0` |
+| Story mention 歧义或不完整检测后的 Retriever 调用次数 | `0` |
 | 4+ Story 分页/继续动作正确率 | `1.00`，Composite 比较次数为 `0` |
 | 单 Story 多细节覆盖率 | `>= 0.85` |
 | Topic/Page 必要来源保留率 | `1.00` |
@@ -1195,7 +1257,7 @@ canonical_evidence_text_sha256
 
 `GATE-P0-01`：任一硬门槛失败即 `no_go`；不得用其他指标平均分、人工主观印象或生成回答流畅度抵消。
 
-`GATE-P0-02`：引用闭合、重复正文、分支越界、Owner 越权、required Story 授权、baseline 等价证据误判、超长 Atom 闭合、protected 零退化、容量和 provenance 属于零容忍门槛。
+`GATE-P0-02`：引用闭合、重复正文、分支越界、Owner 越权、Policy Story mention 完整检测、required Story 授权、baseline 等价证据误判、超长 Atom 闭合、protected 零退化、容量和 provenance 属于零容忍门槛。
 
 `GATE-P0-03`：若 Segment Dense 未达阈值，允许保留 E 的代码与影子报告继续诊断，但不得重建为可激活候选，也不得临时开启 Reranker 掩盖问题。
 
@@ -1276,6 +1338,7 @@ canonical_evidence_text_sha256
 - 运行当前活动系统 baseline；
 - 生成并验证 `story_baseline_atom_equivalence.v1.jsonl`；
 - 提交评测、等价匹配器身份与 baseline receipt；
+- 验证所有设计依赖已进入固定 `main` 提交，未跟踪 C 文档不得作为输入；
 - 创建 E worktree；
 - E 只编写 Plan，等待审核。
 
@@ -1318,8 +1381,9 @@ canonical_evidence_text_sha256
 ### E3：受控分支、融合与预算
 
 - `primary_owner/story_required/story_mentions/story_examples` Route Policy 授权；
+- Policy 自有 `StoryMentionDetector/v1`、完整检测回执和 Planner 提案一致性门禁；
 - 1～3 个 required Story Owner allowlist；
-- 4+ Story 分页/继续动作且不创建 Composite 比较；
+- 4～32 Story 分页/继续动作、33+ narrowing action，且均不创建 Composite 比较；
 - 现有 Owner Gate 保持严格；
 - Atom-to-Segment 映射；
 - Segment 去重；
@@ -1335,6 +1399,7 @@ canonical_evidence_text_sha256
 - Atom span、Source Map 和引用；
 - 顺序和分支；
 - RequestPlan、Route Policy、Retriever、REST/SSE、记忆与 serializer；
+- `continue_story_owner_page` 与非授权 `narrow_story_scope` 公共 action schema；旧 action 类型不得被静默重解释；
 - 分支级失败隔离；
 - coverage shortfall；
 - 同步/流式响应一致。
@@ -1366,10 +1431,10 @@ canonical_evidence_text_sha256
 10. 新 Dense 行全部满足 typed retrieval-unit schema；Segment 不冒充 Child，类型计数和 ID 哈希正确。
 11. Atom BM25 精确命中能稳定提升其所属 Segment，且通道内 Top-K 不被误当作跨通道最终截断。
 12. Segment 与 Atom 不作为重复正文进入上下文。
-13. `primary_owner/story_required/story_mentions/story_examples` 经 Route Policy 独立授权，现有 Owner Gate 未被放宽。
+13. `primary_owner/story_required/story_mentions/story_examples` 经 Route Policy 独立授权；Policy 自有 Detector 完整枚举原问题 Story，Planner 提案遗漏、额外、重排或歧义均不得进入 Retriever，现有 Owner Gate 未被放宽。
 14. `StoryFusionConfig/v1` 常数、公式、tie-break 和 provenance 已冻结并通过精确数值测试。
 15. 显式 1～3 个 Story 的授权集合、原问题顺序和覆盖配额有效。
-16. 4 个以上显式 Story 只产生确定性分页/继续动作，不创建 Composite 比较或虚假完整结论。
+16. 4～32 个显式 Story 只产生确定性分页/继续动作；33 个以上明确拒绝并产生非授权 narrowing action，不创建 Composite 比较或虚假完整结论。
 17. 单 Story 多细节不会只保留一个局部邻接簇。
 18. `暴雨是什么` 等 Topic 查询保留 Topic/Page 定义证据。
 19. 数字实体、短对白、精确标识和角色关系评测达到零退化/精度门槛。
@@ -1416,7 +1481,7 @@ canonical_evidence_text_sha256
 
 | 重审项 | 本 Spec 的闭环位置 | 结果 |
 |---|---|---|
-| 多 Story 问题无法表达 | 第 9.1 节 `STORYBRANCH` 第 10～22 条、第 14/17 节 | 单个不可拆分 KB 任务携带 1～3 个授权 Story Owner；4+ 只分页继续，不创建 Composite 比较 |
+| 多 Story 问题无法表达 | 第 9.1 节 `STORYBRANCH` 第 10～30 条、第 14/17 节 | 单个不可拆分 KB 任务携带 1～3 个授权 Story Owner；4～32 分页继续，33+ 要求收窄，不创建 Composite 比较 |
 | Baseline 等价 Atom 未定义 | 第 25.6 节 `EVALSET` 第 6～14 条 | 只接受精确 Atom、精确路径或同版本唯一文本 span；migration group 本身不计覆盖 |
 | 单个超长 Atom 无规则 | 第 5.1 节 `ATOMSTRUCT` 第 14～16 条、第 7 节 `BOUNDARY` 第 9～12 条 | 单 Atom 超长 Segment 是唯一 800 字符例外；Dense/上下文超限继续 fail-closed |
 | Owner 公式重复常量 | 第 12/14 节 | 两处均引用唯一 `StoryFusionConfig/v1.second_segment_factor` |
@@ -1424,3 +1489,17 @@ canonical_evidence_text_sha256
 `REVIEW-P0-03`：线程 A 的不可拆分跨实体比较规则保持不变；线程 E 只在线程 A 已保留的单个 KB 任务内部增加受授权 Story Owner 集合，不引入 P2 跨分支聚合。
 
 `REVIEW-P0-04`：D0 未生成 baseline 等价 receipt，或 E0 未完成长度 taxonomy 与超长 Atom 边界测试时，不得启动真实候选 embedding 构建。
+
+### 31.2 第三轮授权根因审查
+
+线程 D 第三轮审查确认：仅逐项验证 Planner 提交的 Story 引用，无法证明 Planner 没有遗漏原问题中的其他 Story。第 9.1 节因此不再把 Planner 数组当作授权事实，而采用“Planner 提案 + Policy 独立完整检测 + 严格一致性门禁”。
+
+| 审查项 | 根因修复 | 禁止的补丁式处理 |
+|---|---|---|
+| Planner 可遗漏第 4 个 Story 并绕过分页 | `StoryMentionDetector/v1` 独立枚举全部精确 Story，检测回执为 Policy 权威证据 | 不允许只检查 Planner 数量、只校验已提交项或自动授权交集 |
+| 32 个上限之外状态不完整 | 检测仍完整运行；33+ 固定为 `denied/narrow_story_scope` 和非授权 narrowing action | 不新增第五种授权状态，不截断为前 32 个后继续检索 |
+| 整个 Story-bearing 分支或其中部分 scope 可被 Planner 省略 | Detector 对所有知识子任务运行；显式 Story scope 必须由恰好一个 Story-bearing 分支完整解释 | Policy 不自动猜测语义并升级权限，也不允许多个分支各自消费 scope 子集 |
+
+`REVIEW-P0-05`：Story 授权的单一事实来源是 Policy 生成的完整检测回执；Planner、Retriever、Dense 结果和会话记忆均不是 Story Owner 授权源。这个职责边界不得在 Implementation Plan 中降级为现有 EntityLexicon longest-match 的兼容调用。
+
+`REVIEW-P0-06`：严格一致性可能把 Planner 漏报转化为可见拒绝，但这是可恢复的可用性代价，不是允许错误完整回答的理由。影子评测必须量化 mismatch 拒绝率；任何放宽只能通过新版本 Policy、独立评测和再次批准，不能按个别查询加入白名单。
