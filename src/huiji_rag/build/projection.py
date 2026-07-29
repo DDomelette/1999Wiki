@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections import Counter, OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -14,6 +14,9 @@ from src.huiji_rag.models import ChildBlock, ParentBlock, VoiceSourceRow
 from src.huiji_rag.text import clean_huiji_text, compact_lines
 
 from .contracts import canonical_json_bytes
+from .story_projection import is_story_source_title, project_stories
+from .topic_projection import TopicCatalog, TopicProjection, project_topics
+from .wikitext_projection import PageProjection, project_wikitext_pages
 
 
 _CHAR_TITLE_RE = re.compile(r"Data:Char/[^/]+\.json\Z")
@@ -51,6 +54,24 @@ _LEGACY_SECTION = {
     "culture_dossier": "items",
 }
 _GENERIC_MARKERS = ("psychube", "equip", "item", "episode", "story")
+
+
+def project_page_semantics(*args: Any, **kwargs: Any) -> PageProjection:
+    """Run the independent bounded Wikitext Page projection stage."""
+    return project_wikitext_pages(*args, **kwargs)
+
+
+def project_topic_semantics(
+    *source_projections: Any,
+    catalog: TopicCatalog | None = None,
+) -> TopicProjection:
+    """Select Topic evidence from already projected Page/Data/Story children."""
+    source_children = [
+        child
+        for projection in source_projections
+        for child in tuple(getattr(projection, "children"))
+    ]
+    return project_topics(source_children, catalog=catalog)
 
 
 @dataclass(frozen=True)
@@ -252,7 +273,7 @@ def project_crawler_semantics(rows: Iterable[Mapping[str, Any]]) -> CorpusProjec
         is_supported_generic = not title.startswith("Data:Char/") and any(
             marker in title.casefold() for marker in _GENERIC_MARKERS
         )
-        if is_character_source or is_supported_generic:
+        if is_character_source or is_supported_generic or is_story_source_title(title):
             selected.append(dict(candidate))
     source_rows = tuple(selected)
     aliases = _alias_map(source_rows)
@@ -299,9 +320,53 @@ def project_crawler_semantics(rows: Iterable[Mapping[str, Any]]) -> CorpusProjec
         title = str(row.get("title") or "")
         if title.startswith("Data:Char/"):
             continue
+        if title.casefold().startswith("data:story/"):
+            continue
         if not any(marker in title.casefold() for marker in _GENERIC_MARKERS):
             continue
         _project_generic(row, result)
+
+    story_projection = project_stories(source_rows)
+    result.parents.extend(story_projection.parents)
+    result.children.extend(
+        SemanticChild(
+            block=child.block,
+            stable_source_token=child.stable_source_token,
+            source_token_kind=child.source_token_kind,
+            owner_entity_id=child.owner_entity_id,
+            owner_page_id=child.owner_page_id,
+            source_fields=child.source_fields,
+        )
+        for child in story_projection.children
+    )
+    rows_by_title = {
+        str(row.get("title") or ""): row
+        for row in source_rows
+    }
+    for diagnostic in story_projection.diagnostics:
+        source_row = rows_by_title.get(diagnostic.source_title)
+        if source_row is None:
+            continue
+        result.exclusions.append(
+            _exclusion(
+                source_row,
+                diagnostic.reason_code,
+                entity_id=diagnostic.story_id,
+                json_path="$",
+                details=diagnostic.details,
+            )
+        )
+    result.identity_fallbacks.extend(
+        IdentityFallback(
+            owner_page_id=f"story:{fallback.story_id}",
+            canonical_section="story",
+            json_path=fallback.json_path,
+            source_identity_sha256=fallback.source_identity_sha256,
+            stable_source_token=fallback.stable_source_token,
+            reason_code=fallback.reason_code,
+        )
+        for fallback in story_projection.identity_fallbacks
+    )
 
     _assert_unique_ids(result.parents, result.children)
     return CorpusProjection(
@@ -598,7 +663,11 @@ def _project_character(
     )
     result.parents.append(root)
     result.parents.extend(section_parents[section] for section in _SECTION_ORDER if section in section_parents)
-    result.children.extend(ordered_children)
+    enriched_children = [
+        replace(child, block=replace(child.block, entity_aliases=aliases))
+        for child in ordered_children
+    ]
+    result.children.extend(enriched_children)
     result.record_links.append(
         _record_link(row, "parent", owner_page_id, owner_page_id, "entity", "entity")
     )

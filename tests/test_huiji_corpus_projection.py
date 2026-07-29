@@ -374,3 +374,42 @@ def test_json_valid_false_wrapper_emits_excluded_evidence_without_parsing_conten
     )
     assert not projection.media_intents
     assert any(item.entity_id == "41" for item in projection.parents)
+
+
+def test_story_stage_replaces_generic_story_profile_projection() -> None:
+    rows = [
+        _row(
+            "Data:Story/304502.json",
+            {
+                "info": {"title": "Natural Story Name"},
+                "steps": [
+                    {
+                        "id": "opening",
+                        "speaker": "Vertin",
+                        "text": "The story text survives.",
+                        "background": "missing/background.png",
+                    }
+                ]
+            },
+        ),
+    ]
+
+    projection = project_crawler_semantics(rows)
+    story_parent = next(
+        parent for parent in projection.parents if parent.entity_type == "story"
+    )
+    story_children = [
+        child for child in projection.children if child.block.entity_type == "story"
+    ]
+
+    assert story_parent.parent_id == "story:304502/story"
+    assert story_parent.entity_name == "Natural Story Name"
+    assert [child.block.child_id for child in story_children] == [
+        "story:304502/story/step-opening"
+    ]
+    assert story_children[0].block.content == "Vertin: The story text survives."
+    assert story_children[0].owner_entity_id == "story:304502"
+    assert story_children[0].block.source_refs[0]["json_path"] == "$.steps.0"
+    assert all(
+        parent.parent_id != "story:304502/profile" for parent in projection.parents
+    )
