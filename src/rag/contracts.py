@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields, is_dataclass, replace
 from types import MappingProxyType
-from typing import Literal, Mapping, TypeAlias, cast
+from typing import Literal, Mapping, Sequence, TypeAlias, cast
 
 
 RetrievalOutcome: TypeAlias = Literal[
@@ -53,6 +53,37 @@ _TURN_OUTCOMES = frozenset({
     "not_committable",
 })
 _BRANCH_STATUSES = frozenset({"succeeded", "empty", "denied", "failed"})
+
+
+def aggregate_grounding_mode(
+    branch_modes: Sequence[GroundingMode],
+) -> GroundingMode:
+    modes = frozenset(branch_modes)
+    if not modes:
+        return "none"
+    if not modes <= _GROUNDING_MODES - {"mixed"}:
+        raise ValueError("branch grounding mode is outside the public contract")
+    if len(modes) == 1:
+        return cast(GroundingMode, next(iter(modes)))
+    return "mixed"
+
+
+def aggregate_retrieval_outcome(
+    kb_outcomes: Sequence[RetrievalOutcome],
+) -> RetrievalOutcome:
+    outcomes = tuple(kb_outcomes)
+    if not outcomes:
+        return "not_applicable"
+    if any(outcome not in _RETRIEVAL_OUTCOMES - {"not_applicable"} for outcome in outcomes):
+        raise ValueError("KB retrieval outcome is outside the public contract")
+    unique = frozenset(outcomes)
+    if unique == {"sufficient"}:
+        return "sufficient"
+    if unique == {"empty"}:
+        return "empty"
+    if unique == {"failed"}:
+        return "failed"
+    return "partial"
 
 
 def _stable_sort_key(value: object) -> tuple[str, str]:
@@ -202,6 +233,50 @@ class BranchResult:
 
 
 @dataclass(frozen=True)
+class SubtaskInfo:
+    subtask_id: str
+    order: int
+    task_type: str
+    query: str
+    effective_route: ExecutionRoute
+    retrieval_outcome: RetrievalOutcome
+    grounding_mode: GroundingMode
+    status: BranchStatus
+    citation_ids: tuple[str, ...]
+
+    @classmethod
+    def from_branch(cls, branch: BranchResult) -> "SubtaskInfo":
+        return cls(
+            subtask_id=branch.subtask_id,
+            order=branch.order,
+            task_type=branch.task_type,
+            query=branch.query,
+            effective_route=branch.effective_route,
+            retrieval_outcome=branch.retrieval_outcome,
+            grounding_mode=branch.grounding_mode,
+            status=branch.status,
+            citation_ids=branch.source_ids,
+        )
+
+    def __post_init__(self) -> None:
+        if not self.subtask_id or self.order < 1:
+            raise ValueError("subtask identity is invalid")
+        if self.effective_route not in _EXECUTION_ROUTES:
+            raise ValueError("subtask route is outside the public contract")
+        if self.retrieval_outcome not in _RETRIEVAL_OUTCOMES:
+            raise ValueError("subtask retrieval outcome is outside the public contract")
+        if self.grounding_mode not in _GROUNDING_MODES - {"mixed"}:
+            raise ValueError("subtask grounding mode is outside the public contract")
+        if self.status not in _BRANCH_STATUSES:
+            raise ValueError("subtask status is outside the public contract")
+        object.__setattr__(
+            self,
+            "citation_ids",
+            tuple(str(item) for item in self.citation_ids),
+        )
+
+
+@dataclass(frozen=True)
 class GlobalSourceAllocation:
     sources: tuple[Mapping[str, object], ...]
     source_map: tuple[SourceRef, ...]
@@ -288,6 +363,9 @@ __all__ = [
     "RouteAuthorization",
     "RouteDecision",
     "SourceRef",
+    "SubtaskInfo",
     "TurnOutcome",
+    "aggregate_grounding_mode",
+    "aggregate_retrieval_outcome",
     "freeze_value",
 ]

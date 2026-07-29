@@ -6,6 +6,7 @@ import pytest
 
 from src.rag.chain import RAGChain
 from src.rag.contracts import (
+    BranchResult,
     CitationValidation,
     EntityRef,
     FrozenRetrievalPacket,
@@ -13,8 +14,11 @@ from src.rag.contracts import (
     RouteAuthorization,
     RouteDecision,
     SourceRef,
+    aggregate_grounding_mode,
+    aggregate_retrieval_outcome,
     freeze_value,
 )
+from src.rag.serializers import response_packet_to_public_dict
 from src.rag.query_plan import QueryPlanner
 from src.rag.request_plan import RequestPlanner
 
@@ -155,6 +159,84 @@ def test_local_route_uses_not_applicable_instead_of_empty():
 
     assert decision.retrieval_outcome == "not_applicable"
     assert decision.effective_route == "local_response"
+
+
+@pytest.mark.parametrize(
+    ("branch_modes", "expected"),
+    [
+        (("grounded",), "grounded"),
+        (("ungrounded",), "ungrounded"),
+        (("none",), "none"),
+        (("grounded", "none"), "mixed"),
+        (("grounded", "ungrounded"), "mixed"),
+        (("none", "ungrounded"), "mixed"),
+    ],
+)
+def test_top_level_grounding_matrix(branch_modes, expected):
+    assert aggregate_grounding_mode(branch_modes) == expected
+
+
+@pytest.mark.parametrize(
+    ("kb_outcomes", "expected"),
+    [
+        ((), "not_applicable"),
+        (("sufficient", "sufficient"), "sufficient"),
+        (("sufficient", "partial"), "partial"),
+        (("sufficient", "empty"), "partial"),
+        (("sufficient", "failed"), "partial"),
+        (("empty", "empty"), "empty"),
+        (("failed", "failed"), "failed"),
+    ],
+)
+def test_composite_retrieval_outcome_ignores_non_kb_branches(
+    kb_outcomes,
+    expected,
+):
+    assert aggregate_retrieval_outcome(kb_outcomes) == expected
+
+
+def test_v3_public_subtask_is_an_exact_sanitized_nine_field_contract():
+    packet = _response_packet_fixture()
+    branch = BranchResult(
+        subtask_id="T01",
+        order=1,
+        task_type="knowledge_base",
+        query="safe query",
+        effective_route="rag_grounded",
+        retrieval_outcome="sufficient",
+        grounding_mode="grounded",
+        status="succeeded",
+        answer="private branch answer [S01]",
+        source_ids=("S01",),
+        entity_ref=EntityRef("character", "char-1", "Character"),
+        citation_validation=CitationValidation(valid=True, used_ids=("S01",)),
+        public_error="private branch error",
+    )
+
+    public = response_packet_to_public_dict(
+        dataclasses.replace(
+            packet,
+            grounding_mode="grounded",
+            turn_outcome="grounded",
+            branch_results=(branch,),
+        )
+    )
+
+    assert packet.schema_version == "rag.response_packet/v3"
+    assert packet.retrieval_packet.schema_version == "rag.retrieval_packet/v3"
+    assert set(public["subtasks"][0]) == {
+        "subtask_id",
+        "order",
+        "task_type",
+        "query",
+        "effective_route",
+        "retrieval_outcome",
+        "grounding_mode",
+        "status",
+        "citation_ids",
+    }
+    assert "private branch answer" not in repr(public)
+    assert "private branch error" not in repr(public)
 
 
 def test_public_planning_meta_does_not_propagate_raw_planner_exception():

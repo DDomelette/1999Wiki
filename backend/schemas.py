@@ -274,7 +274,7 @@ class AskResponse(BaseModel):
     citation_warning: str = ""
     omitted_actions: list[ActionItem] = Field(default_factory=list)
     failure_actions: list[ActionItem] = Field(default_factory=list)
-    subtasks: list["SubtaskResultItem"] = Field(default_factory=list)
+    subtasks: list["SubtaskInfo"] = Field(default_factory=list)
     media_panels: list[MediaPanel] = Field(default_factory=list)
     memory: MemoryInfo = Field(default_factory=lambda: MemoryInfo(
         status="disabled",
@@ -284,7 +284,7 @@ class AskResponse(BaseModel):
     timing: Optional[TimingInfo] = None
 
 
-class SubtaskResultItem(BaseModel):
+class SubtaskInfo(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     subtask_id: str
@@ -405,25 +405,38 @@ _ALLOWED_TIMING_KEYS = {
     "error_stages",
 }
 _ALLOWED_STAGE_NAMES = frozenset({
-    "memory.acquire",
-    "planner.llm",
-    "planner.normalize",
-    "entity.resolve",
-    "route.resolve",
-    "retrieval.structured",
-    "retrieval.bm25",
-    "retrieval.dense",
-    "retrieval.fusion",
-    "retrieval.rerank",
-    "retrieval.expand",
-    "retrieval.allocate",
-    "media.attach",
-    "source_map.build",
-    "answer.llm",
-    "citation.validate",
-    "citation.repair",
-    "response.serialize",
+    "request.planning",
+    "branch.retrieval",
+    "branch.answer",
+    "response.aggregation",
 })
+_PUBLIC_STAGE_SOURCES = {
+    "request.planning": frozenset({
+        "planner.llm",
+        "planner.normalize",
+        "entity.resolve",
+        "route.resolve",
+    }),
+    "branch.retrieval": frozenset({
+        "retrieval.structured",
+        "retrieval.bm25",
+        "retrieval.dense",
+        "retrieval.fusion",
+        "retrieval.rerank",
+        "retrieval.expand",
+        "retrieval.allocate",
+        "media.attach",
+        "source_map.build",
+    }),
+    "branch.answer": frozenset({
+        "answer.llm",
+        "citation.validate",
+        "citation.repair",
+    }),
+    "response.aggregation": frozenset({
+        "response.serialize",
+    }),
+}
 _DROP = object()
 _SAFE_ROUTE_INTENTS = frozenset(VALID_INTENTS)
 _ACRONYM_KEY_BOUNDARY_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
@@ -513,6 +526,45 @@ def _sanitize_stage_ms(value: Any) -> dict[str, float]:
         and math.isfinite(float(duration))
         and float(duration) >= 0
     }
+
+
+def normalize_public_timing(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        value = {}
+    raw_stages = value.get("stage_ms")
+    raw_stages = raw_stages if isinstance(raw_stages, dict) else {}
+    stage_ms = {
+        public_name: sum(
+            float(duration)
+            for name, duration in raw_stages.items()
+            if (
+                name == public_name or name in source_names
+            )
+            and isinstance(duration, (int, float))
+            and not isinstance(duration, bool)
+            and math.isfinite(float(duration))
+            and float(duration) >= 0
+        )
+        for public_name, source_names in _PUBLIC_STAGE_SOURCES.items()
+    }
+    raw_errors = value.get("error_stages")
+    raw_errors = raw_errors if isinstance(raw_errors, (list, tuple)) else ()
+    error_stages = [
+        public_name
+        for public_name, source_names in _PUBLIC_STAGE_SOURCES.items()
+        if any(name == public_name or name in source_names for name in raw_errors)
+    ]
+    return {
+        "model_first_token_ms": value.get("model_first_token_ms"),
+        "validated_ready_ms": value.get("validated_ready_ms"),
+        "visible_first_token_ms": value.get("visible_first_token_ms"),
+        "completed_ms": value.get("completed_ms"),
+        "stage_ms": stage_ms,
+        "error_stages": error_stages,
+        "warning": str(value.get("warning") or ""),
+    }
+
+
 def sanitize_transport_value(value: Any) -> Any:
     sanitized = _sanitize_transport_value(value)
     return None if sanitized is _DROP else sanitized

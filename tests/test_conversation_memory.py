@@ -136,6 +136,31 @@ def test_all_assistant_history_is_non_evidence_and_old_ids_are_neutralized():
     assert all("[Historical citation expired]" in text for text in assistant_text)
 
 
+def test_local_and_mixed_turn_outcomes_are_preserved_in_history():
+    local = replace(
+        _turn(1),
+        grounding_mode="none",
+        entity=None,
+        entity_type=None,
+        entity_id=None,
+        answer="Local answer [S01]",
+    )
+    mixed = replace(
+        _turn(2),
+        grounding_mode="mixed",
+        answer="Mixed answer [S02]",
+    )
+
+    projection = project_turns([local, mixed])
+    messages = history_messages(projection)
+    assistant_text = [
+        message.content for message in messages if isinstance(message, AIMessage)
+    ]
+
+    assert [turn.grounding_mode for turn in projection.turns] == ["none", "mixed"]
+    assert all("[S01]" not in text and "[S02]" not in text for text in assistant_text)
+
+
 def test_conversation_runtime_has_no_persistence_dependencies_or_file_writes():
     module_path = Path(__file__).parents[1] / "src" / "rag" / "conversation.py"
     tree = ast.parse(module_path.read_text(encoding="utf-8"))

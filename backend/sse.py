@@ -7,7 +7,11 @@ from typing import Any, AsyncGenerator, Awaitable, Callable
 from uuid import UUID
 
 from backend.conversation_runtime import acquire_lease, release_lease
-from backend.schemas import AskResponse, sanitize_transport_value
+from backend.schemas import (
+    AskResponse,
+    normalize_public_timing,
+    sanitize_transport_value,
+)
 from src.rag.conversation import (
     ConversationLease,
     ConversationMemoryStore,
@@ -69,10 +73,13 @@ async def rag_stream_generator(
                 memory_turns_used=len(lease.projection.turns),
                 trace=trace,
             )
-        except Exception as exc:
+        except Exception:
             yield sse_event(
                 "error",
-                {"message": f"RAG execution failed: {type(exc).__name__}: {exc}"},
+                {
+                    "code": "rag_execution_failed",
+                    "message": "RAG execution failed.",
+                },
             )
             return
 
@@ -85,20 +92,20 @@ async def rag_stream_generator(
             event_data = event.to_dict()
             if event.event == "token":
                 trace.mark_visible_first_token()
-            if event.event == "done" and packet.turn_outcome in {"grounded", "ungrounded"}:
+            if event.event == "done":
                 trace.mark_visible_first_token()
                 trace.mark_completed()
+            if event.event in {"sources", "done"}:
+                event_data["timing"] = normalize_public_timing(
+                    trace_snapshot_to_public(trace.snapshot())
+                )
+            yield sse_event(event.event, event_data)
+            if event.event == "done":
                 completed_turn = build_completed_turn(
                     execution_request,
                     packet,
                     datetime.now(timezone.utc),
                 )
-            elif event.event == "done":
-                trace.mark_visible_first_token()
-                trace.mark_completed()
-            if event.event in {"sources", "done"}:
-                event_data["timing"] = trace_snapshot_to_public(trace.snapshot())
-            yield sse_event(event.event, event_data)
     finally:
         if memory_store is not None:
             await release_lease(memory_store, lease, completed_turn)

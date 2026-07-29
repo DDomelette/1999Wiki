@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import re
 from typing import Any, Callable, Literal, cast
@@ -22,6 +22,8 @@ from .contracts import (
     FrozenRetrievalPacket,
     GlobalSourceAllocation,
     ResponsePacket,
+    aggregate_grounding_mode,
+    aggregate_retrieval_outcome,
     freeze_value,
 )
 from .conversation import (
@@ -641,26 +643,22 @@ class RAGExecutionService:
                 answer=_aggregate_ordered_sections(safe_branches),
             )
         validation = validate_global_citations(result.branches, result.allocation)
-        modes = {
+        modes = tuple(
             branch.grounding_mode
             for branch in result.branches
             if branch.status in {"succeeded", "denied"}
-        }
+        )
         if not modes:
             grounding_mode = "none"
             turn_outcome = "not_committable"
-        elif modes == {"grounded"}:
-            grounding_mode = "grounded"
-            turn_outcome = "grounded"
-        elif modes == {"ungrounded"}:
-            grounding_mode = "ungrounded"
-            turn_outcome = "ungrounded"
-        elif modes == {"none"}:
-            grounding_mode = "none"
-            turn_outcome = "local"
         else:
-            grounding_mode = "mixed"
-            turn_outcome = "mixed"
+            grounding_mode = aggregate_grounding_mode(cast(Any, modes))
+            turn_outcome = {
+                "grounded": "grounded",
+                "ungrounded": "ungrounded",
+                "none": "local",
+                "mixed": "mixed",
+            }[grounding_mode]
 
         ordered_payloads = tuple(
             payloads[task.subtask_id]
@@ -671,7 +669,24 @@ class RAGExecutionService:
         first_payload = ordered_payloads[0] if ordered_payloads else None
         if first_payload is None:
             raise ValueError("composite execution produced no branch payload")
-        route_decision = first_payload["route_decision"]
+        kb_outcomes = tuple(
+            branch.retrieval_outcome
+            for branch in result.branches
+            if branch.task_type == "knowledge_base"
+        )
+        retrieval_outcome = aggregate_retrieval_outcome(kb_outcomes)
+        route_decision = replace(
+            first_payload["route_decision"],
+            retrieval_outcome=retrieval_outcome,
+            effective_route="composite",
+            route_reason={
+                "sufficient": "grounded_sufficient",
+                "partial": "grounded_partial",
+                "empty": "grounded_empty",
+                "failed": "retrieval_failed",
+                "not_applicable": "local_out_of_scope",
+            }[retrieval_outcome],
+        )
         retrieval_packet = FrozenRetrievalPacket(
             plan=request_plan,
             entity_ref=None,
@@ -688,7 +703,13 @@ class RAGExecutionService:
             media=merged["media"],
             media_panels=merged["media_panels"],
             context="",
-            diagnostics={"route": {"name": "composite", "effective_route": "composite"}},
+            diagnostics={"route": {
+                "name": "composite",
+                "proposed_route": "composite",
+                "effective_route": "composite",
+                "retrieval_outcome": retrieval_outcome,
+                "route_reason": route_decision.route_reason,
+            }},
             omitted_actions=merged["omitted_actions"],
             failure_actions=merged["failure_actions"],
             planning_status=str(getattr(request_plan, "planning_status", "")),
@@ -1251,15 +1272,30 @@ def build_completed_turn(
     packet: ResponsePacket,
     completed_at: datetime,
 ) -> ConversationTurn | None:
-    if packet.turn_outcome not in {"grounded", "ungrounded"}:
-        return None
-    if packet.grounding_mode == "grounded" and not packet.citation_validation.valid:
-        return None
-    if packet.grounding_mode not in {"grounded", "ungrounded"}:
+    if packet.turn_outcome not in {"grounded", "ungrounded", "mixed", "local"}:
         return None
 
     retrieval = packet.retrieval_packet
-    entity_ref = retrieval.entity_ref
+    eligible_refs = tuple(
+        branch.entity_ref
+        for branch in packet.branch_results
+        if branch.task_type == "knowledge_base"
+        and branch.status == "succeeded"
+        and branch.grounding_mode == "grounded"
+        and branch.citation_validation.valid
+        and branch.source_ids
+        and branch.entity_ref is not None
+        and branch.entity_ref.entity_type == "character"
+    )
+    unique_refs = {
+        entity_ref.ownership_key: entity_ref
+        for entity_ref in eligible_refs
+    }
+    entity_ref = (
+        next(iter(unique_refs.values()))
+        if packet.citation_validation.valid and len(unique_refs) == 1
+        else None
+    )
     plan = retrieval.plan
     standalone = _plan_value(plan, "normalized_query") or request.question
     return build_conversation_turn(

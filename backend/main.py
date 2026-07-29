@@ -50,6 +50,7 @@ from backend.schemas import (
     normalize_media_panels,
     normalize_route,
     sanitize_transport_value,
+    normalize_public_timing,
 )
 from backend.sse import rag_stream_generator
 from backend.wiki import router as wiki_router
@@ -759,15 +760,17 @@ async def ask(req: AskRequest) -> AskResponse | JSONResponse:
         with trace.span("response.serialize"):
             public_payload = response_packet_to_public_dict(packet)
             AskResponse.model_validate(public_payload)
+        trace.mark_visible_first_token()
+        trace.mark_completed()
+        public_payload["timing"] = normalize_public_timing(
+            trace_snapshot_to_public(trace.snapshot())
+        )
+        response = AskResponse.model_validate(public_payload)
         completed_turn = build_completed_turn(
             execution_request,
             packet,
             datetime.now(timezone.utc),
         )
-        trace.mark_visible_first_token()
-        trace.mark_completed()
-        public_payload["timing"] = trace_snapshot_to_public(trace.snapshot())
-        response = AskResponse.model_validate(public_payload)
         return response
     finally:
         await release_lease(store, lease, completed_turn)

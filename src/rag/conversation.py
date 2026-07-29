@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from .contracts import EntityRef
 
 
-GroundingMode = Literal["grounded", "ungrounded"]
+GroundingMode = Literal["grounded", "ungrounded", "none", "mixed"]
 MemoryStatus = Literal["disabled", "new", "hit", "expired"]
 RewriteMode = Literal["none", "planner", "fallback"]
 
@@ -136,7 +136,7 @@ def build_conversation_turn(
     completed_at: datetime,
     entity_id: str | None = None,
 ) -> ConversationTurn:
-    if grounding_mode not in {"grounded", "ungrounded"}:
+    if grounding_mode not in {"grounded", "ungrounded", "none", "mixed"}:
         raise ValueError(f"unsupported grounding mode: {grounding_mode}")
     return ConversationTurn(
         original_question=_truncate(original_question, MAX_QUESTION_CODE_POINTS),
