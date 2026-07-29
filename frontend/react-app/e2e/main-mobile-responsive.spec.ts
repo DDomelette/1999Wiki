@@ -151,6 +151,8 @@ async function expectVisibleArtwork(panel: Locator, viewport: { width: number; h
 }
 
 test('main pages remain usable across approved mobile and tablet viewports', async ({ page }, testInfo) => {
+  // WebKit serially renders five viewport/artwork states more slowly than Chromium.
+  test.setTimeout(testInfo.project.name === 'mobile-webkit' ? 180_000 : 90_000)
   test.skip(!['desktop', 'mobile', 'mobile-webkit'].includes(testInfo.project.name), 'explicit responsive matrix runs in desktop and touch projects')
   await installRoutes(page)
 
