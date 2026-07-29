@@ -18,9 +18,17 @@ ExecutionRoute: TypeAlias = Literal[
     "expanded_rag",
     "llm_general",
     "local_response",
+    "composite",
 ]
-GroundingMode: TypeAlias = Literal["grounded", "ungrounded", "none"]
-TurnOutcome: TypeAlias = Literal["grounded", "ungrounded", "not_committable"]
+GroundingMode: TypeAlias = Literal["grounded", "ungrounded", "none", "mixed"]
+TurnOutcome: TypeAlias = Literal[
+    "grounded",
+    "ungrounded",
+    "mixed",
+    "local",
+    "not_committable",
+]
+BranchStatus: TypeAlias = Literal["succeeded", "empty", "denied", "failed"]
 
 _RETRIEVAL_OUTCOMES = frozenset({
     "sufficient",
@@ -34,9 +42,17 @@ _EXECUTION_ROUTES = frozenset({
     "expanded_rag",
     "llm_general",
     "local_response",
+    "composite",
 })
-_GROUNDING_MODES = frozenset({"grounded", "ungrounded", "none"})
-_TURN_OUTCOMES = frozenset({"grounded", "ungrounded", "not_committable"})
+_GROUNDING_MODES = frozenset({"grounded", "ungrounded", "none", "mixed"})
+_TURN_OUTCOMES = frozenset({
+    "grounded",
+    "ungrounded",
+    "mixed",
+    "local",
+    "not_committable",
+})
+_BRANCH_STATUSES = frozenset({"succeeded", "empty", "denied", "failed"})
 
 
 def _stable_sort_key(value: object) -> tuple[str, str]:
@@ -156,6 +172,56 @@ class CitationValidation:
 
 
 @dataclass(frozen=True)
+class BranchResult:
+    subtask_id: str
+    order: int
+    task_type: str
+    query: str
+    effective_route: ExecutionRoute
+    retrieval_outcome: RetrievalOutcome
+    grounding_mode: GroundingMode
+    status: BranchStatus
+    answer: str
+    source_ids: tuple[str, ...]
+    entity_ref: EntityRef | None
+    citation_validation: CitationValidation
+    public_error: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.subtask_id or self.order < 1:
+            raise ValueError("branch identity is invalid")
+        if self.effective_route not in _EXECUTION_ROUTES:
+            raise ValueError("branch route is outside the public contract")
+        if self.retrieval_outcome not in _RETRIEVAL_OUTCOMES:
+            raise ValueError("branch retrieval outcome is outside the public contract")
+        if self.grounding_mode not in _GROUNDING_MODES - {"mixed"}:
+            raise ValueError("branch grounding mode is outside the public contract")
+        if self.status not in _BRANCH_STATUSES:
+            raise ValueError("branch status is outside the public contract")
+        object.__setattr__(self, "source_ids", tuple(str(item) for item in self.source_ids))
+
+
+@dataclass(frozen=True)
+class GlobalSourceAllocation:
+    sources: tuple[Mapping[str, object], ...]
+    source_map: tuple[SourceRef, ...]
+    branch_source_ids: Mapping[str, tuple[str, ...]]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "sources",
+            cast(tuple[Mapping[str, object], ...], _freeze_tuple(self.sources)),
+        )
+        object.__setattr__(self, "source_map", tuple(self.source_map))
+        frozen_ids = {
+            str(key): tuple(str(item) for item in value)
+            for key, value in self.branch_source_ids.items()
+        }
+        object.__setattr__(self, "branch_source_ids", MappingProxyType(frozen_ids))
+
+
+@dataclass(frozen=True)
 class FrozenRetrievalPacket:
     plan: object
     entity_ref: EntityRef | None
@@ -173,7 +239,7 @@ class FrozenRetrievalPacket:
     planning_warning: str
     planning_error: str
     assets: tuple[Mapping[str, object], ...] = ()
-    schema_version: str = "rag.retrieval_packet/v2"
+    schema_version: str = "rag.retrieval_packet/v3"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "plan", freeze_value(self.plan))
@@ -196,7 +262,8 @@ class ResponsePacket:
     citation_validation: CitationValidation
     memory_info: Mapping[str, object]
     turn_outcome: TurnOutcome
-    schema_version: str = "rag.response_packet/v2"
+    branch_results: tuple[BranchResult, ...] = ()
+    schema_version: str = "rag.response_packet/v3"
 
     def __post_init__(self) -> None:
         if self.grounding_mode not in _GROUNDING_MODES:
@@ -204,14 +271,18 @@ class ResponsePacket:
         if self.turn_outcome not in _TURN_OUTCOMES:
             raise ValueError("turn_outcome is outside the public contract")
         object.__setattr__(self, "memory_info", _freeze_mapping(self.memory_info))
+        object.__setattr__(self, "branch_results", tuple(self.branch_results))
 
 
 __all__ = [
     "CitationValidation",
+    "BranchResult",
+    "BranchStatus",
     "EntityRef",
     "ExecutionRoute",
     "FrozenRetrievalPacket",
     "GroundingMode",
+    "GlobalSourceAllocation",
     "ResponsePacket",
     "RetrievalOutcome",
     "RouteAuthorization",

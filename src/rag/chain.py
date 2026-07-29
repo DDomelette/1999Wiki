@@ -170,10 +170,13 @@ class RAGChain:
         action_payload: dict[str, Any] | None = None,
         conversation: ConversationProjection | None = None,
         trace: RequestTrace | NullTrace | None = None,
+        _request_plan: Any = None,
+        _subtask: Any = None,
+        _allocate_citations: bool = True,
     ) -> dict[str, Any]:
         active_trace = trace or NullTrace()
         projection = conversation or EMPTY_PROJECTION
-        request_plan = RequestPlanner(
+        request_plan = _request_plan or RequestPlanner(
             self._planner_llm,
             query_planner=self._query_planner,
         ).plan(
@@ -182,11 +185,19 @@ class RAGChain:
             conversation=projection,
             trace=active_trace,
         )
-        if len(request_plan.subtasks) != 1:
-            raise ValueError("composite execution is not available in Task A1")
-        subtask = request_plan.subtasks[0]
+        if _subtask is None and len(request_plan.subtasks) != 1:
+            return {
+                "request_plan": request_plan,
+                "composite_pending": True,
+            }
+        subtask = _subtask or request_plan.subtasks[0]
         options = dict(route_options or {})
-        authorization = authorize_subtask(subtask, options, action_payload)
+        targeted_action = self._targeted_action_payload(
+            request_plan,
+            subtask,
+            action_payload,
+        )
+        authorization = authorize_subtask(subtask, options, targeted_action)
         if subtask.task_type != "knowledge_base":
             decision = finalize_subtask_route(authorization, "not_applicable")
             local_response = decision.effective_route == "local_response"
@@ -218,8 +229,8 @@ class RAGChain:
             options,
             authorization.proposed_route,
         )
-        if action_payload:
-            plan = self._with_action_payload(plan, action_payload)
+        if targeted_action:
+            plan = self._with_action_payload(plan, targeted_action)
 
         retrieval_failed = False
         if authorization.force_free_supplement:
@@ -259,10 +270,15 @@ class RAGChain:
         with active_trace.span("route.resolve"):
             decision = finalize_subtask_route(authorization, outcome)
         free_supplement = decision.effective_route == "llm_general"
-        with active_trace.span("source_map.build", source_count=len(sources)):
-            frozen_sources, source_map = build_source_map(sources)
-        sources = [dict(source) for source in frozen_sources]
-        context = self._format_context(sources, source_map)
+        if _allocate_citations:
+            with active_trace.span("source_map.build", source_count=len(sources)):
+                frozen_sources, source_map = build_source_map(sources)
+            sources = [dict(source) for source in frozen_sources]
+            context = self._format_context(sources, source_map)
+        else:
+            sources = [dict(source) for source in sources]
+            source_map = ()
+            context = ""
         with active_trace.span("media.attach", source_count=len(sources)):
             if free_supplement or retrieval_failed:
                 assets = []
@@ -346,6 +362,19 @@ class RAGChain:
             for key, value in updates.items():
                 setattr(plan, key, value)
             return plan
+
+    @staticmethod
+    def _targeted_action_payload(
+        request_plan: Any,
+        subtask: Any,
+        action_payload: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not action_payload:
+            return None
+        target_id = str(action_payload.get("subtask_id") or "").strip()
+        if target_id:
+            return action_payload if target_id == subtask.subtask_id else None
+        return action_payload if len(request_plan.subtasks) == 1 else None
 
     def _route_info(
         self,

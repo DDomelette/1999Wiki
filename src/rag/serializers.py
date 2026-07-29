@@ -62,6 +62,7 @@ _ASSET_FIELDS = (
     "url",
 )
 _ACTION_FIELDS = (
+    "subtask_id",
     "label",
     "query",
     "action_type",
@@ -143,7 +144,22 @@ def response_packet_to_public_dict(packet: ResponsePacket) -> dict[str, Any]:
         "citation_warning": ",".join(packet.citation_validation.warnings),
         "omitted_actions": [_action_to_public(row) for row in retrieval.omitted_actions],
         "failure_actions": [_action_to_public(row) for row in retrieval.failure_actions],
+        "subtasks": [_branch_to_public(branch) for branch in packet.branch_results],
         "memory": dict(packet.memory_info),
+    }
+
+
+def _branch_to_public(branch: Any) -> dict[str, Any]:
+    return {
+        "subtask_id": str(branch.subtask_id),
+        "order": int(branch.order),
+        "task_type": str(branch.task_type),
+        "query": str(branch.query),
+        "effective_route": str(branch.effective_route),
+        "retrieval_outcome": str(branch.retrieval_outcome),
+        "grounding_mode": str(branch.grounding_mode),
+        "status": str(branch.status),
+        "citation_ids": list(branch.source_ids),
     }
 
 

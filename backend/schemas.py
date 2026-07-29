@@ -23,6 +23,7 @@ class RouteOptions(BaseModel):
 class ActionItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    subtask_id: str = Field(default="", max_length=16)
     label: str = Field(max_length=80)
     query: str = Field(max_length=2000)
     action_type: Literal[
@@ -77,9 +78,27 @@ class RouteInfo(BaseModel):
     entity: Optional[str] = None
     requested_intents: Optional[list[str]] = None
     semantic_intents: Optional[list[str]] = None
-    proposed_route: Literal["rag_grounded", "expanded_rag", "llm_general"] = "rag_grounded"
-    effective_route: Literal["rag_grounded", "expanded_rag", "llm_general"] = "rag_grounded"
-    retrieval_outcome: Literal["sufficient", "partial", "empty", "failed"] = "empty"
+    proposed_route: Literal[
+        "rag_grounded",
+        "expanded_rag",
+        "llm_general",
+        "local_response",
+        "composite",
+    ] = "rag_grounded"
+    effective_route: Literal[
+        "rag_grounded",
+        "expanded_rag",
+        "llm_general",
+        "local_response",
+        "composite",
+    ] = "rag_grounded"
+    retrieval_outcome: Literal[
+        "sufficient",
+        "partial",
+        "empty",
+        "failed",
+        "not_applicable",
+    ] = "empty"
     route_reason: Literal[
         "",
         "grounded_sufficient",
@@ -88,6 +107,10 @@ class RouteInfo(BaseModel):
         "retrieval_failed",
         "explicit_recovery_action",
         "authorized_empty_fallback",
+        "local_assistant_meta",
+        "local_social_smalltalk",
+        "local_out_of_scope",
+        "general_open_denied",
     ] = ""
     retrieval_debug: Optional[RetrievalDebug] = None
 
@@ -240,7 +263,7 @@ MediaPanel = Annotated[VoicePanelPage | LegacyVideoPanel, Field(discriminator="t
 
 class AskResponse(BaseModel):
     answer: str
-    grounding_mode: Literal["grounded", "ungrounded", "none"] = "none"
+    grounding_mode: Literal["grounded", "ungrounded", "none", "mixed"] = "none"
     sources: list[SourceItem]
     assets: list[AssetItem] = Field(default_factory=list)
     media: list[MediaItem] = Field(default_factory=list)
@@ -251,6 +274,7 @@ class AskResponse(BaseModel):
     citation_warning: str = ""
     omitted_actions: list[ActionItem] = Field(default_factory=list)
     failure_actions: list[ActionItem] = Field(default_factory=list)
+    subtasks: list["SubtaskResultItem"] = Field(default_factory=list)
     media_panels: list[MediaPanel] = Field(default_factory=list)
     memory: MemoryInfo = Field(default_factory=lambda: MemoryInfo(
         status="disabled",
@@ -258,6 +282,40 @@ class AskResponse(BaseModel):
         rewrite_mode="none",
     ))
     timing: Optional[TimingInfo] = None
+
+
+class SubtaskResultItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subtask_id: str
+    order: int = Field(ge=1, le=4)
+    task_type: Literal[
+        "assistant_meta",
+        "social_smalltalk",
+        "knowledge_base",
+        "general_open",
+        "out_of_scope",
+    ]
+    query: str
+    effective_route: Literal[
+        "rag_grounded",
+        "expanded_rag",
+        "llm_general",
+        "local_response",
+    ]
+    retrieval_outcome: Literal[
+        "sufficient",
+        "partial",
+        "empty",
+        "failed",
+        "not_applicable",
+    ]
+    grounding_mode: Literal["grounded", "ungrounded", "none"]
+    status: Literal["succeeded", "empty", "denied", "failed"]
+    citation_ids: list[str] = Field(default_factory=list)
+
+
+AskResponse.model_rebuild()
 
 
 class HealthResponse(BaseModel):

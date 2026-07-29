@@ -4,6 +4,9 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
+from backend.schemas import AskResponse
 from src.rag.chain import RAGChain
 from src.rag.contracts import CitationValidation, ResponsePacket
 from src.rag.execution import AskExecutionInput, build_completed_turn
@@ -87,6 +90,12 @@ class _RetrieverSpy:
         }]
 
 
+class _DuplicateRetrieverSpy(_RetrieverSpy):
+    def search(self, query, category=None, query_plan=None, trace=None):
+        row = super().search(query, category, query_plan, trace)
+        return [row[0], dict(row[0])]
+
+
 class _RegistrySpy:
     def __init__(self):
         self.calls = 0
@@ -156,6 +165,66 @@ def test_execute_calls_each_business_stage_once(tmp_path):
     assert registry.calls == 1
     assert llm.calls == 1
     assert packet.citation_validation.valid is True
+
+
+def test_composite_execute_retrieves_only_kb_and_serializes_safe_ordered_subtasks(tmp_path):
+    chain, planner, retriever, registry, llm = _chain(tmp_path, ["Knowledge [S01]"])
+
+    packet = chain.execute("你好，你是谁，请介绍一下十四行诗")
+    public = response_packet_to_public_dict(packet)
+    wire = AskResponse.model_validate(public)
+
+    assert planner.calls == 1
+    assert retriever.calls == 1
+    assert registry.calls == 1
+    assert llm.calls == 1
+    assert [item["subtask_id"] for item in public["subtasks"]] == ["T01", "T02", "T03"]
+    assert [item["task_type"] for item in public["subtasks"]] == [
+        "social_smalltalk",
+        "assistant_meta",
+        "knowledge_base",
+    ]
+    assert public["route"]["name"] == "composite"
+    assert public["sources"][0]["citation_id"] == "S01"
+    assert packet.answer.index("T01") < packet.answer.index("T02") < packet.answer.index("T03")
+    assert packet.grounding_mode == "mixed"
+    assert packet.turn_outcome == "mixed"
+    assert [item.subtask_id for item in wire.subtasks] == ["T01", "T02", "T03"]
+
+
+def test_composite_duplicate_identical_sources_keep_one_aligned_citation(tmp_path):
+    chain, _planner, _retriever, _registry, llm = _chain(
+        tmp_path,
+        ["Knowledge [S01]"],
+    )
+    duplicate_retriever = _DuplicateRetrieverSpy()
+    chain._retriever = duplicate_retriever
+
+    packet = chain.execute("你好，你是谁，请介绍一下十四行诗")
+
+    kb_branch = packet.branch_results[2]
+    assert duplicate_retriever.calls == 1
+    assert llm.calls == 1
+    assert kb_branch.status == "succeeded"
+    assert kb_branch.source_ids == ("S01",)
+    assert packet.citation_validation.valid is True
+    assert [row["citation_id"] for row in packet.retrieval_packet.sources] == ["S01"]
+
+
+def test_composite_recovery_action_requires_exact_subtask_binding(tmp_path):
+    chain, _planner, retriever, _registry, _llm = _chain(tmp_path, ["unused"])
+
+    with pytest.raises(ValueError, match="valid subtask_id"):
+        chain.execute(
+            "你好，你是谁，请介绍一下十四行诗",
+            action_payload={
+                "label": "扩大搜索",
+                "query": "请介绍一下十四行诗",
+                "action_type": "expand_search",
+            },
+        )
+
+    assert retriever.calls == 0
 
 
 def test_execute_retries_one_transient_answer_failure(tmp_path):
