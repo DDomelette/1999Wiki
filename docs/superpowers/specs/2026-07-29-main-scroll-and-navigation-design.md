@@ -295,7 +295,126 @@ Wiki 中的“问答”链接继续生成可复制、可前进后退的 `/#chat`
 
 `prefers-reduced-motion` 下，导航和 resize 对齐均使用即时滚动。焦点不能因为页面切换丢失；导航菜单关闭后不强制把焦点移入不可见页面。
 
-## 10. 测试与验收
+## 10. Kimi CLI 实施与 Codex 监督
+
+### 10.1 执行责任
+
+本修复的运行代码和测试修改由 Kimi CLI 执行，Codex 不直接编写实现代码。职责固定如下：
+
+- Kimi CLI：按照已批准规格和后续实施计划编写失败测试、实现代码及必要的测试调整；
+- Codex：拆分批次、生成任务提示、限定文件范围、监督进程、审查 diff、独立运行验证、决定接受或退回；
+- 用户：审阅规格、实施计划和最终结果，决定是否将工作树分支集成回主分支。
+
+Kimi CLI 不得自行改变已批准架构、扩大任务范围或跳过失败测试。需要改变规格时必须停止当前批次，由 Codex 向用户报告并重新取得批准。
+
+### 10.2 独立工作树
+
+实施固定在以下已创建的独立工作树中进行：
+
+- 工作树：`D:\1999Wiki\.worktrees\main-scroll-navigation-fix`
+- 分支：`codex/main-scroll-navigation-fix`
+- 起点：提交 `48b1bd2`
+
+Kimi CLI 的每次调用都必须以该工作树或其 `frontend/react-app` 子目录为当前目录。禁止在 `D:\1999Wiki` 主工作区编写、格式化或暂存实现文件。
+
+主工作区已有的无关修改不复制、不暂存、不清理。工作树分支未经用户批准不合并、不变基、不推送。
+
+工作树创建后的前端基线为：
+
+- 51 个 Vitest 测试文件通过；
+- 278 项 Vitest 测试通过；
+- 0 项失败。
+
+后续失败必须能够归因于本修复批次，不得将失败解释为既有基线问题。
+
+### 10.3 Kimi CLI 调用约束
+
+使用已验证的 Kimi CLI：
+
+- 可执行文件：`D:\KIMI\Kimi_Cli\bin\kimi.exe`
+- 已验证版本：`0.26.0`
+- 调用模式：非交互 `--auto -p`
+
+每次提示必须包含：
+
+1. 当前批次唯一目标；
+2. 本规格绝对路径；
+3. 允许修改的精确文件白名单；
+4. 必须先运行并展示的失败测试；
+5. 完成后必须运行的聚焦测试；
+6. 禁止 Git 提交、安装依赖、修改配置或处理白名单外文件；
+7. 输出修改摘要、测试结果和已知风险。
+
+Kimi CLI 不得执行 `git commit`、`git push`、`git merge`、`git rebase`、`git reset`、`git clean` 或删除工作树。不得启动新的代理、工作树或后台实现进程。
+
+Kimi CLI 额度耗尽、鉴权失败、非零退出、中途停止、没有有效 diff 或连续两次无法通过同一批次验证时，Codex 停止实施并向用户报告。Codex 不在未获额外授权时接管编写实现代码。
+
+### 10.4 文件白名单
+
+Kimi CLI 只允许修改或创建以下文件：
+
+```text
+frontend/react-app/src/App.tsx
+frontend/react-app/src/App.wheel.test.tsx
+frontend/react-app/src/styles/global.css
+frontend/react-app/src/hooks/useScrollSpy.ts
+frontend/react-app/src/hooks/useScrollSpy.test.tsx
+frontend/react-app/src/hooks/useWheelSnapNavigation.ts
+frontend/react-app/src/hooks/useWheelSnapNavigation.test.tsx
+frontend/react-app/src/hooks/useMainViewportAlignment.ts
+frontend/react-app/src/hooks/useMainViewportAlignment.test.tsx
+frontend/react-app/src/hooks/useChatPageBoundaryNavigation.ts
+frontend/react-app/src/hooks/useChatPageBoundaryNavigation.test.tsx
+frontend/react-app/src/navigation/mainSectionNavigation.ts
+frontend/react-app/src/navigation/mainSectionNavigation.test.ts
+frontend/react-app/src/components/navigation/navigationConfig.ts
+frontend/react-app/src/components/navigation/RouteAwareCardNav.tsx
+frontend/react-app/src/components/navigation/RouteAwareCardNav.test.tsx
+frontend/react-app/src/components/sections/DataSection.tsx
+frontend/react-app/src/components/sections/DataSection.css
+frontend/react-app/src/components/sections/ChatSection.tsx
+frontend/react-app/src/components/sections/ChatSection.css
+frontend/react-app/src/components/sections/ChatSection.test.tsx
+frontend/react-app/src/components/sections/MainResponsiveCss.test.ts
+frontend/react-app/e2e/main-mobile-responsive.spec.ts
+```
+
+白名单外文件出现任何修改即判定该批次越界。Codex 必须先停止 Kimi CLI，审查越界原因；未经用户批准，不接受通过扩大白名单来迁就实现。
+
+禁止修改：
+
+- API、聊天 Store、主题 Store 和 Wiki 数据模型；
+- `/wiki/*` 页面组件与 Wiki 阅读布局；
+- 后端、依赖版本、锁文件和构建配置；
+- 当前规格和后续实施计划；
+- 主工作区的任何文件。
+
+### 10.5 分批监督门禁
+
+实施拆为四个串行批次：
+
+1. 语义目标、URL/hash 转换和同页/跨页导航；
+2. 资料区展平、单一主滚动序列、滚轮与 ScrollSpy；
+3. 问答消息边界、触摸返回和视口变化恢复；
+4. 移动端 WebKit/Chromium 端到端回归与最终收口。
+
+每个批次遵循同一监督循环：
+
+1. Codex 记录批次开始前 `git status`；
+2. Codex 调用 Kimi CLI 执行一个批次；
+3. Codex 检查进程退出状态和 Kimi 摘要；
+4. Codex 比较批次前后文件列表，拒绝白名单外修改；
+5. Codex 运行 `git diff --check` 并逐文件审查实现是否符合规格；
+6. Codex 独立运行聚焦测试；
+7. 聚焦测试通过后运行受影响的组合测试；
+8. 批次通过监督门禁后，仅由 Codex 创建该批次提交；
+9. 批次失败则把具体证据反馈给 Kimi CLI，最多允许一次针对性修正。
+
+Codex 不以 Kimi CLI 自报“完成”作为验收依据。只有工作树中的 diff、测试输出和浏览器行为共同通过，批次才算完成。
+
+最终验收必须运行完整 Vitest、生产构建及本规格要求的 Playwright 项目。最终结果留在 `codex/main-scroll-navigation-fix` 分支，等待用户审阅和决定集成方式。
+
+## 11. 测试与验收
 
 ### 单元测试
 
@@ -334,7 +453,7 @@ Wiki 中的“问答”链接继续生成可复制、可前进后退的 `/#chat`
 - 减少动态效果模式；
 - Wiki 独立文档页面的常规滚动。
 
-## 11. 完成标准
+## 12. 完成标准
 
 以下条件全部满足才视为修复完成：
 
@@ -343,4 +462,7 @@ Wiki 中的“问答”链接继续生成可复制、可前进后退的 `/#chat`
 3. 三类缩放场景后当前语义页面保持不变；
 4. 问答消息内部滚动和顶部返回资料均符合批准行为；
 5. 主站与 Wiki 的“问答”导航、直接 URL 和历史导航一致；
-6. 新增回归测试通过，现有主页面、聊天和 Wiki 测试无回归。
+6. 新增回归测试通过，现有主页面、聊天和 Wiki 测试无回归；
+7. 所有实现修改均由 Kimi CLI 在指定工作树和白名单内产生；
+8. Codex 已完成逐批 diff 审查、独立验证和最终验收；
+9. 主工作区无本任务实现改动，工作树分支未经用户批准未被集成。
