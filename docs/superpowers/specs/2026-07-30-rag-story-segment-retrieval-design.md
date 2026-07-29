@@ -60,8 +60,8 @@ Level 3：原子子块
 12. 以 Typed Dense Retrieval Unit 同时承载非 Story Child 和 Story Segment，禁止身份复用。
 13. 通过受控 `story_required/story_mentions/story_examples` KB 分支支持显式多 Story、角色剧情和 Topic 例证，同时保持现有 Owner Gate。
 14. 在真实 embedding 构建前冻结评测 gold、baseline 和 go/no-go 阈值。
-15. 以 `RequestPlan v2`、请求级 Story 检测回执和统一授权上下文闭合复合请求、分页继续与单 Story 会话指代，不让 Planner、action 或记忆各自成为旁路授权源。
-16. 证据不完整时仍优先生成有引用的尽力回答；coverage shortfall 只限制结论强度，不把可用证据转换成频繁拒答。
+15. 以 provisional→final `RequestPlan v2` 一次性事务、独立 detection/assignment receipts、自包含 continuation、turn-event anchor 和统一授权上下文闭合复合请求、分页继续与单 Story 会话指代，不让 Planner、action 或记忆各自成为旁路授权源。
+16. 证据不完整时仍优先生成有引用的尽力回答；`StoryAnswerScope/v2` 只使用可确定归一化的三态 evidence 与正交 coverage，不把可用证据转换成频繁拒答。
 
 ## 3. 非目标
 
@@ -69,6 +69,8 @@ Level 3：原子子块
 
 - Reranker；当前开关继续关闭。
 - Segment BM25。
+- 服务端 continuation action store；P0 使用可重验的有界自包含 action。
+- 额外的语义冲突分类模型；P0 不发布无法本地确定的 `conflicting` 状态。
 - BGE-M3 Sparse 或其他学习型稀疏向量。
 - 修改 Story Atom 的 `child_id`、`parent_id`、来源路径或规范内容。
 - 将角色、物品、心相、媒体等全部改造成四层结构。
@@ -441,6 +443,7 @@ PlannedSubtaskV2
   depends_on[]
   source_query_spans[]
   answer_scope_hint
+  planning_outcome       # ready | boundary_story_scope_invalid
 ```
 
 `source_query_spans[]` 使用 `SourceQuerySpan/v1`：
@@ -453,17 +456,63 @@ source_text_sha256
 
 span 按 `original_query` 的 Unicode code point 半开区间计算。它只证明子任务来自原问题的哪些位置，不是实体或 Story Owner 授权。
 
-RequestPlanner 冻结 `RequestPlanV2` 后，Route Policy 生成独立的 `RequestAuthorizationEnvelope/v1`：
+RequestPlanner 的同一次 LLM 调用先产生内部 `ProvisionalRequestPlanV2`。它不是公开运行时契约，不能进入 Retriever、serializer、REST/SSE、记忆或 continuation action。固定的 `RequestPlanFinalizer/v1` 随后执行一次性事务：
+
+```text
+ProvisionalRequestPlanV2
+  → original_query 与 provisional envelope 基本校验
+  → StoryMentionDetector/v2 对 original_query 扫描一次
+  → span/dependency 校验
+  → occurrence-to-subtask assignment
+  → 至多一次 deterministic local scope merge
+  → Final RequestPlanV2
+  → StoryScopeAssignmentReceipt/v1
+  → RequestAuthorizationEnvelope/v2 冻结
+```
+
+最终执行对象固定为：
+
+```text
+RequestAuthorizationEnvelope/v2
+  schema_version
+  final_request_plan_v2
+  final_request_plan_v2_sha256
+  request_plan_finalization_receipt
+  story_mention_detection_receipt
+  story_scope_assignment_receipt
+  story_authorization_contexts[]
+```
+
+Planner 不能写入或修改 detection、assignment、finalization 或 authorization receipt；Policy 不能回写已经生成的 final subtask、span 或 hint。Detector 回执只绑定原问题与 Detector/注册表身份，不绑定 provisional/final Plan；assignment receipt 再通过 `final_request_plan_v2_sha256 + request_detection_receipt_sha256` 闭合二者，消除 Detector 与 Plan 的循环依赖。
+
+`RequestPlanFinalizationReceipt/v1` 至少包含：
 
 ```text
 schema_version
-request_plan_v2
-request_plan_v2_sha256
-story_mention_detection
-story_authorization_contexts[]
+original_query_sha256
+provisional_request_plan_sha256
+fallback_applied
+fallback_reason
+fallback_outcome        # none | merged | boundary
+preserved_subtask_ids
+merged_kb_subtask_ids
+boundary_subtask_ids
+final_request_plan_v2_sha256
+request_detection_receipt_sha256
+story_scope_assignment_receipt_sha256
 ```
 
-Planner 不能写入或修改 detection receipt；Policy 也不能回写 Planner 的 subtask、span 或 hint。二者通过 `request_plan_v2_sha256` 闭合。
+`StoryScopeAssignmentReceipt/v1` 至少包含：
+
+```text
+schema_version
+final_request_plan_v2_sha256
+request_detection_receipt_sha256
+assignment_closed
+occurrence_assignments[]       # occurrence_id + subtask_id + assigned | boundary
+unassigned_occurrence_ids[]
+ambiguous_occurrence_ids[]
+```
 
 `answer_scope_hint` 只允许：
 
@@ -473,23 +522,33 @@ bounded_multi_evidence
 exhaustive_narrative
 ```
 
-它是同一次 Planner 调用产生的生成姿态提示，不参与 Story 检测、Owner 授权、候选过滤、预算或 Retriever 调用；原始 Planner 输出缺失、非法或不确定时，RequestPlanner 在冻结 v2 前统一归一化为 `bounded_multi_evidence`，冻结后的 schema 不接受其他值。
+它是同一次 Planner 调用产生的生成姿态提示，不参与 Story 检测、Owner 授权、候选过滤、预算或 Retriever 调用；原始 Planner 输出缺失、非法或不确定时，RequestPlanner 在生成 provisional plan 前统一归一化为 `bounded_multi_evidence`，final schema 不接受其他值。
 
 `REQUESTPLAN2-P0-01`：`RequestPlan v2` 必须显式携带 schema version。不得根据字段存在性猜测版本，也不得把 v1 query 文本自动当作覆盖整个原问题的 span。
 
 `REQUESTPLAN2-P0-02`：每个 span 必须非空、界内、哈希匹配并按起点排序；不同子任务的 span 不得重叠。一个子任务可以拥有多个不相邻 span，但这些 span 的规范顺序必须稳定。
 
-`REQUESTPLAN2-P0-03`：`StoryMentionDetector/v2` 每个请求只扫描一次完整 `original_query`，生成一个请求级回执。Route Policy 再按已验证 span 机械派生子任务 Story scope，不得为每个子任务重复扫描完整问题。
+`REQUESTPLAN2-P0-03`：通过原问题大小/编码和 provisional envelope 基本解析的每个自然语言请求，都必须在检查 Planner span 归属前只扫描一次完整 `original_query`，生成与 Plan 无关的请求级回执；即使 provisional span/dependency 后续无效也不重跑或撤销该回执。初次 assignment 与本地 fallback 后的 assignment 必须复用同一回执，不能重新扫描原问题。
 
-`REQUESTPLAN2-P0-04`：每个非歧义 Story mention occurrence 必须完整落入恰好一个知识子任务的 span；落入零个、多个或跨越 span 边界均为 `story_scope_assignment_invalid`。Planner 必须回退为一个保留完整语义的 KB 子任务；无法安全回退时返回规划失败，不能让多个子任务重复消费完整 Story 集合。
+`REQUESTPLAN2-P0-04`：每个非歧义 Story mention occurrence 必须完整落入恰好一个知识子任务的 span；落入零个、多个或跨越 span 边界均使首次 assignment 失败，但此时 provisional plan 尚未冻结，也不能执行。
 
-`REQUESTPLAN2-P0-05`：非 Story 子任务不能因原问题其他 span 出现 Story 名称而被要求解释该 Story scope。例如“十四行诗的技能是什么？另外介绍今夜星光灿烂。”中，Story mention 只能归属后一个 KB 子任务。
+`REQUESTPLAN2-P0-05`：首次 assignment 失败时只允许一次本地 `knowledge_scope_merge`。它只能合并实际竞争或被同一 occurrence 跨越、且 Planner 已经标为语义兼容 Story-bearing 的知识子任务，使用这些子任务原有的不连续 span 并集；不得扩展 span、移动 mention、吞并 local/meta/smalltalk 子任务或把整个混合请求降成一个 KB 子任务。occurrence 未被任何知识 span 覆盖、候选任务的 branch kind/primary owner/intent 不兼容、或没有唯一吸收任务时不能猜测修复，必须进入下一条定义的局部 boundary。
 
-`REQUESTPLAN2-P0-06`：`answer_scope_hint` 不是权限、证据充分度或拒答信号。Planner 把因果问题误标为 `local_fact` 时，生成层仍受真实 shortfall 与禁止过度结论规则约束。
+`REQUESTPLAN2-P0-06`：合并后 `query` 固定为各保留 span 对应的原问题精确子串按 span 顺序以单个换行连接；不得让 LLM 重述。query plan 只允许保留唯一吸收任务的非 Story 字段，并将原有 `planner_story_entity_refs` 按原问题 span 顺序作稳定去重并集；不得新建 branch、intent、primary owner 或 Story ref。多个 hint 相同则保留，否则降为 `bounded_multi_evidence`。未受影响子任务的 task type、query、span、顺序和语义保持不变；被合并子任务使用最小原始 order，旧依赖引用确定性改写到新 subtask ID。
 
-`REQUESTPLAN2-P0-07`：当前活动 v1 运行时在新候选激活前保持不变；E 的影子 snapshot 必须由 RequestPlanner、Route Policy、Retriever、serializer、REST/SSE、记忆和测试一次性消费 v2。禁止在同一 snapshot 中双写 v1/v2，或用兼容适配器猜造缺失 span。
+`REQUESTPLAN2-P0-07`：若唯一 merge 不适用或第二次 assignment 仍失败，Finalizer 只把受影响知识组归一化为一个 `planning_outcome=boundary_story_scope_invalid` 子任务：span 固定为相关 occurrence 精确 span 与受影响原知识 span 的稳定非重叠并集，`query` 由这些 span 按原问题顺序机械连接，`query_plan=null`。该 boundary span 只负责解释规划失败，不构成实体/Story 授权，不得执行 Retriever，只产生 `retrieval_outcome=not_applicable` 和确定性规划边界。其他 ready local/meta/smalltalk/KB 子任务继续执行；若 boundary 所需 span 与拟保留的 local/meta/smalltalk/KB span 重叠，或整个 provisional schema、原问题边界、依赖图无法闭合，才升级为请求级 planning failure，不能通过裁剪合法子任务 span 强行隔离。
 
-`REQUESTPLAN2-P0-08`：执行器只消费通过 schema 和哈希验证的 `RequestAuthorizationEnvelope/v1`，不能把 Planner plan 与后来临时生成的 Detector/Context 对象按 subtask ID 松散拼接。
+`REQUESTPLAN2-P0-08`：fallback 不得再次调用 LLM Planner、再次运行 Detector、递归调用 Finalizer 或进行第二轮 fallback。`fallback_applied=true` 后无论 merged 或 boundary 都不能重入本事务。
+
+`REQUESTPLAN2-P0-09`：只有 assignment `closed` 的 final `RequestPlanV2` 才能计算公开 plan hash：每个 occurrence 必须恰好关联一个 ready 或 boundary subtask，`unassigned_occurrence_ids` 必须为空；boundary occurrence 不授予 Story 权限。provisional plan、失败 assignment 和 fallback 中间对象只进入受限 trace，不得进入 continuation、Retriever 或会话记忆。
+
+`REQUESTPLAN2-P0-10`：非 Story 子任务不能因原问题其他 span 出现 Story 名称而被要求解释该 Story scope。例如“十四行诗的技能是什么？另外介绍今夜星光灿烂。”中，Story mention 只能归属后一个 KB 子任务；若 fallback 必须合并或边界化后一个 KB 子任务，也必须保留前一个知识任务以及 local/meta 子任务。
+
+`REQUESTPLAN2-P0-11`：`answer_scope_hint` 不是权限、证据充分度或拒答信号。Planner 把因果问题误标为 `local_fact` 时，生成层仍受真实 shortfall 与禁止过度结论规则约束。
+
+`REQUESTPLAN2-P0-12`：当前活动 v1 运行时在新候选激活前保持不变；E 的影子 snapshot 必须由 RequestPlanner、Finalizer、Route Policy、Retriever、serializer、REST/SSE、记忆和测试一次性消费 v2。禁止在同一 snapshot 中双写 v1/v2，或用兼容适配器猜造缺失 span。
+
+`REQUESTPLAN2-P0-13`：执行器只消费通过 schema 和哈希验证的 `RequestAuthorizationEnvelope/v2`，不能把 provisional/final Plan 与后来临时生成的 Detector、assignment 或 Context 对象按 subtask ID 松散拼接；`boundary_story_scope_invalid` 永远不能进入 Retriever 或自由补充 fallback。
 
 #### 9.1.2 统一 Story 授权上下文
 
@@ -505,6 +564,7 @@ authorization_coverage_scope
 request_query_sha256
 source_query_spans_sha256
 request_detection_receipt_sha256
+story_scope_assignment_receipt_sha256
 subtask_detected_story_entity_refs
 planner_story_entity_refs
 required_story_entity_refs
@@ -536,7 +596,7 @@ Planner 可以提出分支和直接问题中的 Story refs，但不能写 `autho
 
 `AUTHCTX-P0-02`：授权上下文是 Retriever 唯一可消费的 Story allowlist 来源。Planner、检测回执、action payload、ConversationProjection、BM25/Dense 命中和前端字段都不能绕过它直接传入 Owner 过滤。
 
-`AUTHCTX-P0-03`：上下文规范 JSON、来源回执、RequestPlan v2、实体注册表、Detector、Policy 和 runtime snapshot 身份必须闭合并进入 trace/provenance；任一哈希不一致时该 Story 分支不得执行。
+`AUTHCTX-P0-03`：上下文规范 JSON、来源回执、final RequestPlan v2、detection/assignment/finalization receipts、实体注册表、Detector、Policy 和 runtime snapshot 身份必须闭合并进入 trace/provenance；任一哈希不一致时该 Story 分支不得执行。
 
 `AUTHCTX-P0-04`：一个 Story 分支授权失败只阻断该分支或对应 KB 子任务；其他 span 独立、授权有效的本地或知识子任务继续执行，不得把请求级检测重新变成请求级连坐拒绝。
 
@@ -567,8 +627,17 @@ story_owner_page_size = 3
 mention_detector_name = exact_story_mention
 mention_detector_version = 2
 request_plan_schema = rag.request_plan/v2
-authorization_envelope_schema = RequestAuthorizationEnvelope/v1
+request_plan_finalizer_schema = RequestPlanFinalizer/v1
+assignment_receipt_schema = StoryScopeAssignmentReceipt/v1
+authorization_envelope_schema = RequestAuthorizationEnvelope/v2
 authorization_context_schema = StoryAuthorizationContext/v1
+continuation_action_schema = StoryContinuationActionPayload/v1
+continuation_action_max_canonical_json_bytes = 65536
+story_anchor_schema = StoryConversationAnchor/v1
+story_anchor_event_schema = StoryAnchorEvent/v1
+conversation_turn_schema = ConversationTurn/v2
+story_anchor_ttl_seconds = 1800
+story_answer_scope_schema = StoryAnswerScope/v2
 ```
 
 Planner、Detector 和 Policy 输出中的 Story 引用均使用 `StoryEntityRequestRef`：
@@ -590,7 +659,6 @@ query span 按原问题 Unicode code point 半开区间计算；规范 mention �
 schema_version
 detector_identity
 query_sha256
-request_plan_v2_sha256
 entity_registry_identity
 detection_complete
 detected_story_count
@@ -599,10 +667,9 @@ detected_story_refs_sha256
 mention_occurrences
 ambiguous_occurrences
 overlap_conflicts
-subtask_scope_assignments
 ```
 
-`detected_story_entity_refs` 是按原问题首次非冲突 span 排序、按 Story Owner 去重的完整数组；`mention_occurrences` 保留同一 Owner 的所有不同出现位置。`subtask_scope_assignments` 只引用已验证的 `subtask_id` 与 occurrence ID，不复制或改写 mention。receipt 不保存原问题正文，只保存规范 mention 哈希、span、resolution kind、稳定 Story ID 和诊断 reason code。
+`detected_story_entity_refs` 是按原问题首次非冲突 span 排序、按 Story Owner 去重的完整数组；`mention_occurrences` 保留同一 Owner 的所有不同出现位置。Detection receipt 不保存原问题正文、Plan hash 或 subtask assignment，只保存规范 mention 哈希、span、resolution kind、稳定 Story ID 和诊断 reason code。`StoryScopeAssignmentReceipt/v1` 独立保存 occurrence 到 final subtask 的映射，且必须与 final Plan hash 和 detection receipt hash 同时验证。
 
 允许的 `branch_kind`：
 
@@ -667,10 +734,12 @@ subtask_scope_assignments
 ```text
 schema_version
 action_id
+target_subtask_id
 original_query_sha256
 request_plan_v2_sha256
 source_query_spans_sha256
 request_detection_receipt_sha256
+story_scope_assignment_receipt_sha256
 detected_story_refs_sha256
 page_index
 page_count
@@ -681,7 +750,28 @@ entity_registry_identity
 runtime_snapshot_identity
 ```
 
-`STORYBRANCH-P0-20`：`continue_story_owner_page` 被用户触发后，Policy 必须重新验证原问题、RequestPlan v2 span、完整检测回执、当前注册表/snapshot、action ID 和页面恰为 detected 数组的规范切片。全部一致时必须形成可达状态 `authorized/authorized_story_owner_page`，`authorization_origin=verified_continuation`，required/authorized 等于当前页 1～3 个 Owner，`authorization_coverage_scope=page_partial`；不得再次进入 `needs_continuation` 循环。
+`action_id` 固定为以下有序数组的规范 JSON UTF-8 SHA-256 小写十六进制：`["story-continuation/v1", target_subtask_id, request_plan_v2_sha256, request_detection_receipt_sha256, story_scope_assignment_receipt_sha256, page_index, canonical_page_story_refs_sha256, policy_identity, runtime_snapshot_identity]`；不使用进程内序号或不可重验的临时 ID。
+
+跨 HTTP 请求不依赖仅含哈希的不可还原 action，也不在 P0 引入服务端 action store。公开动作使用自包含 `StoryContinuationActionPayload/v1`：
+
+```text
+schema_version
+action_type = continue_story_owner_page
+action_id
+target_subtask_id
+original_query
+final_request_plan_v2
+story_mention_detection_receipt
+story_scope_assignment_receipt
+continuation_authorization_receipt
+canonical_payload_body_sha256
+```
+
+`canonical_payload_body_sha256` 对除自身字段外的规范 JSON 对象取哈希，避免自引用。完整 payload 的 UTF-8 规范 JSON 最大为 65,536 bytes。它只携带重新验证所需的冻结对象，不携带 Retriever 结果、向量、上下文正文、模型输出或 Owner allowlist 之外的执行状态。
+
+`STORYBRANCH-P0-20`：`continue_story_owner_page` 被用户触发后，后端必须把整个 action payload 视为不可信输入：严格解析专用 schema、拒绝未知字段、重算全部对象哈希、校验当前 registry/snapshot/Policy identity，并使用 payload 内 `original_query` 重新运行一次确定性的 `StoryMentionDetector/v2`。新检测结果必须与所携完整 detection receipt 字节等价，再验证 final Plan span、assignment receipt、target subtask、action ID 和页面恰为完整 detected 数组的规范切片。
+
+全部一致时只恢复并执行 `target_subtask_id` 对应的 Story branch，形成可达状态 `authorized/authorized_story_owner_page`；不得重放 final Plan 中的其他 local/meta/KB 子任务。`authorization_origin=verified_continuation`，required/authorized 等于当前页 1～3 个 Owner，`authorization_coverage_scope=page_partial`；不得再次进入 `needs_continuation` 循环，也不得重新调用 LLM Planner。continuation 的一次 Detector 重验属于新的 HTTP 请求，仍满足“每个自然语言请求恰好一次本地扫描”。
 
 `STORYBRANCH-P0-21`：检测超过 32 个时必须明确使用 `authorization_status=denied` 和 `authorization_reason=narrow_story_scope`。`narrow_story_scope` 不是第五种授权状态，也不能复用 `needs_continuation`；Policy 不比较被上限截断的 Planner 提案，也不生成任何 Owner 检索页。
 
@@ -696,11 +786,11 @@ runtime_snapshot_identity
 
 任何其他组合均 schema 失败，不得执行 Retriever。
 
-`STORYBRANCH-P0-24`：请求级 detected occurrences 必须按 `source_query_spans` 唯一分配。一个子任务出现歧义只拒绝该子任务的 Story-bearing 分支；span 交叠或 mention 无法唯一归属时返回 `denied/story_scope_assignment_invalid`，多个分支竞争同一已分配 scope 时返回 `denied/story_scope_unaccounted`。Policy 不得仅凭 Detector 自动把非 Story 分支升级为 Story 检索权限。
+`STORYBRANCH-P0-24`：请求级 detected occurrences 必须由 `StoryScopeAssignmentReceipt/v1` 按 final `source_query_spans` 唯一分配。一个子任务出现歧义只拒绝该子任务的 Story-bearing 分支；span 交叠或 mention 无法唯一归属时返回 `denied/story_scope_assignment_invalid`，多个分支竞争同一已分配 scope 时返回 `denied/story_scope_unaccounted`。Policy 不得仅凭 Detector 自动把非 Story 分支升级为 Story 检索权限。
 
 `STORYBRANCH-P0-25`：Story 本身是主问题或需要跨 Story 比较时使用 `story_required`；角色经历问题使用 `primary_owner + story_mentions`，Topic/Page 剧情例证使用 `primary_owner + story_examples`。后两类存在显式 Story scope 时，补充分支必须同时满足角色/Topic 语义过滤和授权 allowlist，不能降为无约束 Story 搜索，也不能提升为跨 Owner 比较结论。
 
-`STORYBRANCH-P0-26`：本节检测规范、span 归属、数量限制、三来源状态机、分页算法和 action schema 均属于 `StoryBranchConfig/v2`、RequestPlan v2 与 Detector identity；Planner、Route Policy、Retriever、前端、trace 和 provenance 必须读取同一版本化配置，禁止分别维护常量或匹配规则。
+`STORYBRANCH-P0-26`：本节检测规范、span 归属、数量限制、三来源状态机、分页算法和 action schema 均属于 `StoryBranchConfig/v2`、RequestPlan v2 与 Detector identity；Planner、Finalizer、Route Policy、Retriever、前端、trace 和 provenance 必须读取同一版本化配置，禁止分别维护常量或匹配规则。
 
 `STORYBRANCH-P0-27`：`needs_continuation`、`narrow_story_scope`、`story_mention_set_mismatch`、`story_scope_assignment_invalid` 和 `story_scope_unaccounted` 均不属于检索 `empty`；它们产生确定性边界响应、`retrieval_outcome=not_applicable` 和适用 action，不得触发自由补充 empty fallback。
 
@@ -726,25 +816,55 @@ source_coverage_scope
 citation_validation_status
 ```
 
-它作为 `ConversationProjection.story_anchor` 的独立可选 typed 字段保存，不复用或覆盖线程 A 的角色/Topic `last_entity_ref`。只有 `authorization_coverage_scope=complete`、恰好一个授权 Story、回答成功且引用验证通过的 grounded `story_required` turn 可以创建或刷新 Story anchor。2～3 Owner、`page_partial`、开放 Story 域、empty/denied/failed、自由补充或补充分支均不得写入。
+`ConversationTurn` 升级为显式 v2，并新增一次生成、投影时不得重算的 `turn_id`（规范小写 UUID）以及可选 `StoryAnchorEvent/v1`：
 
-`STORYBRANCH-P0-32`：无显式 Story mention 的后续问题只有同时满足以下条件才可授权 anchor：恰好一个未过期 Story anchor；snapshot、注册表和 Policy identity 一致；Planner 提出 `story_required` follow-up 但不提交 Story span/ref；固定 `StoryFollowUpResolver/v1` 认定原问题含明确指代或继续语义；没有冲突角色/Topic/Story 实体。通过后输出 `authorized/authorized_conversation_story_anchor` 和 `authorization_coverage_scope=anchor_follow_up`。
+```text
+ConversationTurnV2
+  turn_id
+  ...
+  story_anchor_event?
 
-`STORYBRANCH-P0-33`：`StoryFollowUpResolver/v1` 是本地、版本化规则，不调用额外 LLM。它至少覆盖“后来/接着/之后发生了什么”“这个故事/该剧情”“继续讲”等明确回指，并拒绝无回指的独立新问题。Planner 的 standalone rewrite 只能作为待验证提案，不能自行创建或选择 anchor。
+StoryAnchorEventV1
+  event_type        # set | clear
+  event_reason
+  anchor            # set 时必填，clear 时必须为空
+```
 
-`STORYBRANCH-P0-34`：anchor 缺失、过期、多值、snapshot 不一致、引用未验证或 follow-up 解析不明确时，所提 Story 分支固定 `denied/story_anchor_invalid`；不得回退到全 Story 搜索或沿用最近一个任意实体。其他独立子任务继续执行。
+`STORYBRANCH-P0-32`：anchor 事实只保存在已提交 `ConversationTurn.story_anchor_event` 中；`ConversationProjection.story_anchor` 是从 turns 确定性派生的只读结果，不在 `_Entry` 或其他 sidecar 中保存第二份可变状态，也不复用或覆盖线程 A 的角色/Topic `last_entity_ref`。
 
-`STORYBRANCH-P0-35`：Detector 注册表中的每个可检测键必须携带 `detection_mode=canonical_exact|safe_alias|quoted_or_whole_span|stable_id`。不超过 2 个中文 code point 的名称或 alias、纯数字 alias、与非 Story 实体同名的键不得默认作为任意子串匹配；跨类型同键在没有唯一 stable ID 时固定歧义。
+`STORYBRANCH-P0-33`：恰好一个授权 Story 的 grounded `story_required` direct turn，在回答成功、引用验证通过且 `authorization_coverage_scope=complete` 时写 `set`。已授权的单 Story `anchor_follow_up` 成功且仍指向同一 Story 时也可写新的 `set` 刷新 TTL；不同单 Story 的合格 turn 直接写新的 `set` 替换旧 anchor。
 
-`STORYBRANCH-P0-36`：`safe_alias` 只能由版本化构建规则产生：至少 3 个中文 code point、跨全部实体类型唯一、不是另一个注册键的真子串，并通过冻结负例集。短 alias 只有作为完整子任务 span 或出现在受支持的标题引号中且跨类型唯一时才可检测；不能按失败查询逐项加入白名单。
+`STORYBRANCH-P0-34`：任何已形成可见响应的 Story-bearing turn，若为 2～3 Owner、`page_partial`、`open_story_domain`、empty、denied、failed、引用验证失败、自由补充或 Story 补充分支，必须写 `clear` 并给出稳定 reason code。纯 local/meta/smalltalk 或完全不含 Story 分支/授权尝试的 turn 不写 anchor event，不清除最近的 Story anchor。
 
-`STORYBRANCH-P0-37`：通过 `canonical_exact` 构建门禁的规范标题允许后接自然语言助词；`safe_alias` 不得因位于更长未分隔词内部而命中。短规范标题与短 alias 一律使用 `quoted_or_whole_span`。稳定 ID、ASCII 与数字仍使用双侧标识符边界。所有边界与标题引号集合写入 Detector 配置和 identity。
+`STORYBRANCH-P0-35`：`ConversationProjection` 从后向前找到最近一个 Story anchor event 后立即停止：有效 `set` 返回该 anchor；`clear` 返回空；过期、snapshot/registry/Policy identity 不一致或结构非法的 `set` 也返回空并遮蔽更早 anchor。不得跳过无效新事件继续复活旧 Story A。
 
-`STORYBRANCH-P0-38`：测试必须覆盖复合请求唯一 span 归属、continuation 从 4～32 集合实际到达 authorized page、单 Story anchor 追问、多 Owner 不写 anchor、过期/跨 snapshot anchor、短中文 alias、长词内子串、跨类型同名、标题引号、数字和内部 ID。非 Story KB 查询因 Detector 误检造成的拒绝次数必须为零。
+`STORYBRANCH-P0-36`：P0 固定 `story_anchor_ttl_seconds=1800`。anchor 的 `source_turn_id` 必须等于承载 set event 的 `ConversationTurn.turn_id`，`created_at` 等于该 turn 的 UTC `completed_at`；`created_at/expires_at` 使用 UTC RFC3339 `Z` 格式，`expires_at = created_at + 1800 seconds`。运行时使用可注入 UTC clock 判定 anchor 到期，ConversationStore 现有 monotonic session TTL 继续只管理 entry 生命周期。进程重启导致内存会话消失时 anchor 同步消失，不做跨重启猜测恢复。
 
-`STORYBRANCH-P0-39`：三个授权来源均由同一个 Route Policy 构造 `StoryAuthorizationContext/v1`，不实现三个 Retriever 入口。新增来源只能发布新 schema/config 版本、独立评测并再次批准，不能增加临时分支或查询白名单。
+`STORYBRANCH-P0-37`：answer、最终引用验证状态、`ConversationTurn` 与 `StoryAnchorEvent` 必须在现有 lease/entry lock 下作为一个 turn 原子追加。完整 HTTP/SSE 响应已确定性结束时提交 `set/clear`；连接中断且 turn 未提交时四者均不得部分写入。
 
-`STORYBRANCH-P0-40`：continuation 任一重验项失败时固定 `denied/story_continuation_invalid`、required/authorized 为空且 Retriever 调用为零；不得退回 `direct_query` 重新触发分页，也不得使用 action 中仍可解析的部分 Owner。
+`STORYBRANCH-P0-38`：无显式 Story mention 的后续问题只有同时满足以下条件才可授权 anchor：Projection 恰好派生一个未过期 Story anchor；snapshot、注册表和 Policy identity 一致；Planner 提出 `story_required` follow-up 但不提交 Story span/ref；固定 `StoryFollowUpResolver/v1` 认定原问题含明确指代或继续语义；没有冲突角色/Topic/Story 实体。通过后输出 `authorized/authorized_conversation_story_anchor` 和 `authorization_coverage_scope=anchor_follow_up`。
+
+`STORYBRANCH-P0-39`：`StoryFollowUpResolver/v1` 是本地、版本化规则，不调用额外 LLM。它至少覆盖“后来/接着/之后发生了什么”“这个故事/该剧情”“继续讲”等明确回指，并拒绝无回指的独立新问题。Planner 的 standalone rewrite 只能作为待验证提案，不能自行创建或选择 anchor。
+
+`STORYBRANCH-P0-40`：anchor 缺失、过期、被 clear 遮蔽、snapshot 不一致、引用未验证或 follow-up 解析不明确时，所提 Story 分支固定 `denied/story_anchor_invalid`；不得回退到全 Story 搜索或沿用最近一个任意实体。其他独立子任务继续执行。
+
+`STORYBRANCH-P0-41`：Detector 注册表中的每个可检测键必须携带 `detection_mode=canonical_exact|safe_alias|quoted_or_whole_span|stable_id`。不超过 2 个中文 code point 的名称或 alias、纯数字 alias、与非 Story 实体同名的键不得默认作为任意子串匹配；跨类型同键在没有唯一 stable ID 时固定歧义。
+
+`STORYBRANCH-P0-42`：`safe_alias` 只能由版本化构建规则产生：至少 3 个中文 code point、跨全部实体类型唯一、不是另一个注册键的真子串，并通过冻结负例集。短 alias 只有作为完整子任务 span 或出现在受支持的标题引号中且跨类型唯一时才可检测；不能按失败查询逐项加入白名单。
+
+`STORYBRANCH-P0-43`：通过 `canonical_exact` 构建门禁的规范标题允许后接自然语言助词；`safe_alias` 不得因位于更长未分隔词内部而命中。短规范标题与短 alias 一律使用 `quoted_or_whole_span`。稳定 ID、ASCII 与数字仍使用双侧标识符边界。所有边界与标题引号集合写入 Detector 配置和 identity。
+
+`STORYBRANCH-P0-44`：测试必须覆盖 provisional→final 单次事务、混合请求 fallback 保留 local/meta、continuation 跨请求无损重验、单 Story anchor 追问、A→B 替换、A→B/C 或失败 Story turn 的 clear 遮蔽、过期/跨 snapshot anchor、短中文 alias、长词内子串、跨类型同名、标题引号、数字和内部 ID。非 Story KB 查询因 Detector 误检造成的拒绝次数必须为零。
+
+`STORYBRANCH-P0-45`：三个授权来源均由同一个 Route Policy 构造 `StoryAuthorizationContext/v1`，不实现三个 Retriever 入口。新增来源只能发布新 schema/config 版本、独立评测并再次批准，不能增加临时分支或查询白名单。
+
+`STORYBRANCH-P0-46`：新影子 API 的 `action_payload` 必须是按 `schema_version + action_type` 判别的严格 union。`StoryContinuationActionPayload/v1` 不得塞入当前 `ActionItem(extra="ignore")`；后端 Pydantic schema 必须 `extra="forbid"`，前端 action serializer 必须逐字段无损往返，缺字段、未知字段、超过大小上限或被前端裁剪均在进入 Policy 前拒绝。
+
+`STORYBRANCH-P0-47`：当前活动 v1 action schema 保持原样直到独立激活；新 shadow snapshot 不使用“旧字段存在则猜 v2”或把 continuation 降级成普通 query。snapshot/registry/Policy identity 变化时 action 固定 `denied/stale_continuation_action`，不执行 Retriever，并要求用户重新提交原问题。
+
+`STORYBRANCH-P0-48`：P0 明确不建立服务端 action store。自包含 action 可跨进程和应用重启重验；payload/hash 只提供完整输入与完整性诊断，不是授权凭证，Policy 必须从原问题、当前注册表和规范页重新派生 allowlist。服务端不得用内存中找不到 action 作为跳过重验、静默重新规划或授权 payload 子集的理由。
+
+`STORYBRANCH-P0-49`：continuation 任一重验项失败时固定 `denied/story_continuation_invalid`、required/authorized 为空且 Retriever 调用为零；不得退回 `direct_query` 重新触发分页，也不得使用 action 中仍可解析的部分 Owner。
 
 ## 10. 索引与产物
 
@@ -905,9 +1025,9 @@ Segment Dense hits + Atom-derived Segment signals
 
 `PIPE-P0-07`：同一知识子任务中，相同规范化 Dense query 与同一模型身份只能调用一次 query embedding API，向量在 Child/Story 过滤搜索间复用；每个子任务最多允许两个不同的 Dense query embedding，实际调用次数必须进入 trace 和延迟报告。
 
-`PIPE-P0-08`：RequestPlan v2 验证、请求级 Story detection、subtask scope assignment 和统一授权上下文构建必须在任何 Story Retriever 调用前完成。continuation/anchor 不得绕过同一入口调用独立检索函数。
+`PIPE-P0-08`：provisional Plan 校验、单次请求级 Story detection、至多一次本地 finalization、final subtask scope assignment 和统一授权上下文构建必须在任何 Story Retriever 调用前完成。continuation/anchor 不得绕过同一入口调用独立检索函数。
 
-`PIPE-P0-09`：`StoryAnswerScope/v1` 只在最终 evidence packet 冻结后归一化并传给现有 grounded generator；不得回流改变候选、配额或授权。
+`PIPE-P0-09`：`StoryAnswerScope/v2` 只在每个知识子任务的最终 evidence packet 冻结后本地归一化并传给现有 grounded generator；不得回流改变候选、配额或授权。
 
 ## 12. Segment 融合与打分
 
@@ -1201,29 +1321,43 @@ narrow_story_scope
 
 ### 20.1 非阻断性答案范围
 
-P0 使用 `StoryAnswerScope/v1` 控制结论强度，不新增检索分支：
+P0 使用每个知识子任务一个 `StoryAnswerScope/v2` 控制结论强度，不新增检索分支：
 
 ```text
-claim_scope          # local_fact | bounded_multi_evidence | exhaustive_narrative
-evidence_state       # sufficient | partial | sparse | conflicting | empty
-answer_posture       # best_effort_grounded | strict_grounded
-answer_coverage_scope  # complete | bounded | non_exhaustive | page_partial
+subtask_id
+claim_scope                    # local_fact | bounded_multi_evidence | exhaustive_narrative
+evidence_state                 # sufficient | partial | empty
+answer_posture                 # best_effort_grounded | strict_grounded
+authorization_coverage_scope   # complete | page_partial | anchor_follow_up | open_story_domain
+narrative_coverage             # local | bounded | non_exhaustive
 shortfall_codes[]
 ```
 
 默认 `answer_posture=best_effort_grounded`。用户明确要求“只说资料直接写明的内容”“不要推断”等严格姿态时使用 `strict_grounded`；不增加 UI 开关或第二次分类模型调用。
 
-| `evidence_state` | P0 默认输出 |
+`evidence_state` 只由冻结后的最终 evidence packet 和版本化 material-shortfall 集合本地计算：
+
+| 条件 | `evidence_state` | P0 默认输出 |
+|---|---|---|
+| 最终 ContextUnit 数为 0 | `empty` | 明确数据库未召回相关证据；仅此状态可走既有 empty 处理 |
+| ContextUnit 数大于 0，且至少一个 material shortfall | `partial` | 先回答已覆盖部分，末尾一句说明最主要缺口 |
+| ContextUnit 数大于 0，且没有 material shortfall | `sufficient` | 针对声明的局部或有限范围直接回答并引用 |
+
+Material shortfall 只包括第 20 节固定的八个证据 shortfall code，且各分支只能在缺口实质影响该子任务时发出：required Story Owner 没有任何可提交 Segment、required Atom group 未覆盖、必要主分支证据缺失、上下文预算移除了某个必需细节、Atom/source/citation 闭包失败。候选数量少、文本短、质量标记、单个精确 Atom 已足以回答局部事实、或“看起来不够丰富”均不能单独把结果降为 `partial`。授权边界 reason、debug 计数和未影响用户问题的候选裁切不得进入 `shortfall_codes[]`。
+
+`authorization_coverage_scope` 直接复制已验证授权上下文；`narrative_coverage` 由 `claim_scope` 确定：
+
+| `claim_scope` | `narrative_coverage` |
 |---|---|
-| `sufficient` | 直接回答并引用 |
-| `partial` | 先回答已覆盖部分，末尾一句说明主要缺口 |
-| `sparse` | 输出可验证事实；允许把综合判断明确标成“可能”“更像是”或“一种合理理解” |
-| `conflicting` | 并列说明冲突证据及来源，不替用户伪造确定结论 |
-| `empty` | 明确数据库未召回相关证据；仅此状态可走既有 empty 处理 |
+| `local_fact` | `local` |
+| `bounded_multi_evidence` | `bounded` |
+| `exhaustive_narrative` | `non_exhaustive` |
+
+这些维度没有覆盖优先级，允许正交共存。例如 continuation 页可以是 `page_partial + sufficient + bounded`；完整 Story Owner 下的全章请求可以是 `complete + sufficient + non_exhaustive`。P0 不把两者压缩成一个会丢信息的 `answer_coverage_scope` 枚举。
 
 `ANSWER-P0-01`：`local_fact`、`bounded_multi_evidence`、`exhaustive_narrative` 不是 Route Policy 授权状态，也不改变 Owner、Top-K、融合、预算和 API 调用次数。它们只进入同一个 grounded generator 的提示与公开 metadata。
 
-`ANSWER-P0-02`：`local_fact` 可直接回答局部事实；`bounded_multi_evidence` 可综合多个 Segment，但事实与推断必须可区分；`exhaustive_narrative` 仍输出当前召回到的有用内容，同时固定 `answer_coverage_scope=non_exhaustive`，不得仅因无法穷尽而拒答。
+`ANSWER-P0-02`：`local_fact` 可直接回答局部事实；`bounded_multi_evidence` 可综合多个 Segment，但事实与推断必须可区分；`exhaustive_narrative` 仍输出当前召回到的有用内容，同时固定 `narrative_coverage=non_exhaustive`，不得仅因无法穷尽而拒答。
 
 `ANSWER-P0-03`：存在相关 grounded 证据时，coverage shortfall、Top-K 非穷尽或因果链不完整均不能单独产生空答案、边界模板或“无法回答”。只有授权不成立、实体歧义无法消解或 `evidence_state=empty` 才能阻止对应 Story 答案。
 
@@ -1235,9 +1369,15 @@ shortfall_codes[]
 
 `ANSWER-P0-07`：答案正文先给结论或当前可支持的解释，范围说明放在末尾；不得用长篇安全声明占据主要输出。引用必须支持事实前提，推断性结论不能借引用伪装成原文直接结论。
 
-`ANSWER-P0-08`：`StoryAnswerScope/v1` 由同一次 RequestPlan v2 的非授权 hint 与最终 evidence packet 共同归一化；运行时不调用额外 Planner、reranker、完整性模型或因果模型。hint 缺失或冲突时使用 `bounded_multi_evidence`。
+`ANSWER-P0-08`：`StoryAnswerScope/v2` 由同一次 final RequestPlan v2 的非授权 hint 与最终 evidence packet 共同归一化；运行时不调用额外 Planner、reranker、完整性模型、冲突检测模型或因果模型。hint 缺失或冲突时使用 `bounded_multi_evidence`。
 
-`ANSWER-P0-09`：REST 与 SSE 必须公开一致的 `claim_scope`、`evidence_state`、`answer_coverage_scope` 和 shortfall codes；流式首段不得先声称完整、结束时再追加相反 shortfall。
+`ANSWER-P0-09`：P0 删除无法稳定本地判定的 `sparse` 和 `conflicting` 状态。证据较少但足以回答局部事实仍可为 `sufficient`；非空但存在实质缺口统一为 `partial`。若最终 packet 明确包含两条表面不一致的已引用事实，生成器可以并列陈述，但 metadata 不宣称系统已经完成语义冲突判定。
+
+`ANSWER-P0-10`：`StoryAnswerScope/v2` 固定保存于每个知识子任务的 `SubtaskInfo.story_answer_scope`；各 `BranchResult` 只提供归一化输入和 shortfall。顶层响应按原子任务顺序公开 `knowledge_subtask_scopes[]`，不生成跨异构子任务的单一 `claim_scope`。
+
+`ANSWER-P0-11`：顶层 `overall_evidence_state` 只汇总知识子任务：全部为 `sufficient` 时为 `sufficient`；全部为 `empty` 时为 `empty`；其他组合为 `partial`；没有知识子任务时为 `not_applicable`。local/meta/smalltalk 不参与该汇总。
+
+`ANSWER-P0-12`：REST 与 SSE 必须公开一致的每子任务 scope、`overall_evidence_state` 和 shortfall codes。scope 在 generator 开始前由冻结 packet 计算并先进入流式 metadata；流式首段不得先声称完整、结束时再追加相反 shortfall。
 
 ## 21. 全章总结边界
 
@@ -1269,7 +1409,7 @@ shortfall_codes[]
 
 `FAILURE-P0-08`：新 Dense 行缺失或携带未知 `retrieval_unit_type` 时视为 snapshot/schema 错误，不得按旧 Child fallback 解释。
 
-`FAILURE-P0-09`：相关证据已进入最终上下文但 evidence shortfall 非空，不属于执行失败；生成层必须按第 20.1 节输出尽力回答。不得把 partial/sparse 统一映射为“抱歉，无法回答”。
+`FAILURE-P0-09`：相关证据已进入最终上下文但 material shortfall 非空，不属于执行失败；生成层必须按第 20.1 节输出 `partial` 的尽力回答，不得映射为“抱歉，无法回答”。
 
 `FAILURE-P0-10`：RequestPlan v1/v2、Detector v1/v2、StoryBranchConfig v1/v2 或授权上下文混用属于 snapshot/schema 错误；不得临时填充默认 span、默认 origin 或默认 Owner 继续执行。
 
@@ -1285,9 +1425,9 @@ Segment 和 Dense 产物身份至少包含：
 - Story Segment JSONL 哈希和行数；
 - SegmentContextUnit/AtomSpan schema 身份；
 - StoryFusionConfig/v1 身份；
-- `rag.request_plan/v2`、`StoryAuthorizationContext/v1` 与 SourceQuerySpan schema 身份；
+- `rag.request_plan/v2`、`RequestPlanFinalizer/v1`、`StoryScopeAssignmentReceipt/v1`、`RequestAuthorizationEnvelope/v2`、`StoryAuthorizationContext/v1` 与 SourceQuerySpan schema 身份；
 - `StoryBranchConfig/v2`、Story mention Detector、同版实体注册表和检测 receipt schema 身份；
-- continuation/anchor 来源回执、StoryFollowUpResolver 和 `StoryAnswerScope/v1` 身份；
+- self-contained continuation action、`ConversationTurn/v2`、turn-event anchor、StoryFollowUpResolver 和 `StoryAnswerScope/v2` 身份；
 - embedding 模型、维度和服务身份；
 - Typed Dense collection schema、unit 类型计数和 index 参数；
 - Analyzer/BM25 产物身份；
@@ -1340,7 +1480,7 @@ max(1.20 * baseline_retrieval_p95_ms,
 
 `PERF-P0-08`：容量估算必须同时包含旧活动 collection、新影子 collection、Milvus 索引/元数据和构建峰值临时空间；容量未知时不得执行真实向量构建。
 
-`PERF-P0-09`：`StoryAnswerScope/v1` 只能复用现有 Planner 和生成调用；P0 因答案范围判断新增的 LLM、reranker 或完整性 API 调用次数必须为零。
+`PERF-P0-09`：`StoryAnswerScope/v2` 只能复用现有 Planner 和生成调用；P0 因答案范围判断新增的 LLM、reranker、完整性、冲突检测或因果 API 调用次数必须为零。
 
 ## 25. 评测集
 
@@ -1462,11 +1602,16 @@ canonical_evidence_text_sha256
 授权评测至少包含：
 
 - “十四行诗的技能是什么？另外介绍今夜星光灿烂。”，证明 Story mention 只归属后一个 KB 子任务；
+- provisional plan assignment 失败后只执行一次本地 scope merge，复用同一 detection receipt，保留前述角色 KB 子任务以及 local/meta/smalltalk 子任务；
+- 无安全 merge 时只把不重叠的受影响知识组变成 boundary；若 boundary 与待保留 local/meta span 重叠则请求级失败，不能裁剪 span 伪造隔离；
+- fallback 后 final plan hash、assignment receipt 与 envelope 闭合；第二次 fallback、第二次 LLM Planner 和第二次 Detector 调用均为零；
 - Story mention 恰好落在 span 边界、跨 span、未覆盖和双重覆盖；
-- 4、5、32 个 Story 的每一页 continuation 均能在重验后进入 `authorized/page_partial`，且不会循环；
+- 4、5、32 个 Story 的每一页 self-contained continuation 均能跨新 HTTP 请求无损重验并进入 `authorized/page_partial`，且不会循环或调用 Planner；
+- continuation 的未知字段、前端字段裁切、超出 65,536 bytes、hash 篡改和 stale snapshot 均在 Retriever 前拒绝；
 - 33 个以上只产生 `denied/narrow_story_scope`；
 - 单 Story 成功 turn 后“后来发生了什么？”使用 `validated_conversation_anchor`；
-- 多 Story、page partial、过期、跨 snapshot 和引用未验证的 turn 不写或不能消费 anchor；
+- Story A 后成功 Story B 设置新 anchor；Story A 后 B/C、多 Story、page partial、empty/denied/failed、过期、跨 snapshot 和引用未验证的 Story turn 写 clear 并遮蔽旧 A；
+- local/meta/smalltalk intervening turn 不清除有效 anchor；未提交的 SSE turn 不产生半写 anchor；
 - 非 Story 查询中的短 alias、长词内子串、跨类型同名不产生 Story 权限；
 - 受支持标题引号、规范标题、数字和内部 ID 的正负边界。
 
@@ -1475,15 +1620,19 @@ canonical_evidence_text_sha256
 - `local_fact` 有证据时直接回答，不附加模板化长免责声明；
 - “伊索尔德是怎么疯掉的”在多证据不完整时仍输出有引用的有限综合，并把非直接因果标为推断；
 - “完整列出伊索尔德所有出场章节”返回当前检索结果和 `non_exhaustive` 范围，不声称穷尽，也不因 Top-K 非穷尽直接拒答；
-- `partial`、`sparse` 与 `conflicting` 各自产生非空、有区分度的 grounded 响应；
+- 单个短而精确的 Atom 足以回答局部事实时为 `sufficient`，不能因文本短或数量少降级；
+- 非空且存在 material shortfall 时为 `partial` 并产生非空 grounded 响应；零 ContextUnit 才为 `empty`；
+- `page_partial + sufficient + bounded` 与 `complete + sufficient + non_exhaustive` 均可无冲突序列化；
 - `strict_grounded` 保留直接事实但不生成未明示推断；
 - `empty` 与授权 denied 保持既有边界，不被软回答策略绕过。
 
-`EVALSET-P0-15`：授权用例冻结 request-level detection receipt、source span、subtask assignment、authorization origin/context、action/anchor receipt 和预期 Retriever 调用次数；不能只断言最终 Owner 数组。
+`EVALSET-P0-15`：授权用例冻结 provisional/final plan、finalization receipt、request-level detection receipt、StoryScopeAssignmentReceipt、authorization origin/context、self-contained action/turn-event anchor receipt 和预期 Planner/Detector/Retriever 调用次数；不能只断言最终 Owner 数组。
 
 `EVALSET-P0-16`：答案可用性门禁首先检查 packet、prompt 输入和公开 metadata 的确定性契约，再在固定生成模型与温度下抽样验证措辞。不得用模型文风分数抵消错误授权、引用不闭合或空证据编造。
 
-`EVALSET-P0-17`：有至少一个 relevant gold Atom 进入最终上下文的 partial/sparse 用例，因 shortfall 返回空答案或纯边界模板均计为错误拒答；推断措辞是否谨慎不改变 evidence Recall 分子。
+`EVALSET-P0-17`：有至少一个 relevant gold Atom 进入最终上下文的 `partial` 用例，因 shortfall 返回空答案或纯边界模板均计为错误拒答；推断措辞是否谨慎不改变 evidence Recall 分子。
+
+`EVALSET-P0-18`：AnswerScope 评测必须对同一冻结 packet 重复归一化并得到字节一致结果；覆盖三个 evidence state、三个 narrative coverage、四个 authorization coverage，以及复合请求顶层汇总。P0 不为 `sparse/conflicting` 保留隐藏兼容分支。
 
 ## 26. 指标
 
@@ -1505,9 +1654,12 @@ canonical_evidence_text_sha256
 - quality flag 反事实排序变化；
 - protected numeric/short-text query 零退化率；
 - RequestPlan v2 span 唯一归属率；
+- provisional→final 单次事务闭合率与 fallback 后非目标子任务保留率；
 - Story mention Detector precision/recall 与非 Story 错误拒绝数；
-- continuation page 可达授权率与 anchor 授权精确率；
-- 有证据 partial/sparse 的错误拒答数；
+- self-contained continuation 无损往返、可达授权率与 Planner 零重调用率；
+- anchor set/clear/遮蔽与授权精确率；
+- 有证据 `partial` 的错误拒答数；
+- StoryAnswerScope 本地归一化一致率；
 - 非穷尽回答的完整性过度声明数。
 
 `EVAL-P0-01`：质量标记影子报告必须给出“若启用惩罚会改变哪些结果”，P0 不以模型主观判断替代。
@@ -1533,11 +1685,13 @@ canonical_evidence_text_sha256
 | Policy Story mention 检测完整率 | `1.00` |
 | Policy Story mention 检测精确率 | `1.00` |
 | RequestPlan v2 Story occurrence 唯一 subtask 归属率 | `1.00` |
+| provisional→final 事务闭合率 | `1.00`；每请求最多一次 fallback，fallback 后第二次 Planner/Detector 调用次数为 `0` |
+| fallback 后未受影响 local/meta/smalltalk/KB 子任务保留率 | `1.00` |
 | 非 Story KB 查询因 Story 误检造成的错误拒绝次数 | `0` |
 | Planner 遗漏/额外/重排后错误授权次数 | `0` |
 | Story mention 歧义或不完整检测后的 Retriever 调用次数 | `0` |
-| 4+ Story 分页/继续动作正确率 | `1.00`，每页可达 authorized，Composite 比较次数为 `0` |
-| validated conversation anchor 授权精确率 | `1.00`，多 Owner/page partial 错误写入次数为 `0` |
+| 4+ Story self-contained 分页/继续动作正确率 | `1.00`，前后端字段无损率 `1.00`，每页可达 authorized，continuation Planner 调用 `0`，Composite 比较次数 `0` |
+| validated conversation anchor 授权精确率 | `1.00`，多 Owner/page partial 错误 set 次数 `0`，Story 冲突 turn 后旧 anchor 复活次数 `0` |
 | 单 Story 多细节覆盖率 | `>= 0.85` |
 | Topic/Page 必要来源保留率 | `1.00` |
 | Story 重复正文率 | `0` |
@@ -1553,13 +1707,14 @@ canonical_evidence_text_sha256
 | 每个知识子任务的 Dense query embedding API 调用 | `<= 2`，相同 query 不得重复调用 |
 | Request-level Story Detector 调用 | 每个请求恰好 `1`；全部本地新增步骤合计 P95 `<= 100 ms` |
 | 有 relevant final-context 证据的 shortfall 错误拒答次数 | `0` |
+| StoryAnswerScope/v2 确定性归一化正确率 | `1.00`，同一 packet 重复结果字节一致 |
 | 非穷尽回答错误声称完整/唯一/全部次数 | `0` |
 | 答案范围判断新增模型/API 调用次数 | `0` |
 | Reranker API 调用次数 | `0` |
 
 `GATE-P0-01`：任一硬门槛失败即 `no_go`；不得用其他指标平均分、人工主观印象或生成回答流畅度抵消。
 
-`GATE-P0-02`：引用闭合、重复正文、分支越界、Owner 越权、RequestPlan v2 span 归属、Policy Story mention precision/recall、continuation/anchor 授权、required Story 授权、shortfall 错误拒答、非穷尽过度声明、baseline 等价证据误判、超长 Atom 闭合、protected 零退化、容量和 provenance 属于零容忍门槛。
+`GATE-P0-02`：引用闭合、重复正文、分支越界、Owner 越权、RequestPlan v2 单次 finalization/span 归属、Policy Story mention precision/recall、self-contained continuation 无损重验、anchor set/clear/遮蔽、required Story 授权、StoryAnswerScope 确定性归一化、shortfall 错误拒答、非穷尽过度声明、baseline 等价证据误判、超长 Atom 闭合、protected 零退化、容量和 provenance 属于零容忍门槛。
 
 `GATE-P0-03`：若 Segment Dense 未达阈值，允许保留 E 的代码与影子报告继续诊断，但不得重建为可激活候选，也不得临时开启 Reranker 掩盖问题。
 
@@ -1682,13 +1837,13 @@ canonical_evidence_text_sha256
 
 ### E3：受控分支、融合与预算
 
-- `rag.request_plan/v2`、`SourceQuerySpan/v1` 与请求级 detection receipt；
+- provisional/final `rag.request_plan/v2`、`RequestPlanFinalizer/v1`、`SourceQuerySpan/v1`、请求级 detection receipt 与独立 assignment receipt；
 - `primary_owner/story_required/story_mentions/story_examples` Route Policy 授权；
 - Policy 自有 `StoryMentionDetector/v2`、子任务唯一 scope 归属和 Planner 提案一致性门禁；
 - `StoryAuthorizationContext/v1` 与 `direct_query/verified_continuation/validated_conversation_anchor` 三来源状态机；
 - 1～3 个 required Story Owner allowlist；
 - 4～32 Story 分页/继续动作可达 `authorized/page_partial`，33+ narrowing action，且均不创建 Composite 比较；
-- 单 Story anchor 写入、TTL/snapshot 验证和 follow-up 授权；
+- 单 Story turn-event anchor set/clear、TTL/snapshot 验证、旧 anchor 遮蔽和 follow-up 授权；
 - 现有 Owner Gate 保持严格；
 - Atom-to-Segment 映射；
 - Segment 去重；
@@ -1703,11 +1858,11 @@ canonical_evidence_text_sha256
 - Segment 一次封装；
 - Atom span、Source Map 和引用；
 - 顺序和分支；
-- RequestPlan v2、统一授权上下文、Retriever、REST/SSE、记忆与 serializer；
-- `continue_story_owner_page`、anchor receipt 与非授权 `narrow_story_scope` 公共 schema；旧 plan/action 类型不得被静默重解释；
+- final RequestPlan v2、finalization/assignment receipt、统一授权上下文、Retriever、REST/SSE、记忆与 serializer；
+- self-contained `continue_story_owner_page`、严格 action union、turn-event anchor 与非授权 `narrow_story_scope` 公共 schema；旧 plan/action 类型不得被静默重解释；
 - 分支级失败隔离；
 - 硬授权边界与软 evidence shortfall 分离；
-- `StoryAnswerScope/v1` 的默认尽力回答、严格姿态和非穷尽措辞；
+- 每知识子任务 `StoryAnswerScope/v2` 的三态归一化、正交 coverage、默认尽力回答、严格姿态和非穷尽措辞；
 - 同步/流式响应一致。
 
 ### E5：离线评测与 D Handoff
@@ -1737,18 +1892,18 @@ canonical_evidence_text_sha256
 10. 新 Dense 行全部满足 typed retrieval-unit schema；Segment 不冒充 Child，类型计数和 ID 哈希正确。
 11. Atom BM25 精确命中能稳定提升其所属 Segment，且通道内 Top-K 不被误当作跨通道最终截断。
 12. Segment 与 Atom 不作为重复正文进入上下文。
-13. `rag.request_plan/v2` 的 source spans、请求级 Detector 和 subtask scope assignment 逐项闭合；v1 不被猜测转换。
+13. `rag.request_plan/v2` 的 provisional→final 单次事务、source spans、请求级 Detector 和独立 subtask assignment receipt 逐项闭合；v1 不被猜测转换。
 14. `primary_owner/story_required/story_mentions/story_examples` 经 Route Policy 独立授权；Planner 提案遗漏、额外、重排、歧义或跨 span 归属错误均不得进入 Retriever，现有 Owner Gate 未被放宽。
 15. `StoryAuthorizationContext/v1` 是唯一 Story allowlist；`direct_query/verified_continuation/validated_conversation_anchor` 三来源无旁路。
 16. 显式 1～3 个 Story 的授权集合、原问题顺序和覆盖配额有效。
-17. 4～32 个显式 Story 的 continuation 每页可达 `authorized/page_partial`；33 个以上明确拒绝并产生非授权 narrowing action，不创建 Composite 比较或虚假完整结论。
-18. 单 Story 完整 turn 的 anchor 可被明确追问消费；多 Owner、page partial、过期和跨 snapshot anchor 零错误授权。
+17. 4～32 个显式 Story 的 self-contained continuation 经前后端无损往返和跨请求重验后每页可达 `authorized/page_partial`；33 个以上明确拒绝并产生非授权 narrowing action，不创建 Composite 比较或虚假完整结论。
+18. 单 Story 合格 turn 的 anchor 可被明确追问消费；后续不同 Story 替换，多 Owner/page partial/失败 Story turn 写 clear，过期、跨 snapshot 和被遮蔽旧 anchor 零错误授权。
 19. Story mention precision/recall、非 Story 零误拒和 Detector/local P95 达到第 26.1 节阈值。
 20. `StoryFusionConfig/v1` 常数、公式、tie-break 和 provenance 已冻结并通过精确数值测试。
 21. 单 Story 多细节不会只保留一个局部邻接簇。
 22. `暴雨是什么` 等 Topic 查询保留 Topic/Page 定义证据。
 23. 数字实体、短对白、精确标识和角色关系评测达到零退化/精度门槛。
-24. `StoryAnswerScope/v1` 不新增模型调用；partial/sparse 有证据时输出非空尽力回答，因果推断有标记，非穷尽回答零完整性过度声明。
+24. `StoryAnswerScope/v2` 不新增模型调用；`sufficient/partial/empty` 本地归一化唯一，partial 有证据时输出非空尽力回答，因果推断有标记，正交 coverage 可共存，非穷尽回答零完整性过度声明。
 25. 硬授权边界与软 evidence shortfall 不混用；shortfall 不触发 empty/free fallback。
 26. 重复正文、引用闭合、分支越界、Owner 越权和所有 go/no-go 指标达到第 26.1 节硬阈值。
 27. Reranker 保持关闭且调用次数为零。
@@ -1823,8 +1978,8 @@ canonical_evidence_text_sha256
 | 审查项 | 根因修复 | 禁止的补丁式处理 |
 |---|---|---|
 | 每个子任务扫描完整原问题，误消费其他子任务 Story | 请求级 Detector 只运行一次；`SourceQuerySpan/v1` 将 occurrence 唯一归属到 KB 子任务 | 不在每个分支排除“看起来不相关”的 Story，也不复制完整 detected 集合后手工删减 |
-| continuation page 永远再次进入 4+ 分页 | `verified_continuation` 重验完整 receipt 后授权规范页子集，显式进入 `authorized/page_partial` | 不跳过重验，也不把 action payload 直接当 Retriever allowlist |
-| Story anchor 写入后无法消费 | `validated_conversation_anchor` 只消费单 Owner、完整覆盖、同 snapshot 且引用验证通过的 anchor | 不允许“最近实体”通用 fallback，也不从多 Owner 中挑一个 |
+| continuation page 永远再次进入 4+ 分页 | `verified_continuation` 从自包含 action 恢复 final Plan/完整 receipts，重新检测并授权规范页子集，显式进入 `authorized/page_partial` | 不跳过重验、不重跑 Planner，也不把 action payload 直接当 Retriever allowlist |
+| Story anchor 写入后无法消费 | `validated_conversation_anchor` 只消费 turns 派生的最近有效 set；后续冲突 Story turn 用 clear 遮蔽旧 anchor | 不允许“最近实体”通用 fallback、不从多 Owner 中挑一个，也不在 `_Entry` 双写可变 anchor |
 | Detector 只有 recall、没有误检门禁 | 版本化 detection mode、跨类型歧义、短 alias 边界、precision/误拒/100 ms 硬门槛 | 不按 `6`、`37` 或单个失败 query 建白名单，不以更大模型修补本地匹配 |
 
 `REVIEW-P0-07`：RequestPlan v2 是本轮运行时公开契约升级，不是对 v1 增加可选字段。E 影子 snapshot 必须端到端切换；活动 v1 在独立激活前保持原样，禁止双写和猜测兼容。
@@ -1842,6 +1997,23 @@ canonical_evidence_text_sha256
 
 `REVIEW-P0-10`：`local_fact/bounded_multi_evidence/exhaustive_narrative` 只控制结论强度和范围说明，不创建三条 pipeline，不增加 LLM/reranker 调用，也不参与 Owner 授权。
 
-`REVIEW-P0-11`：P0 默认优先可输出性：partial/sparse/conflicting 均产生有区分度的 grounded 回答；只有空证据或授权失败才阻止对应答案。用户具备判断能力不意味着允许捏造来源，推断必须与来源事实分开表达。
+`REVIEW-P0-11`：P0 默认优先可输出性：有证据且存在 material shortfall 时使用 `partial` 产生非空 grounded 回答；只有空证据或授权失败才阻止对应答案。P0 删除无法确定判定的 `sparse/conflicting`，但仍允许把已引用事实与明确标注的有限推断分开输出。
 
 `REVIEW-P0-12`：不实现完整因果图或全章理解器。像“伊索尔德是怎么疯掉的”可以基于多段证据给出有限综合并标注推断；像“全部出场章节”可以列出当前命中但必须标记非穷尽。这是明确能力边界，不是等待后续补丁的未完成实现。
+
+### 31.5 第五轮事务、跨请求与生命周期闭环
+
+第五轮审查确认：前四轮授权方向正确，但 final Plan、continuation、AnswerScope 与 anchor 仍缺少跨阶段唯一事实源。本轮选择替换矛盾契约，不在旧对象上叠加例外。
+
+| 审查项 | 根因修复 | 明确不采用 |
+|---|---|---|
+| Plan 冻结后 fallback 不可达 | provisional→单次 Detector→assignment→至多一次本地 scope merge→final Plan→assignment receipt→envelope 的一次性事务 | Policy 回写冻结 Plan、第二次 LLM/Detector、循环 fallback、把混合请求全部降成一个 KB |
+| continuation 只有哈希、跨请求不可还原 | 65,536-byte 上限内的 self-contained action；服务端严格 schema、重算哈希、重跑本地 Detector、恢复 final Plan，Planner 调用为零 | 内存 action store、仅凭哈希授权、旧 `ActionItem(extra="ignore")`、前端固定旧字段裁剪 |
+| StoryAnswerScope 状态无法唯一归一化 | 每知识子任务 `StoryAnswerScope/v2`；`sufficient/partial/empty` 由 packet 机械计算，authorization/narrative coverage 正交共存 | 为 `sparse/conflicting` 发明阈值、额外冲突/完整性模型、顶层单一 claim scope |
+| Anchor 生命周期未闭合 | `ConversationTurn.story_anchor_event=set|clear` 为唯一事实；Projection 只派生，最近 clear/无效 set 遮蔽更早 anchor，UTC 1800 秒 TTL 与 turn 原子提交 | `_Entry` sidecar 双写、跳过冲突 turn 复活旧 anchor、跨重启猜测恢复 |
+
+`REVIEW-P0-13`：Detection receipt 与 Plan assignment receipt 必须分离。前者证明原问题中出现了什么，后者证明这些 occurrence 如何归属 final subtask；任何实现都不能重新把 Plan hash 或 subtask mapping 塞回 Detector 回执制造循环依赖。
+
+`REVIEW-P0-14`：self-contained continuation 的代价是有限的请求 payload 增长，换取无服务端状态、跨进程可重验和明确失败语义。该取舍不授权传输正文、检索结果或模型输出；超过上限必须重新提交原问题，不能转为隐藏服务端 store。
+
+`REVIEW-P0-15`：AnswerScope 做减法不降低回答可用性。短而精确的局部证据可以直接 `sufficient`；非空但不完整统一 `partial`；来源表面冲突可以在正文中并列展示，但 P0 metadata 不伪造语义冲突检测能力。
