@@ -454,6 +454,14 @@ def test_query_plan_fallback_intro_uses_separate_queries():
     assert plan.retrieval_scope == "entity_strict"
 
 
+def test_owner_free_storm_topic_does_not_guess_a_character_owner():
+    plan = QueryPlanner(None).plan("暴雨是什么")
+
+    assert plan.entity is None
+    assert plan.entity_id is None
+    assert plan.intent == "general_game"
+
+
 def test_query_planner_without_llm_sets_no_llm_diagnostics():
     plan = QueryPlanner(None).plan("介绍一下十四行诗")
 

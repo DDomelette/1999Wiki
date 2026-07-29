@@ -18,6 +18,20 @@ def test_packet_policies_declare_backward_compatible_source_coverage():
     assert voice_policy.source_target == 8
 
 
+def test_topic_policy_composition_preserves_story_sections():
+    bundle = packet_policy.compose_packet_policies(
+        "topic",
+        ("story", "general_game"),
+    )
+
+    assert bundle.sections == ("story", "plot", "lore")
+    assert [policy.name for policy in bundle.policies] == [
+        "topic_story",
+        "corpus_topic",
+    ]
+    assert [policy.source_target for policy in bundle.policies] == [2, 3]
+
+
 def test_compose_packet_policies_preserves_intents_and_builds_ordered_unions():
     bundle = packet_policy.compose_packet_policies(
         "character",
