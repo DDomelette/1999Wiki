@@ -1,10 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RouteAwareCardNav } from './RouteAwareCardNav'
 import { useUIStore } from '../../store/uiStore'
 
 describe('RouteAwareCardNav', () => {
   beforeEach(() => useUIStore.getState().setTopNav(true))
+  afterEach(() => {
+    document.querySelectorAll('.snap-container').forEach((el) => el.remove())
+    window.history.pushState({}, '', '/')
+    vi.restoreAllMocks()
+  })
   it('renders route-specific primary actions and three menu groups', async () => {
     const { rerender } = render(<RouteAwareCardNav mode="main" />)
     expect(screen.getByRole('link', { name: 'WIKI' })).toHaveAttribute('href', '/wiki/character')
@@ -85,5 +90,37 @@ describe('RouteAwareCardNav', () => {
     expect(screen.getByTestId('card-nav-menu')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: '角色 30' }))
     expect(onSelect).toHaveBeenCalledWith('character')
+  })
+
+  it('keeps the Wiki 问答 link pointing at /#chat', () => {
+    render(<RouteAwareCardNav mode="wiki" categories={[{ key: 'character', label: '角色', count: 30 }]} />)
+    fireEvent.click(screen.getByRole('button', { name: '展开导航' }))
+    expect(screen.getByRole('link', { name: '问答' })).toHaveAttribute('href', '/#chat')
+  })
+
+  it('routes the main 问答 action through the shared scroller, pushes history, and closes the menu', async () => {
+    const scroller = document.createElement('main')
+    scroller.className = 'snap-container'
+    for (const id of ['home', 'data:人物', 'chat']) {
+      const section = document.createElement('section')
+      section.setAttribute('data-snap-section', id)
+      scroller.appendChild(section)
+    }
+    document.body.appendChild(scroller)
+    scroller.getBoundingClientRect = () => ({ top: 0 }) as DOMRect
+    const chat = [...scroller.querySelectorAll<HTMLElement>('[data-snap-section]')]
+      .find((el) => el.getAttribute('data-snap-section') === 'chat')!
+    chat.getBoundingClientRect = () => ({ top: 500 }) as DOMRect
+    const scrollTo = vi.fn()
+    scroller.scrollTo = scrollTo
+    const pushState = vi.spyOn(window.history, 'pushState')
+
+    render(<RouteAwareCardNav mode="main" />)
+    fireEvent.click(screen.getByRole('button', { name: '展开导航' }))
+    fireEvent.click(screen.getByRole('button', { name: '问答' }))
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 500, behavior: 'smooth' })
+    expect(pushState).toHaveBeenCalledWith({}, '', '/#chat')
+    await waitFor(() => expect(screen.queryByTestId('card-nav-menu')).not.toBeInTheDocument())
   })
 })

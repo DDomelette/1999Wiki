@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useUIStore } from './store/uiStore'
 import { useScrollSpy } from './hooks/useScrollSpy'
 import { useWheelSnapNavigation } from './hooks/useWheelSnapNavigation'
+import { navigateToMainSection, parseMainHash } from './navigation/mainSectionNavigation'
 import { fetchCategories } from './api/http'
 import { RouteAwareCardNav } from './components/navigation/RouteAwareCardNav'
 import { HomeSection } from './components/sections/HomeSection'
@@ -33,6 +34,7 @@ export default function App() {
 
 function MainApp() {
   const setCategoriesMeta = useUIStore((s) => s.setCategoriesMeta)
+  const categoriesMeta = useUIStore((s) => s.categoriesMeta)
   const snapContainerRef = useRef<HTMLElement>(null)
   useScrollSpy()
   useWheelSnapNavigation()
@@ -48,6 +50,17 @@ function MainApp() {
         setCategoriesMeta(filterVisibleCategories(FALLBACK_CATEGORIES))
       })
   }, [setCategoriesMeta])
+
+  // 挂载与 hashchange 时恢复 hash 对应的语义页面;分类异步返回后重试,且不写入历史
+  useEffect(() => {
+    const restoreMainHash = () => {
+      const target = parseMainHash(window.location.hash)
+      if (target) navigateToMainSection(target, { behavior: 'auto', history: 'none' })
+    }
+    restoreMainHash()
+    window.addEventListener('hashchange', restoreMainHash)
+    return () => window.removeEventListener('hashchange', restoreMainHash)
+  }, [categoriesMeta])
 
   return (
     <>
