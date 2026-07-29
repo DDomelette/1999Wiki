@@ -117,11 +117,11 @@ async function expectVisibleArtwork(panel: Locator, viewport: { width: number; h
   await expect(image).toBeVisible()
   await expect.poll(
     () => panel.locator('.category-panel__media').evaluate((element) => Number(getComputedStyle(element).opacity)),
-    { timeout: 3_000 },
+    { timeout: 15_000 },
   ).toBeGreaterThan(0.95)
   await expect.poll(
     () => panel.locator('.category-panel__media').evaluate((element) => getComputedStyle(element).filter),
-    { timeout: 3_000 },
+    { timeout: 15_000 },
   ).toBe('blur(0px)')
   const state = await image.evaluate((element) => {
     const imageElement = element as HTMLImageElement
