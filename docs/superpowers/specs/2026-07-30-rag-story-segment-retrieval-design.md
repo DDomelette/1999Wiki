@@ -61,7 +61,7 @@ Level 3：原子子块
 13. 通过受控 `story_required/story_mentions/story_examples` KB 分支支持显式多 Story、角色剧情和 Topic 例证，同时保持现有 Owner Gate。
 14. 在真实 embedding 构建前冻结评测 gold、baseline 和 go/no-go 阈值。
 15. 以 provisional→final `RequestPlan v2` 一次性事务、独立 detection/assignment receipts、自包含 continuation、turn-event anchor 和统一授权上下文闭合复合请求、分页继续与单 Story 会话指代，不让 Planner、action 或记忆各自成为旁路授权源。
-16. 证据不完整时仍优先生成有引用的尽力回答；`StoryAnswerScope/v2` 只使用可确定归一化的三态 evidence 与正交 coverage，不把可用证据转换成频繁拒答。
+16. 证据不完整时仍优先生成有引用的尽力回答；`StoryAnswerScope/v2` 只用于已授权且完成检索的 Story-bearing 知识子任务，并只使用可确定归一化的三态 evidence 与正交 coverage，不把可用证据转换成频繁拒答。
 
 ## 3. 非目标
 
@@ -560,7 +560,7 @@ subtask_id
 authorization_origin
 authorization_status
 authorization_reason
-authorization_coverage_scope
+authorization_coverage_scope?  # nullable
 request_query_sha256
 source_query_spans_sha256
 request_detection_receipt_sha256
@@ -581,7 +581,7 @@ verified_continuation
 validated_conversation_anchor
 ```
 
-`authorization_coverage_scope` 只允许：
+非空的 `authorization_coverage_scope` 只允许：
 
 ```text
 complete
@@ -600,6 +600,10 @@ Planner 可以提出分支和直接问题中的 Story refs，但不能写 `autho
 
 `AUTHCTX-P0-04`：一个 Story 分支授权失败只阻断该分支或对应 KB 子任务；其他 span 独立、授权有效的本地或知识子任务继续执行，不得把请求级检测重新变成请求级连坐拒绝。
 
+`AUTHCTX-P0-05`：`authorization_status` 与 coverage 的合法字段组合固定为：`authorized` 必须且只能携带上述四个非空 coverage 值之一；`proposed/denied/needs_continuation` 的 coverage 必须为 `null`，`authorized_story_owner_ids` 必须为空。`proposed` 只能存在于 Policy 输入，不能进入 final `RequestAuthorizationEnvelope/v2` 或执行器。coverage 本身不是授权凭证；不得用 `not_applicable`、空字符串或默认 `complete` 填充未授权状态。
+
+`AUTHCTX-P0-06`：非 Story 知识分支继续使用 `story_authorization_context=null`，不创建只含 `not_applicable` coverage 的空 Story context。Story 适用性由 context 是否存在表达，授权覆盖只描述已授权 Story 检索的范围，两者不得压缩进同一枚举。
+
 顶层知识任务的 `KnowledgeRetrievalBranch` 固定为：
 
 ```text
@@ -616,7 +620,7 @@ candidate_budget
 context_budget
 ```
 
-Story-bearing 分支的 `authorization_status/reason` 只存在于 `story_authorization_context`；禁止在 branch 顶层再保存镜像副本。非 Story 的 `primary_owner` 继续消费线程 A 现有授权契约，`story_authorization_context=null`。Story context 的 `authorization_status` 只允许 `proposed`、`authorized`、`denied`、`needs_continuation`，且只有 Route Policy 能从 `proposed` 转换为后三种状态。
+Story-bearing 分支的 `authorization_status/reason` 只存在于 `story_authorization_context`；禁止在 branch 顶层再保存镜像副本。非 Story 的 `primary_owner` 继续消费线程 A 现有授权契约，`story_authorization_context=null`。Story context 的 `authorization_status` 只允许 `proposed`、`authorized`、`denied`、`needs_continuation`，且只有 Route Policy 能从 `proposed` 转换为后三种状态。所有状态与 nullable coverage 必须满足上述字段组合 invariant，不能由 serializer、Retriever 或响应聚合器补默认值。
 
 P0 冻结 `StoryBranchConfig/v2`：
 
@@ -1027,7 +1031,7 @@ Segment Dense hits + Atom-derived Segment signals
 
 `PIPE-P0-08`：provisional Plan 校验、单次请求级 Story detection、至多一次本地 finalization、final subtask scope assignment 和统一授权上下文构建必须在任何 Story Retriever 调用前完成。continuation/anchor 不得绕过同一入口调用独立检索函数。
 
-`PIPE-P0-09`：`StoryAnswerScope/v2` 只在每个知识子任务的最终 evidence packet 冻结后本地归一化并传给现有 grounded generator；不得回流改变候选、配额或授权。
+`PIPE-P0-09`：`StoryAnswerScope/v2` 只在已授权 Story-bearing 知识子任务完成检索并冻结最终 evidence packet 后本地归一化，再传给现有 grounded generator；非 Story、未授权、boundary、needs-continuation 和 failed 分支固定不生成该对象。scope 不得回流改变候选、配额或授权。
 
 ## 12. Segment 融合与打分
 
@@ -1321,7 +1325,7 @@ narrow_story_scope
 
 ### 20.1 非阻断性答案范围
 
-P0 使用每个知识子任务一个 `StoryAnswerScope/v2` 控制结论强度，不新增检索分支：
+P0 只为已授权且完成检索的 Story-bearing 知识子任务生成一个 `StoryAnswerScope/v2`，用来控制结论强度，不新增检索分支：
 
 ```text
 subtask_id
@@ -1335,6 +1339,19 @@ shortfall_codes[]
 
 默认 `answer_posture=best_effort_grounded`。用户明确要求“只说资料直接写明的内容”“不要推断”等严格姿态时使用 `strict_grounded`；不增加 UI 开关或第二次分类模型调用。
 
+scope 的存在条件与检索状态固定为：
+
+| 子任务状态 | Story context / coverage | `retrieval_outcome` | `story_answer_scope` | evidence 汇总与 fallback |
+|---|---|---|---|---|
+| 非 Story KB 完成检索 | context 为 `null` | `sufficient/partial/empty` | `null` | 继续参加顶层 KB outcome 聚合；只有真实 `empty` 受既有 empty policy 控制 |
+| ready Story 已授权并完成检索 | context 为 `authorized`，coverage 为四个有效值之一 | `sufficient/partial/empty` | 非空 | 参加顶层 KB outcome 聚合；仅 `empty` 可受既有 empty policy 控制 |
+| Story 为 `proposed` | coverage 为 `null` | 不得进入执行 | `null` | 只能存在于 Policy 前；final envelope 校验失败 |
+| Story 为 `denied/needs_continuation` | coverage 为 `null` | `not_applicable` | `null` | 从 evidence 聚合输入中过滤；不得触发 empty fallback |
+| `boundary_story_scope_invalid` | context 为 `null` | `not_applicable` | `null` | 从 evidence 聚合输入中过滤；不得触发 empty fallback |
+| 已授权 Story 检索失败 | 保留已验证的 authorized context 与 coverage | `failed` | `null` | 保留 failed 语义；不得映射为 `empty` 或触发 empty fallback |
+
+只有 `planning_outcome=ready`、`authorization_status=authorized`、检索已完成、`retrieval_outcome` 属于 `sufficient/partial/empty` 且 final evidence packet 已冻结时，`story_answer_scope` 才能非空。`failed` 没有可供答案范围归一化的 final evidence packet；其授权上下文仍可用于诊断，但不得伪造 scope。
+
 `evidence_state` 只由冻结后的最终 evidence packet 和版本化 material-shortfall 集合本地计算：
 
 | 条件 | `evidence_state` | P0 默认输出 |
@@ -1345,7 +1362,7 @@ shortfall_codes[]
 
 Material shortfall 只包括第 20 节固定的八个证据 shortfall code，且各分支只能在缺口实质影响该子任务时发出：required Story Owner 没有任何可提交 Segment、required Atom group 未覆盖、必要主分支证据缺失、上下文预算移除了某个必需细节、Atom/source/citation 闭包失败。候选数量少、文本短、质量标记、单个精确 Atom 已足以回答局部事实、或“看起来不够丰富”均不能单独把结果降为 `partial`。授权边界 reason、debug 计数和未影响用户问题的候选裁切不得进入 `shortfall_codes[]`。
 
-`authorization_coverage_scope` 直接复制已验证授权上下文；`narrative_coverage` 由 `claim_scope` 确定：
+在 scope 适用时，`authorization_coverage_scope` 直接复制已验证且非空的授权上下文；`narrative_coverage` 由 `claim_scope` 确定：
 
 | `claim_scope` | `narrative_coverage` |
 |---|---|
@@ -1359,7 +1376,7 @@ Material shortfall 只包括第 20 节固定的八个证据 shortfall code，且
 
 `ANSWER-P0-02`：`local_fact` 可直接回答局部事实；`bounded_multi_evidence` 可综合多个 Segment，但事实与推断必须可区分；`exhaustive_narrative` 仍输出当前召回到的有用内容，同时固定 `narrative_coverage=non_exhaustive`，不得仅因无法穷尽而拒答。
 
-`ANSWER-P0-03`：存在相关 grounded 证据时，coverage shortfall、Top-K 非穷尽或因果链不完整均不能单独产生空答案、边界模板或“无法回答”。只有授权不成立、实体歧义无法消解或 `evidence_state=empty` 才能阻止对应 Story 答案。
+`ANSWER-P0-03`：存在相关 grounded 证据时，coverage shortfall、Top-K 非穷尽或因果链不完整均不能单独产生空答案、边界模板或“无法回答”。只有授权不成立、实体歧义无法消解、retrieval `failed` 或适用 scope 的 `evidence_state=empty` 才能阻止对应 Story 答案；failed 不得伪装成 empty。
 
 `ANSWER-P0-04`：默认回答允许基于多条已引用证据作有限综合。若来源没有直接声明因果，必须使用“可能”“更像是”“从这些片段看”等推断标记；不能把 Segment 邻接、相关性分数或模型常识写成数据库明确因果。
 
@@ -1369,15 +1386,17 @@ Material shortfall 只包括第 20 节固定的八个证据 shortfall code，且
 
 `ANSWER-P0-07`：答案正文先给结论或当前可支持的解释，范围说明放在末尾；不得用长篇安全声明占据主要输出。引用必须支持事实前提，推断性结论不能借引用伪装成原文直接结论。
 
-`ANSWER-P0-08`：`StoryAnswerScope/v2` 由同一次 final RequestPlan v2 的非授权 hint 与最终 evidence packet 共同归一化；运行时不调用额外 Planner、reranker、完整性模型、冲突检测模型或因果模型。hint 缺失或冲突时使用 `bounded_multi_evidence`。
+`ANSWER-P0-08`：适用的 `StoryAnswerScope/v2` 由同一次 final RequestPlan v2 的非授权 hint、已验证 Story context 与最终 evidence packet 共同归一化；运行时不调用额外 Planner、reranker、完整性模型、冲突检测模型或因果模型。hint 缺失或冲突时使用 `bounded_multi_evidence`。
 
 `ANSWER-P0-09`：P0 删除无法稳定本地判定的 `sparse` 和 `conflicting` 状态。证据较少但足以回答局部事实仍可为 `sufficient`；非空但存在实质缺口统一为 `partial`。若最终 packet 明确包含两条表面不一致的已引用事实，生成器可以并列陈述，但 metadata 不宣称系统已经完成语义冲突判定。
 
-`ANSWER-P0-10`：`StoryAnswerScope/v2` 固定保存于每个知识子任务的 `SubtaskInfo.story_answer_scope`；各 `BranchResult` 只提供归一化输入和 shortfall。顶层响应按原子任务顺序公开 `knowledge_subtask_scopes[]`，不生成跨异构子任务的单一 `claim_scope`。
+`ANSWER-P0-10`：`SubtaskInfo.story_answer_scope` 的类型固定为 `StoryAnswerScope/v2 | null`；各 `BranchResult` 只提供归一化输入和 shortfall。顶层响应按原子任务顺序公开仅含非空项的 `story_subtask_scopes[]`，不为非 Story 或未执行 Story 分支制造占位 scope，也不生成跨异构子任务的单一 `claim_scope`。
 
-`ANSWER-P0-11`：顶层 `overall_evidence_state` 只汇总知识子任务：全部为 `sufficient` 时为 `sufficient`；全部为 `empty` 时为 `empty`；其他组合为 `partial`；没有知识子任务时为 `not_applicable`。local/meta/smalltalk 不参与该汇总。
+`ANSWER-P0-11`：顶层只保留现有 `ResponsePacket.retrieval_outcome` 作为知识检索汇总事实，不新增或持久化第二份 `overall_evidence_state`。聚合时先从知识分支结果中过滤 `not_applicable`：过滤后为空则为 `not_applicable`；全部为 `sufficient`、`empty` 或 `failed` 时分别返回同名状态；其他组合返回 `partial`。local/meta/smalltalk 不参加，`failed/not_applicable` 不得转换为 `empty`。
 
-`ANSWER-P0-12`：REST 与 SSE 必须公开一致的每子任务 scope、`overall_evidence_state` 和 shortfall codes。scope 在 generator 开始前由冻结 packet 计算并先进入流式 metadata；流式首段不得先声称完整、结束时再追加相反 shortfall。
+`ANSWER-P0-12`：REST 与 SSE 必须公开一致的 nullable `SubtaskInfo.story_answer_scope`、`story_subtask_scopes[]`、顶层 `retrieval_outcome` 和 shortfall codes。非空 scope 在 generator 开始前由冻结 packet 计算并先进入流式 metadata；流式首段不得先声称完整、结束时再追加相反 shortfall。
+
+`ANSWER-P0-13`：测试必须覆盖：非 Story KB 正常参与顶层 outcome 且 scope 为 `null`；Story `denied`；Story `needs_continuation`；一个成功 KB 与一个 `boundary_story_scope_invalid` 共存；已授权 Story retrieval `failed`；已授权 Story 零 ContextUnit。前四类不得触发 empty fallback，failed 必须保留 failed 语义，只有最后一类产生非空 scope 且 `evidence_state=empty`。复合请求中的 `not_applicable` 分支不得使现有 KB 聚合器抛出契约错误。
 
 ## 21. 全章总结边界
 
@@ -1707,14 +1726,15 @@ canonical_evidence_text_sha256
 | 每个知识子任务的 Dense query embedding API 调用 | `<= 2`，相同 query 不得重复调用 |
 | Request-level Story Detector 调用 | 每个请求恰好 `1`；全部本地新增步骤合计 P95 `<= 100 ms` |
 | 有 relevant final-context 证据的 shortfall 错误拒答次数 | `0` |
-| StoryAnswerScope/v2 确定性归一化正确率 | `1.00`，同一 packet 重复结果字节一致 |
+| StoryAnswerScope/v2 适用性与确定性归一化正确率 | `1.00`；present/null 矩阵正确，同一适用 packet 重复结果字节一致 |
+| KB `not_applicable` 聚合与 empty-fallback 隔离正确率 | `1.00`；边界/拒绝/继续分支零错误 empty fallback |
 | 非穷尽回答错误声称完整/唯一/全部次数 | `0` |
 | 答案范围判断新增模型/API 调用次数 | `0` |
 | Reranker API 调用次数 | `0` |
 
 `GATE-P0-01`：任一硬门槛失败即 `no_go`；不得用其他指标平均分、人工主观印象或生成回答流畅度抵消。
 
-`GATE-P0-02`：引用闭合、重复正文、分支越界、Owner 越权、RequestPlan v2 单次 finalization/span 归属、Policy Story mention precision/recall、self-contained continuation 无损重验、anchor set/clear/遮蔽、required Story 授权、StoryAnswerScope 确定性归一化、shortfall 错误拒答、非穷尽过度声明、baseline 等价证据误判、超长 Atom 闭合、protected 零退化、容量和 provenance 属于零容忍门槛。
+`GATE-P0-02`：引用闭合、重复正文、分支越界、Owner 越权、RequestPlan v2 单次 finalization/span 归属、Policy Story mention precision/recall、self-contained continuation 无损重验、anchor set/clear/遮蔽、required Story 授权、StoryAnswerScope 适用性与确定性归一化、`not_applicable`/empty-fallback 隔离、shortfall 错误拒答、非穷尽过度声明、baseline 等价证据误判、超长 Atom 闭合、protected 零退化、容量和 provenance 属于零容忍门槛。
 
 `GATE-P0-03`：若 Segment Dense 未达阈值，允许保留 E 的代码与影子报告继续诊断，但不得重建为可激活候选，也不得临时开启 Reranker 掩盖问题。
 
@@ -1862,7 +1882,8 @@ canonical_evidence_text_sha256
 - self-contained `continue_story_owner_page`、严格 action union、turn-event anchor 与非授权 `narrow_story_scope` 公共 schema；旧 plan/action 类型不得被静默重解释；
 - 分支级失败隔离；
 - 硬授权边界与软 evidence shortfall 分离；
-- 每知识子任务 `StoryAnswerScope/v2` 的三态归一化、正交 coverage、默认尽力回答、严格姿态和非穷尽措辞；
+- 仅适用于已授权且完成检索 Story 子任务的 nullable `StoryAnswerScope/v2`、三态归一化、正交 coverage、默认尽力回答、严格姿态和非穷尽措辞；
+- 复用现有顶层 `retrieval_outcome` 聚合，过滤 `not_applicable` 且不新增 `overall_evidence_state`；
 - 同步/流式响应一致。
 
 ### E5：离线评测与 D Handoff
@@ -1903,7 +1924,7 @@ canonical_evidence_text_sha256
 21. 单 Story 多细节不会只保留一个局部邻接簇。
 22. `暴雨是什么` 等 Topic 查询保留 Topic/Page 定义证据。
 23. 数字实体、短对白、精确标识和角色关系评测达到零退化/精度门槛。
-24. `StoryAnswerScope/v2` 不新增模型调用；`sufficient/partial/empty` 本地归一化唯一，partial 有证据时输出非空尽力回答，因果推断有标记，正交 coverage 可共存，非穷尽回答零完整性过度声明。
+24. `StoryAnswerScope/v2` 不新增模型调用；present/null 适用性矩阵唯一，适用分支的 `sufficient/partial/empty` 本地归一化唯一，partial 有证据时输出非空尽力回答，因果推断有标记，正交 coverage 可共存，非穷尽回答零完整性过度声明；非 Story、边界、拒绝、继续和失败分支不得生成伪 scope。
 25. 硬授权边界与软 evidence shortfall 不混用；shortfall 不触发 empty/free fallback。
 26. 重复正文、引用闭合、分支越界、Owner 越权和所有 go/no-go 指标达到第 26.1 节硬阈值。
 27. Reranker 保持关闭且调用次数为零。
@@ -2009,7 +2030,7 @@ canonical_evidence_text_sha256
 |---|---|---|
 | Plan 冻结后 fallback 不可达 | provisional→单次 Detector→assignment→至多一次本地 scope merge→final Plan→assignment receipt→envelope 的一次性事务 | Policy 回写冻结 Plan、第二次 LLM/Detector、循环 fallback、把混合请求全部降成一个 KB |
 | continuation 只有哈希、跨请求不可还原 | 65,536-byte 上限内的 self-contained action；服务端严格 schema、重算哈希、重跑本地 Detector、恢复 final Plan，Planner 调用为零 | 内存 action store、仅凭哈希授权、旧 `ActionItem(extra="ignore")`、前端固定旧字段裁剪 |
-| StoryAnswerScope 状态无法唯一归一化 | 每知识子任务 `StoryAnswerScope/v2`；`sufficient/partial/empty` 由 packet 机械计算，authorization/narrative coverage 正交共存 | 为 `sparse/conflicting` 发明阈值、额外冲突/完整性模型、顶层单一 claim scope |
+| StoryAnswerScope 状态无法唯一归一化 | 仅已授权且完成检索的 Story-bearing 子任务生成 `StoryAnswerScope/v2`；`sufficient/partial/empty` 由 packet 机械计算，authorization/narrative coverage 正交共存 | 为 `sparse/conflicting` 发明阈值、额外冲突/完整性模型、给所有 KB 制造 Story scope、顶层单一 claim scope |
 | Anchor 生命周期未闭合 | `ConversationTurn.story_anchor_event=set|clear` 为唯一事实；Projection 只派生，最近 clear/无效 set 遮蔽更早 anchor，UTC 1800 秒 TTL 与 turn 原子提交 | `_Entry` sidecar 双写、跳过冲突 turn 复活旧 anchor、跨重启猜测恢复 |
 
 `REVIEW-P0-13`：Detection receipt 与 Plan assignment receipt 必须分离。前者证明原问题中出现了什么，后者证明这些 occurrence 如何归属 final subtask；任何实现都不能重新把 Plan hash 或 subtask mapping 塞回 Detector 回执制造循环依赖。
@@ -2017,3 +2038,20 @@ canonical_evidence_text_sha256
 `REVIEW-P0-14`：self-contained continuation 的代价是有限的请求 payload 增长，换取无服务端状态、跨进程可重验和明确失败语义。该取舍不授权传输正文、检索结果或模型输出；超过上限必须重新提交原问题，不能转为隐藏服务端 store。
 
 `REVIEW-P0-15`：AnswerScope 做减法不降低回答可用性。短而精确的局部证据可以直接 `sufficient`；非空但不完整统一 `partial`；来源表面冲突可以在正文中并列展示，但 P0 metadata 不伪造语义冲突检测能力。
+
+### 31.6 第六轮状态适用性收敛
+
+第六轮审查确认：问题不是缺少更多 evidence 枚举，而是 Story 专属 scope 被错误扩展到全部 KB，且顶层又建立了一份与现有 `retrieval_outcome` 重叠的汇总状态。本轮通过缩小对象适用域和复用现有聚合事实解决，不增加新 pipeline 或模型判断。
+
+| 审查项 | 根因修复 | 明确不采用 |
+|---|---|---|
+| 非授权 Story 状态没有合法 coverage | authorized 必须携带四值之一；proposed/denied/needs-continuation 固定 coverage 为 `null` | 给 coverage 增加 `not_applicable`、空字符串或默认 `complete` |
+| 非 Story、boundary 和 failed 被强制生成 Story scope | `SubtaskInfo.story_answer_scope` nullable；只有 ready + authorized + completed retrieval + frozen packet 才生成 | 为所有 KB 创建占位 Story context/scope，或把 failed/boundary 伪装成 empty |
+| 顶层存在第二份 evidence 汇总事实 | 复用 `ResponsePacket.retrieval_outcome`；聚合前过滤 `not_applicable`，全被过滤才返回 `not_applicable` | 新增并持久化 `overall_evidence_state`，或让 REST/SSE 分别重算 |
+| 成功 KB 与边界分支共存时聚合不可达 | `not_applicable` 分支不参与 evidence 聚合，成功 KB 继续决定顶层 outcome；分支边界/action 独立保留 | 因一个 boundary 拒绝完整复合请求，或将 boundary 当 empty 触发自由补充 |
+
+`REVIEW-P0-16`：授权适用性、检索执行结果和答案范围是三个正交层次：nullable Story context 表达是否适用；context status/coverage 表达是否获准及覆盖范围；`retrieval_outcome` 表达执行结果；nullable Story scope 只表达已完成 Story evidence packet 的答案强度。实现不得把任意两层压缩为一个扩展枚举。
+
+`REVIEW-P0-17`：顶层 `retrieval_outcome` 是唯一汇总事实。`not_applicable` 表示该知识分支没有执行检索，必须在聚合前过滤；`failed` 表示尝试执行但失败，必须保留；只有真实执行且零证据的 `empty` 才能进入既有 empty policy。
+
+`REVIEW-P0-18`：本轮新增的只是 nullable invariant、既有聚合器的确定性过滤规则和六类状态测试，不授权通用 `KnowledgeAnswerScope`、新的 API 调用、另一套 fallback、旧 v1 兼容猜测或分支白名单。
