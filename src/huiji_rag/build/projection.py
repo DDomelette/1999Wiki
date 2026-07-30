@@ -741,6 +741,121 @@ def _new_source_record_link(
     )
 
 
+def _story_migration_links(story_projection: Any) -> tuple[SemanticRecordLink, ...]:
+    """Describe the exact legacy Story profile represented by each source."""
+    children_by_parent: dict[str, list[Any]] = {}
+    for child in story_projection.children:
+        children_by_parent.setdefault(child.block.parent_id, []).append(child)
+
+    links: list[SemanticRecordLink] = []
+    for parent in story_projection.parents:
+        root_refs = [
+            dict(ref)
+            for ref in parent.source_refs
+            if str(ref.get("json_path") or "") == "$"
+            and re.fullmatch(
+                r"Data:Story/([^/]+)\.json",
+                str(ref.get("title") or ref.get("source_title") or ""),
+            )
+        ]
+        if len(root_refs) != 1:
+            raise ValueError(
+                f"Story migration requires one canonical root source: {parent.parent_id}"
+            )
+        root_ref = root_refs[0]
+        source_title = str(
+            root_ref.get("title") or root_ref.get("source_title") or ""
+        )
+        source_match = re.fullmatch(r"Data:Story/([^/]+)\.json", source_title)
+        story_id = "" if source_match is None else source_match.group(1)
+        source_sha256 = str(
+            root_ref.get("content_sha256")
+            or root_ref.get("source_content_sha256")
+            or ""
+        )
+        expected_parent_id = f"story:{story_id}/story"
+        if (
+            not story_id
+            or not re.fullmatch(r"[0-9a-f]{64}", source_sha256)
+            or parent.entity_id != story_id
+            or parent.parent_id != expected_parent_id
+            or parent.entity_type != "story"
+            or parent.category != "story"
+            or parent.section_kind != "story"
+        ):
+            raise ValueError(
+                f"Story migration source and Parent identity disagree: {parent.parent_id}"
+            )
+
+        legacy_entity_id = hashlib.sha1(source_title.encode("utf-8")).hexdigest()[:12]
+        legacy_parent_id = f"story:{legacy_entity_id}/profile"
+        legacy_child_id = f"story:{legacy_entity_id}:0000"
+        links.append(
+            SemanticRecordLink(
+                record_kind="parent",
+                legacy_id=legacy_parent_id,
+                candidate_id=parent.parent_id,
+                change_kind="corrected_semantics",
+                source_title=source_title,
+                source_content_sha256=source_sha256,
+                json_path="$",
+                legacy_section="profile",
+                candidate_section="story",
+            )
+        )
+
+        story_children = children_by_parent.get(parent.parent_id, ())
+        if (
+            not story_children
+            or tuple(child.block.child_id for child in story_children)
+            != parent.child_ids
+        ):
+            raise ValueError(
+                f"Story migration Parent/Child closure failed: {parent.parent_id}"
+            )
+        stable_tokens: set[str] = set()
+        for child in story_children:
+            child_ref = dict(child.block.source_refs[0])
+            child_title = str(
+                child_ref.get("title") or child_ref.get("source_title") or ""
+            )
+            child_sha256 = str(
+                child_ref.get("content_sha256")
+                or child_ref.get("source_content_sha256")
+                or ""
+            )
+            json_path = str(child_ref.get("json_path") or "")
+            if (
+                child_title != source_title
+                or child_sha256 != source_sha256
+                or not json_path.startswith("$.")
+                or child.stable_source_token in stable_tokens
+                or child.block.child_id
+                != f"{parent.parent_id}/{child.stable_source_token}"
+                or child.owner_entity_id != f"story:{story_id}"
+                or child.owner_page_id != f"story:{story_id}"
+            ):
+                raise ValueError(
+                    "Story migration Child evidence is incomplete: "
+                    f"{child.block.child_id}"
+                )
+            stable_tokens.add(child.stable_source_token)
+            links.append(
+                SemanticRecordLink(
+                    record_kind="child",
+                    legacy_id=legacy_child_id,
+                    candidate_id=child.block.child_id,
+                    change_kind="corrected_semantics",
+                    source_title=source_title,
+                    source_content_sha256=source_sha256,
+                    json_path=json_path,
+                    legacy_section="profile",
+                    candidate_section="story",
+                )
+            )
+    return tuple(links)
+
+
 def project_crawler_semantics(rows: Iterable[Mapping[str, Any]]) -> CorpusProjection:
     """Project supported records without consulting active artifacts or business stores."""
     selected: list[dict[str, Any]] = []
@@ -824,6 +939,7 @@ def project_crawler_semantics(rows: Iterable[Mapping[str, Any]]) -> CorpusProjec
         )
         for child in story_projection.children
     )
+    result.record_links.extend(_story_migration_links(story_projection))
     rows_by_title = {
         str(row.get("title") or ""): row
         for row in source_rows

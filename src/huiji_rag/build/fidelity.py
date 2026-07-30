@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .contracts import canonical_json_bytes
 from .media_v3 import LegacyMediaReconciliation
-from .projection import CorpusProjection, SemanticRecordLink
+from .projection import CorpusProjection, SemanticChild, SemanticRecordLink
 
 
 _ALLOWED_CHANGE_KINDS = frozenset(
@@ -21,6 +21,7 @@ _ALLOWED_SECTION_CORRECTIONS = frozenset(
         ("culture", "collection"),
         ("item", "culture_dossier"),
         ("items", "culture_dossier"),
+        ("profile", "story"),
     }
 )
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -71,12 +72,17 @@ def build_fidelity_ledger(
     active_child_bm25 = tuple(dict(row) for row in active_child_bm25_records)
     active_media_bm25 = tuple(dict(row) for row in active_media_bm25_records)
     candidate_parents = tuple(parent.to_json() for parent in projection.parents)
-    candidate_children = tuple(child.block.to_json() for child in projection.children)
+    candidate_children = tuple(
+        child.block.to_json() for child in projection.children
+    )
 
     ledger: list[dict[str, Any]] = []
     blockers: list[str] = []
     categories: Counter[str] = Counter()
-    record_classifications: dict[tuple[str, str], tuple[str, str]] = {}
+    record_classifications: dict[
+        tuple[str, str],
+        tuple[str, tuple[str, ...]],
+    ] = {}
     unexplained_parent_child_loss = 0
 
     for record_kind, active_rows, candidate_rows, id_field in (
@@ -89,6 +95,7 @@ def build_fidelity_ledger(
             candidate_rows,
             id_field,
             projection.record_links,
+            projection,
         )
         ledger.extend(rows)
         blockers.extend(row_blockers)
@@ -201,90 +208,236 @@ def _reconcile_records(
     candidate_rows: Sequence[Mapping[str, Any]],
     id_field: str,
     links: Sequence[SemanticRecordLink],
+    projection: CorpusProjection | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[str],
-    dict[tuple[str, str], tuple[str, str]],
+    dict[tuple[str, str], tuple[str, tuple[str, ...]]],
     int,
 ]:
     active = _unique_by_id(active_rows, id_field, f"active {record_kind}")
     candidate = _unique_by_id(candidate_rows, id_field, f"candidate {record_kind}")
-    link_by_legacy: dict[str, SemanticRecordLink] = {}
+    story_candidate_metadata_by_source = (
+        _story_candidate_metadata_by_source(projection.children)
+        if projection is not None and record_kind == "child"
+        else {}
+    )
+    story_parents = (
+        {parent.parent_id: parent.to_json() for parent in projection.parents}
+        if projection is not None
+        else {}
+    )
+    links_by_legacy: dict[str, list[SemanticRecordLink]] = defaultdict(list)
     new_links: dict[str, SemanticRecordLink] = {}
+    link_triples: set[tuple[str, str, str]] = set()
     for link in links:
         if link.record_kind != record_kind:
             continue
-        target = new_links if not link.legacy_id else link_by_legacy
-        key = link.candidate_id if not link.legacy_id else link.legacy_id
-        if key in target:
+        triple = (link.record_kind, link.legacy_id, link.candidate_id)
+        if triple in link_triples:
+            key = link.legacy_id or link.candidate_id
             raise ValueError(f"duplicate {record_kind} fidelity link: {key}")
-        target[key] = link
+        link_triples.add(triple)
+        if link.legacy_id:
+            links_by_legacy[link.legacy_id].append(link)
+        else:
+            if link.candidate_id in new_links:
+                raise ValueError(
+                    f"duplicate {record_kind} fidelity link: {link.candidate_id}"
+                )
+            new_links[link.candidate_id] = link
+    for legacy_id, group in links_by_legacy.items():
+        if len(group) > 1 and not _looks_like_story_expansion(record_kind, group):
+            raise ValueError(f"duplicate {record_kind} fidelity link: {legacy_id}")
 
     ledger: list[dict[str, Any]] = []
     blockers: list[str] = []
-    classifications: dict[tuple[str, str], tuple[str, str]] = {}
+    classifications: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
     mapped_candidate_ids: set[str] = set()
+    story_expansion_candidate_ids: set[str] = set()
     unexplained = 0
     for active_id, old_row in active.items():
-        link = link_by_legacy.get(active_id)
-        candidate_id = link.candidate_id if link is not None else active_id
-        new_row = candidate.get(candidate_id)
-        classification = link.change_kind if link is not None else "preserved_exact"
+        group = tuple(links_by_legacy.get(active_id, ()))
+        candidate_ids = tuple(
+            sorted(link.candidate_id for link in group)
+            if group
+            else (active_id,)
+        )
+        candidate_group = tuple(
+            candidate[candidate_id]
+            for candidate_id in candidate_ids
+            if candidate_id in candidate
+        )
+        link = group[0] if len(group) == 1 else None
+        classification = group[0].change_kind if group else "preserved_exact"
         reason_code = classification
-        if new_row is None:
-            classification = "unexplained_missing"
-            reason_code = "active_identity_has_no_candidate_record"
+        story_valid = False
+        if group and _looks_like_story_correction(record_kind, group):
+            story_valid, reason_code = _validate_story_correction_group(
+                record_kind=record_kind,
+                active_id=active_id,
+                active_row=old_row,
+                group=group,
+                candidate_rows=candidate,
+                story_candidate_metadata_by_source=(
+                    story_candidate_metadata_by_source
+                ),
+                story_parents=story_parents,
+            )
+            if not story_valid:
+                classification = "blocked_ambiguous"
+                blockers.append(
+                    f"blocked_ambiguous_{record_kind}:{active_id}:{reason_code}"
+                )
+        elif not group and _is_legacy_story_profile(active_row=old_row):
+            classification = "blocked_ambiguous"
+            reason_code = "story_profile_requires_exact_source_migration_link"
+            blockers.append(
+                f"blocked_ambiguous_{record_kind}:{active_id}:{reason_code}"
+            )
+        elif len(group) > 1:
+            raise ValueError(f"duplicate {record_kind} fidelity link: {active_id}")
+
+        if not candidate_group:
+            if classification != "blocked_ambiguous":
+                classification = "unexplained_missing"
+                reason_code = "active_identity_has_no_candidate_record"
             blockers.append(f"unexplained_{record_kind}_missing:{active_id}")
             unexplained += 1
+        elif len(candidate_group) != len(candidate_ids):
+            classification = "blocked_ambiguous"
+            reason_code = "story_expansion_candidate_missing"
+            blockers.append(
+                f"blocked_ambiguous_{record_kind}:{active_id}:{reason_code}"
+            )
         elif classification not in _ALLOWED_CHANGE_KINDS:
-            reason_code = "change_kind_not_whitelisted"
-            blockers.append(f"unapproved_{record_kind}_change:{active_id}:{classification}")
-        elif link is not None and not _SHA256_RE.fullmatch(
-            link.source_content_sha256
+            if classification != "blocked_ambiguous":
+                reason_code = "change_kind_not_whitelisted"
+                blockers.append(
+                    f"unapproved_{record_kind}_change:{active_id}:{classification}"
+                )
+        elif group and any(
+            not _SHA256_RE.fullmatch(item.source_content_sha256)
+            for item in group
         ):
             reason_code = "source_evidence_hash_invalid"
             blockers.append(f"invalid_{record_kind}_source_evidence:{active_id}")
-        elif classification == "preserved_exact" and candidate_id != active_id:
+        elif classification == "preserved_exact" and candidate_ids != (active_id,):
             reason_code = "preserved_exact_changes_identity"
             blockers.append(f"invalid_preserved_exact_link:{active_id}")
-        elif classification == "preserved_rekeyed" and candidate_id == active_id:
+        elif classification == "preserved_rekeyed" and candidate_ids == (active_id,):
             reason_code = "preserved_rekeyed_does_not_change_identity"
             blockers.append(f"invalid_preserved_rekeyed_link:{active_id}")
         elif classification == "new_source_record":
             reason_code = "new_source_record_has_active_predecessor"
             blockers.append(f"invalid_new_source_link:{active_id}")
-        elif classification == "corrected_semantics" and (
-            link is None
-            or (link.legacy_section, link.candidate_section)
-            not in _ALLOWED_SECTION_CORRECTIONS
-        ):
-            reason_code = "section_correction_not_whitelisted"
-            blockers.append(f"unapproved_section_correction:{active_id}")
-        if new_row is not None:
-            mapped_candidate_ids.add(candidate_id)
+        elif classification == "corrected_semantics":
+            correction = (
+                group[0].legacy_section,
+                group[0].candidate_section,
+            )
+            if correction not in _ALLOWED_SECTION_CORRECTIONS or (
+                correction == ("profile", "story") and not story_valid
+            ):
+                reason_code = "section_correction_not_whitelisted"
+                blockers.append(f"unapproved_section_correction:{active_id}")
+
+        can_consume = (
+            classification in _ALLOWED_CHANGE_KINDS
+            and len(candidate_group) == len(candidate_ids)
+            and not (
+                classification == "corrected_semantics"
+                and group
+                and (
+                    group[0].legacy_section,
+                    group[0].candidate_section,
+                )
+                == ("profile", "story")
+                and not story_valid
+            )
+        )
+        is_story_expansion = (
+            record_kind == "child"
+            and story_valid
+            and len(group) >= 1
+        )
+        duplicate_story_consumption = can_consume and (
+            (
+                is_story_expansion
+                and any(
+                    candidate_id in mapped_candidate_ids
+                    for candidate_id in candidate_ids
+                )
+            )
+            or (
+                not is_story_expansion
+                and any(
+                    candidate_id in story_expansion_candidate_ids
+                    for candidate_id in candidate_ids
+                )
+            )
+        )
+        if duplicate_story_consumption:
+            classification = "blocked_ambiguous"
+            reason_code = "candidate_has_multiple_active_predecessors"
+            blockers.append(
+                f"blocked_ambiguous_{record_kind}:{active_id}:{reason_code}"
+            )
+            can_consume = False
+        if can_consume:
+            mapped_candidate_ids.update(candidate_ids)
+            if is_story_expansion:
+                story_expansion_candidate_ids.update(candidate_ids)
+
         active_hash = _row_hash(old_row)
-        candidate_hash = "" if new_row is None else _row_hash(new_row)
-        source_evidence = [] if link is None else [_link_source_evidence(link)]
-        ledger_id = _ledger_id(record_kind, active_id, candidate_id)
+        if not candidate_group:
+            candidate_hash = ""
+        elif len(candidate_group) == 1:
+            candidate_hash = _row_hash(candidate_group[0])
+        else:
+            candidate_hash = _hash_identity_list(
+                _row_hash(row) for row in candidate_group
+            )
+        source_evidence = [
+            _link_source_evidence(item)
+            for item in sorted(group, key=lambda item: item.candidate_id)
+        ]
+        ledger_id = _ledger_id(
+            record_kind,
+            active_id,
+            "|".join(candidate_ids),
+        )
+        details = {
+            "payload_changed": bool(
+                candidate_group and active_hash != candidate_hash
+            ),
+            "legacy_section": "" if not group else group[0].legacy_section,
+            "candidate_section": "" if not group else group[0].candidate_section,
+        }
+        if is_story_expansion:
+            details["candidate_count"] = len(candidate_group)
         row = {
             "schema_version": "huiji.fidelity-ledger/v1",
             "ledger_id": ledger_id,
             "record_kind": record_kind,
             "active_identity": active_id,
-            "candidate_identities": [] if new_row is None else [candidate_id],
+            "candidate_identities": [
+                candidate_id
+                for candidate_id in candidate_ids
+                if candidate_id in candidate
+            ],
             "classification": classification,
             "reason_code": reason_code,
             "active_sha256": active_hash,
             "candidate_sha256": candidate_hash,
             "source_evidence": source_evidence,
-            "details": {
-                "payload_changed": bool(new_row is not None and active_hash != candidate_hash),
-                "legacy_section": "" if link is None else link.legacy_section,
-                "candidate_section": "" if link is None else link.candidate_section,
-            },
+            "details": details,
         }
         ledger.append(row)
-        classifications[(record_kind, active_id)] = (classification, candidate_id)
+        classifications[(record_kind, active_id)] = (
+            classification,
+            candidate_ids if can_consume else (),
+        )
 
     for candidate_id, new_row in candidate.items():
         if candidate_id in mapped_candidate_ids:
@@ -317,6 +470,309 @@ def _reconcile_records(
             }
         )
     return ledger, blockers, classifications, unexplained
+
+
+def _looks_like_story_expansion(
+    record_kind: str,
+    group: Sequence[SemanticRecordLink],
+) -> bool:
+    return (
+        record_kind == "child"
+        and bool(group)
+        and all(
+            link.change_kind == "corrected_semantics"
+            and link.legacy_section == "profile"
+            and link.candidate_section == "story"
+            for link in group
+        )
+    )
+
+
+def _is_legacy_story_profile(*, active_row: Mapping[str, Any]) -> bool:
+    return (
+        str(active_row.get("entity_type") or "") == "story"
+        and str(active_row.get("category") or "") == "story"
+        and str(active_row.get("section_kind") or "") == "profile"
+    )
+
+
+def _looks_like_story_correction(
+    record_kind: str,
+    group: Sequence[SemanticRecordLink],
+) -> bool:
+    return (
+        record_kind in {"parent", "child"}
+        and bool(group)
+        and all(
+            link.change_kind == "corrected_semantics"
+            and link.legacy_section == "profile"
+            and link.candidate_section == "story"
+            for link in group
+        )
+    )
+
+
+def _validate_story_correction_group(
+    *,
+    record_kind: str,
+    active_id: str,
+    active_row: Mapping[str, Any],
+    group: Sequence[SemanticRecordLink],
+    candidate_rows: Mapping[str, Mapping[str, Any]],
+    story_candidate_metadata_by_source: Mapping[
+        tuple[str, str],
+        Mapping[str, Mapping[str, Any]],
+    ],
+    story_parents: Mapping[str, Mapping[str, Any]],
+) -> tuple[bool, str]:
+    if not group:
+        return False, "story_group_empty"
+    first = group[0]
+    source_title = first.source_title
+    source_sha256 = first.source_content_sha256
+    title_match = re.fullmatch(r"Data:Story/([^/]+)\.json", source_title)
+    if title_match is None or not _SHA256_RE.fullmatch(source_sha256):
+        return False, "story_source_identity_invalid"
+    story_id = title_match.group(1)
+    common = {
+        (
+            link.source_title,
+            link.source_content_sha256,
+            link.change_kind,
+            link.legacy_section,
+            link.candidate_section,
+        )
+        for link in group
+    }
+    if len(common) != 1:
+        return False, "story_group_mixed_source_or_semantics"
+    if any(link.legacy_id != active_id for link in group):
+        return False, "story_group_legacy_identity_mismatch"
+    if (
+        str(active_row.get("entity_type") or "") != "story"
+        or str(active_row.get("category") or "") != "story"
+        or str(active_row.get("section_kind") or "") != "profile"
+        or not _all_source_refs_complete(active_row)
+        or not _row_has_source(
+            active_row,
+            source_title,
+            source_sha256,
+            path="$",
+        )
+        or _row_has_conflicting_source_hash(
+            active_row,
+            source_title,
+            source_sha256,
+        )
+    ):
+        return False, "story_active_source_or_section_invalid"
+
+    target_ids = tuple(sorted(link.candidate_id for link in group))
+    if len(target_ids) != len(set(target_ids)):
+        return False, "story_group_duplicate_candidate"
+    target_rows = {
+        candidate_id: candidate_rows.get(candidate_id)
+        for candidate_id in target_ids
+    }
+    if any(row is None for row in target_rows.values()):
+        return False, "story_group_candidate_missing"
+
+    expected_parent_id = f"story:{story_id}/story"
+    if record_kind == "parent":
+        if len(group) != 1 or first.json_path != "$":
+            return False, "story_parent_group_shape_invalid"
+        row = target_rows[target_ids[0]]
+        assert row is not None
+        if (
+            target_ids[0] != expected_parent_id
+            or str(row.get("parent_id") or "") != expected_parent_id
+            or str(row.get("entity_id") or "") != story_id
+            or str(row.get("entity_type") or "") != "story"
+            or str(row.get("category") or "") != "story"
+            or str(row.get("section_kind") or "") != "story"
+            or not _all_source_refs_complete(row)
+            or not _row_has_source(
+                row,
+                source_title,
+                source_sha256,
+                path="$",
+            )
+            or _row_has_conflicting_source_hash(
+                row,
+                source_title,
+                source_sha256,
+            )
+        ):
+            return False, "story_parent_source_or_identity_invalid"
+        return True, "corrected_semantics"
+
+    if record_kind != "child":
+        return False, "story_record_kind_invalid"
+    source_members = dict(
+        story_candidate_metadata_by_source.get(
+            (source_title, source_sha256),
+            {},
+        )
+    )
+    if set(target_ids) != set(source_members):
+        return False, "story_group_partial_candidate_membership"
+    if not source_members:
+        return False, "story_group_has_no_candidates"
+
+    parent_row = story_parents.get(expected_parent_id)
+    if (
+        parent_row is None
+        or str(parent_row.get("entity_id") or "") != story_id
+        or str(parent_row.get("entity_type") or "") != "story"
+        or str(parent_row.get("category") or "") != "story"
+        or str(parent_row.get("section_kind") or "") != "story"
+        or set(parent_row.get("child_ids") or ()) != set(source_members)
+        or not _row_has_source(
+            parent_row,
+            source_title,
+            source_sha256,
+            path="$",
+        )
+    ):
+        return False, "story_parent_closure_invalid"
+
+    links_by_candidate = {link.candidate_id: link for link in group}
+    stable_tokens: set[str] = set()
+    expected_owner = f"story:{story_id}"
+    for candidate_id, metadata in source_members.items():
+        row = candidate_rows[candidate_id]
+        stable_token = str(metadata.get("stable_source_token") or "")
+        source_token_kind = str(metadata.get("source_token_kind") or "")
+        source_fields = metadata.get("source_fields")
+        source_json_path = (
+            str(source_fields.get("json_path") or "")
+            if isinstance(source_fields, Mapping)
+            else ""
+        )
+        matching_paths = {
+            item["path"]
+            for item in _source_ref_values(row)
+            if item["title"] == source_title
+            and item["hash"] == source_sha256
+        }
+        link = links_by_candidate[candidate_id]
+        if (
+            not stable_token
+            or stable_token in stable_tokens
+            or not source_token_kind
+            or str(row.get("entity_id") or "") != story_id
+            or str(row.get("entity_type") or "") != "story"
+            or str(row.get("category") or "") != "story"
+            or str(row.get("section_kind") or "") != "story"
+            or str(row.get("parent_id") or "") != expected_parent_id
+            or str(metadata.get("owner_entity_id") or "") != expected_owner
+            or str(metadata.get("owner_page_id") or "") != expected_owner
+            or candidate_id != f"{expected_parent_id}/{stable_token}"
+            or not _all_source_refs_complete(row)
+            or _row_has_conflicting_source_hash(
+                row,
+                source_title,
+                source_sha256,
+            )
+            or not link.json_path.startswith("$.")
+            or link.json_path not in matching_paths
+            or source_json_path != link.json_path
+        ):
+            return False, "story_child_source_owner_or_token_invalid"
+        stable_tokens.add(stable_token)
+    return True, "corrected_semantics"
+
+
+def _source_ref_values(row: Mapping[str, Any]) -> tuple[dict[str, str], ...]:
+    values: list[dict[str, str]] = []
+    for raw in row.get("source_refs") or ():
+        if not isinstance(raw, Mapping):
+            continue
+        values.append(
+            {
+                "kind": str(raw.get("source_kind") or raw.get("kind") or ""),
+                "title": str(
+                    raw.get("source_title") or raw.get("title") or ""
+                ),
+                "hash": str(
+                    raw.get("source_content_sha256")
+                    or raw.get("content_sha256")
+                    or ""
+                ),
+                "path": str(
+                    raw.get("json_path") or raw.get("source_row_id") or ""
+                ),
+            }
+        )
+    return tuple(values)
+
+
+def _story_candidate_metadata_by_source(
+    children: Sequence[SemanticChild],
+) -> dict[tuple[str, str], dict[str, Mapping[str, Any]]]:
+    result: dict[
+        tuple[str, str],
+        dict[str, Mapping[str, Any]],
+    ] = defaultdict(dict)
+    for child in children:
+        candidate_id = child.block.child_id
+        row = child.block.to_json()
+        if (
+            str(row.get("entity_type") or "") != "story"
+            or str(row.get("category") or "") != "story"
+            or str(row.get("section_kind") or "") != "story"
+        ):
+            continue
+        for ref in _source_ref_values(row):
+            if (
+                re.fullmatch(r"Data:Story/([^/]+)\.json", ref["title"])
+                and _SHA256_RE.fullmatch(ref["hash"])
+            ):
+                result[(ref["title"], ref["hash"])][candidate_id] = {
+                    "stable_source_token": child.stable_source_token,
+                    "source_token_kind": child.source_token_kind,
+                    "owner_entity_id": child.owner_entity_id,
+                    "owner_page_id": child.owner_page_id,
+                    "source_fields": dict(child.source_fields),
+                }
+    return dict(result)
+
+
+def _all_source_refs_complete(row: Mapping[str, Any]) -> bool:
+    refs = _source_ref_values(row)
+    return bool(refs) and all(
+        ref["kind"]
+        and ref["title"]
+        and _SHA256_RE.fullmatch(ref["hash"])
+        and ref["path"]
+        for ref in refs
+    )
+
+
+def _row_has_source(
+    row: Mapping[str, Any],
+    title: str,
+    source_sha256: str,
+    *,
+    path: str | None = None,
+) -> bool:
+    return any(
+        ref["title"] == title
+        and ref["hash"] == source_sha256
+        and (path is None or ref["path"] == path)
+        for ref in _source_ref_values(row)
+    )
+
+
+def _row_has_conflicting_source_hash(
+    row: Mapping[str, Any],
+    title: str,
+    source_sha256: str,
+) -> bool:
+    return any(
+        ref["title"] == title and ref["hash"] != source_sha256
+        for ref in _source_ref_values(row)
+    )
 
 
 def _reconcile_exclusions(
@@ -420,7 +876,10 @@ def _exclusion_candidate_identity(exclusion: Any) -> str:
 def _reconcile_child_bm25(
     active_children: Sequence[Mapping[str, Any]],
     active_bm25: Sequence[Mapping[str, Any]],
-    classifications: Mapping[tuple[str, str], tuple[str, str]],
+    classifications: Mapping[
+        tuple[str, str],
+        tuple[str, tuple[str, ...]],
+    ],
 ) -> tuple[list[dict[str, Any]], list[str]]:
     if not active_bm25:
         return [], []
@@ -435,8 +894,8 @@ def _reconcile_child_bm25(
             if index < len(active_children)
             else ""
         )
-        classification, candidate_id = classifications.get(
-            ("child", active_id), ("unexplained_missing", "")
+        classification, candidate_ids = classifications.get(
+            ("child", active_id), ("unexplained_missing", ())
         )
         reason = "derived_from_child_fidelity"
         if active_id != expected_id:
@@ -446,10 +905,14 @@ def _reconcile_child_bm25(
         rows.append(
             {
                 "schema_version": "huiji.fidelity-ledger/v1",
-                "ledger_id": _ledger_id("child_bm25", f"{index}:{active_id}", candidate_id),
+                "ledger_id": _ledger_id(
+                    "child_bm25",
+                    f"{index}:{active_id}",
+                    "|".join(candidate_ids),
+                ),
                 "record_kind": "child_bm25",
                 "active_identity": f"{index}:{active_id}",
-                "candidate_identities": [candidate_id] if candidate_id else [],
+                "candidate_identities": list(candidate_ids),
                 "classification": classification,
                 "reason_code": reason,
                 "active_sha256": _row_hash(record),

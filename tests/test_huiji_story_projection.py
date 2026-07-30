@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.huiji_rag.build.story_projection import project_stories
+from src.huiji_rag.build.projection import project_crawler_semantics
 
 
 REAL_DATA_PAGES_ENV = "HUIJI_DATA_PAGES_SNAPSHOT"
@@ -421,3 +422,58 @@ def test_single_restored_story_row_streams_to_nonempty_children() -> None:
     assert result.parents[0].entity_name == "序章0-2.2"
     assert result.children
     assert result.children[0].block.source_refs[0]["json_path"].startswith("$.")
+
+
+def test_story_projection_emits_complete_source_backed_migration_links() -> None:
+    source_sha256 = "7" * 64
+    projection = project_crawler_semantics(
+        [
+            _story(
+                "9001",
+                {
+                    "name": "Migration fixture",
+                    "steps": [
+                        {"id": "second", "text": "Second line."},
+                        {"id": "first", "text": "First line."},
+                    ],
+                },
+                source_content_sha256=source_sha256,
+            )
+        ]
+    )
+
+    assert [link.to_json() for link in projection.record_links] == [
+        {
+            "record_kind": "parent",
+            "legacy_id": "story:e327f1d8456f/profile",
+            "candidate_id": "story:9001/story",
+            "change_kind": "corrected_semantics",
+            "source_title": "Data:Story/9001.json",
+            "source_content_sha256": source_sha256,
+            "json_path": "$",
+            "legacy_section": "profile",
+            "candidate_section": "story",
+        },
+        {
+            "record_kind": "child",
+            "legacy_id": "story:e327f1d8456f:0000",
+            "candidate_id": "story:9001/story/step-second",
+            "change_kind": "corrected_semantics",
+            "source_title": "Data:Story/9001.json",
+            "source_content_sha256": source_sha256,
+            "json_path": "$.steps.0",
+            "legacy_section": "profile",
+            "candidate_section": "story",
+        },
+        {
+            "record_kind": "child",
+            "legacy_id": "story:e327f1d8456f:0000",
+            "candidate_id": "story:9001/story/step-first",
+            "change_kind": "corrected_semantics",
+            "source_title": "Data:Story/9001.json",
+            "source_content_sha256": source_sha256,
+            "json_path": "$.steps.1",
+            "legacy_section": "profile",
+            "candidate_section": "story",
+        },
+    ]

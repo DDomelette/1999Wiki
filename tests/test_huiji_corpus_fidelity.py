@@ -16,6 +16,7 @@ from src.huiji_rag.models import ChildBlock, ParentBlock
 
 
 SHA = "a" * 64
+STORY_SHA = "7" * 64
 
 
 def _fixture(*, duplicate_media: bool = False):
@@ -174,6 +175,156 @@ def _build(values):
     )
 
 
+def _story_fixture(*, tokens: tuple[str, ...] = ("step-z", "step-a")):
+    source_title = "Data:Story/9001.json"
+    candidate_parent_id = "story:9001/story"
+    legacy_parent_id = "story:legacy-9001/profile"
+    legacy_child_id = "story:legacy-9001:0000"
+    parent_ref = {
+        "kind": "data_page",
+        "title": source_title,
+        "revid": 9,
+        "content_sha256": STORY_SHA,
+        "json_path": "$",
+    }
+    legacy_ref = {
+        "source_kind": "crawler_data_page",
+        "source_title": source_title,
+        "source_row_id": "$",
+        "source_content_sha256": STORY_SHA,
+    }
+    candidate_ids = tuple(f"{candidate_parent_id}/{token}" for token in tokens)
+    parent = ParentBlock(
+        parent_id=candidate_parent_id,
+        entity_id="9001",
+        entity_name="Migration fixture",
+        entity_aliases=(),
+        category="story",
+        section_kind="story",
+        title="Migration fixture",
+        summary_text="Story line",
+        source_refs=(parent_ref,),
+        child_ids=candidate_ids,
+        content_hash="8" * 64,
+        entity_type="story",
+    )
+    children = tuple(
+        SemanticChild(
+            block=ChildBlock(
+                child_id=candidate_id,
+                parent_id=candidate_parent_id,
+                entity_id="9001",
+                entity_name="Migration fixture",
+                category="story",
+                section_kind="story",
+                title="Migration fixture",
+                text=f"Line {index}",
+                search_text=f"Migration fixture line {index}",
+                chunk_index=index,
+                media_ids=(),
+                media_policy="text_only",
+                source_refs=(
+                    {
+                        **parent_ref,
+                        "json_path": f"$.steps.{index}",
+                    },
+                ),
+                content_hash=str(index + 1) * 64,
+                entity_type="story",
+                ancestor_ids=("story:9001", candidate_parent_id),
+            ),
+            stable_source_token=token,
+            source_token_kind="stable_step_id",
+            owner_entity_id="story:9001",
+            owner_page_id="story:9001",
+            source_fields={"json_path": f"$.steps.{index}"},
+        )
+        for index, (token, candidate_id) in enumerate(zip(tokens, candidate_ids))
+    )
+    links = (
+        SemanticRecordLink(
+            record_kind="parent",
+            legacy_id=legacy_parent_id,
+            candidate_id=candidate_parent_id,
+            change_kind="corrected_semantics",
+            source_title=source_title,
+            source_content_sha256=STORY_SHA,
+            json_path="$",
+            legacy_section="profile",
+            candidate_section="story",
+        ),
+        *(
+            SemanticRecordLink(
+                record_kind="child",
+                legacy_id=legacy_child_id,
+                candidate_id=child.block.child_id,
+                change_kind="corrected_semantics",
+                source_title=source_title,
+                source_content_sha256=STORY_SHA,
+                json_path=str(child.source_fields["json_path"]),
+                legacy_section="profile",
+                candidate_section="story",
+            )
+            for child in reversed(children)
+        ),
+    )
+    projection = CorpusProjection(
+        parents=(parent,),
+        children=children,
+        voice_sources=(),
+        media_intents=(),
+        exclusions=(),
+        identity_fallbacks=(),
+        record_links=links,
+    )
+    active_parent = {
+        **parent.to_json(),
+        "parent_id": legacy_parent_id,
+        "entity_id": "legacy-9001",
+        "section_kind": "profile",
+        "source_refs": [legacy_ref],
+        "child_ids": [legacy_child_id],
+    }
+    active_child = {
+        **children[0].block.to_json(),
+        "child_id": legacy_child_id,
+        "parent_id": legacy_parent_id,
+        "entity_id": "legacy-9001",
+        "section_kind": "profile",
+        "source_refs": [legacy_ref],
+    }
+    return {
+        "projection": projection,
+        "active_parents": (active_parent,),
+        "active_children": (active_child,),
+        "active_excluded": (),
+        "legacy": LegacyMediaReconciliation(
+            occurrence_rows=(),
+            category_counts={},
+            active_occurrence_count=0,
+            unexplained_binding_loss=0,
+        ),
+        "child_bm25": (),
+        "media_bm25": (),
+    }
+
+
+def _build_story_or_fail(values):
+    try:
+        return _build(values)
+    except ValueError as exc:
+        pytest.fail(f"Story expansion must be reconciled as one source group: {exc}")
+
+
+def _assert_story_group_rejected(values) -> None:
+    try:
+        result = _build(values)
+    except ValueError:
+        return
+    assert result.passed is False
+    assert result.blockers
+
+
 def test_fidelity_ledger_accepts_only_explicit_rekeys_and_preserves_occurrences() -> None:
     values = _fixture(duplicate_media=True)
 
@@ -192,6 +343,34 @@ def test_fidelity_ledger_accepts_only_explicit_rekeys_and_preserves_occurrences(
         if row["classification"] == "corrected_semantics"
     ]
     assert {row["record_kind"] for row in corrected} >= {"parent", "child"}
+
+
+def test_non_story_child_ledger_preserves_public_payload_hash_and_bm25_shape() -> None:
+    values = _fixture()
+
+    result = _build(values)
+    child_row = next(
+        row
+        for row in result.ledger_rows
+        if row["record_kind"] == "child"
+        and row["active_identity"] == "char:1/culture:0010"
+    )
+    child_bm25_row = next(
+        row
+        for row in result.ledger_rows
+        if row["record_kind"] == "child_bm25"
+    )
+
+    assert (
+        child_row["candidate_sha256"]
+        == "ddb2c3c2613779cc4c0ef347303f36d452adb4d30ff077624f60e639abeccbcb"
+    )
+    assert child_row["details"] == {
+        "payload_changed": True,
+        "legacy_section": "culture",
+        "candidate_section": "collection",
+    }
+    assert child_bm25_row["candidate_sha256"] == ""
 
 
 def test_fidelity_ledger_rejects_unapproved_section_correction() -> None:
@@ -350,3 +529,178 @@ def test_fidelity_ledger_blocks_missing_candidate_and_bm25_sequence_drift() -> N
     assert result.unexplained_parent_child_loss == 1
     assert any(blocker.startswith("unexplained_child_missing:") for blocker in result.blockers)
     assert "active_child_bm25_sequence_mismatch:0" in result.blockers
+
+
+def test_story_child_expansion_consumes_all_candidates_in_one_ledger_row() -> None:
+    values = _story_fixture(tokens=("step-z", "step-a"))
+
+    first = _build_story_or_fail(values)
+    second = _build_story_or_fail(values)
+    child_rows = [
+        row
+        for row in first.ledger_rows
+        if row["record_kind"] == "child" and row["active_identity"]
+    ]
+
+    assert first.passed is True
+    assert len(child_rows) == 1
+    assert child_rows[0]["classification"] == "corrected_semantics"
+    assert child_rows[0]["candidate_identities"] == [
+        "story:9001/story/step-a",
+        "story:9001/story/step-z",
+    ]
+    assert child_rows[0] == next(
+        row
+        for row in second.ledger_rows
+        if row["record_kind"] == "child" and row["active_identity"]
+    )
+    assert not any(
+        row["record_kind"] == "child"
+        and row["classification"] in {"new_source_record", "unexplained_addition"}
+        for row in first.ledger_rows
+    )
+
+
+def test_story_child_expansion_rejects_partial_or_mixed_groups() -> None:
+    one_child = _story_fixture(tokens=("step-only",))
+    one_child_result = _build_story_or_fail(one_child)
+    one_child_row = next(
+        row
+        for row in one_child_result.ledger_rows
+        if row["record_kind"] == "child" and row["active_identity"]
+    )
+    assert one_child_result.passed is True
+    assert one_child_row["candidate_identities"] == [
+        "story:9001/story/step-only"
+    ]
+
+    partial = _story_fixture()
+    partial["projection"] = replace(
+        partial["projection"],
+        record_links=partial["projection"].record_links[:-1],
+    )
+    _assert_story_group_rejected(partial)
+
+    mixed_hash = _story_fixture()
+    mixed_links = list(mixed_hash["projection"].record_links)
+    mixed_links[-1] = replace(mixed_links[-1], source_content_sha256="9" * 64)
+    mixed_hash["projection"] = replace(
+        mixed_hash["projection"], record_links=tuple(mixed_links)
+    )
+    _assert_story_group_rejected(mixed_hash)
+
+    wrong_owner = _story_fixture()
+    wrong_children = list(wrong_owner["projection"].children)
+    wrong_children[-1] = replace(
+        wrong_children[-1], owner_entity_id="story:wrong"
+    )
+    wrong_owner["projection"] = replace(
+        wrong_owner["projection"], children=tuple(wrong_children)
+    )
+    _assert_story_group_rejected(wrong_owner)
+
+    duplicate_target = _story_fixture()
+    duplicate_target["projection"] = replace(
+        duplicate_target["projection"],
+        record_links=(
+            *duplicate_target["projection"].record_links,
+            duplicate_target["projection"].record_links[-1],
+        ),
+    )
+    _assert_story_group_rejected(duplicate_target)
+
+    incomplete_evidence = _story_fixture()
+    incomplete_links = list(incomplete_evidence["projection"].record_links)
+    incomplete_links[-1] = replace(
+        incomplete_links[-1], source_content_sha256="", json_path=""
+    )
+    incomplete_evidence["projection"] = replace(
+        incomplete_evidence["projection"], record_links=tuple(incomplete_links)
+    )
+    _assert_story_group_rejected(incomplete_evidence)
+
+    unmatched = _story_fixture(tokens=("step-only",))
+    unmatched_candidate = unmatched["projection"].children[0]
+    unrelated_ref = {
+        **unmatched_candidate.block.source_refs[0],
+        "title": "Data:Story/other.json",
+        "content_sha256": "6" * 64,
+    }
+    unrelated_block = replace(
+        unmatched_candidate.block,
+        child_id="story:other/story/step-only",
+        parent_id="story:other/story",
+        entity_id="other",
+        source_refs=(unrelated_ref,),
+        ancestor_ids=("story:other", "story:other/story"),
+    )
+    unrelated_child = replace(
+        unmatched_candidate,
+        block=unrelated_block,
+        owner_entity_id="story:other",
+        owner_page_id="story:other",
+    )
+    unrelated_parent = replace(
+        unmatched["projection"].parents[0],
+        parent_id="story:other/story",
+        entity_id="other",
+        source_refs=(unrelated_ref,),
+        child_ids=(unrelated_block.child_id,),
+    )
+    unmatched["projection"] = replace(
+        unmatched["projection"],
+        parents=(unrelated_parent,),
+        children=(unrelated_child,),
+        record_links=(),
+    )
+    unmatched_result = _build(unmatched)
+    assert unmatched_result.passed is False
+    assert "unexplained_parent_missing:story:legacy-9001/profile" in unmatched_result.blockers
+    assert "unexplained_child_missing:story:legacy-9001:0000" in unmatched_result.blockers
+    assert "unexplained_parent_addition:story:other/story" in unmatched_result.blockers
+    assert "unexplained_child_addition:story:other/story/step-only" in unmatched_result.blockers
+
+
+def test_non_story_duplicate_legacy_links_remain_fail_closed() -> None:
+    story = _story_fixture(tokens=("step-z", "step-a"))
+    non_story = _fixture()
+    duplicate_non_story = non_story["projection"].record_links[-1]
+    projection = CorpusProjection(
+        parents=(
+            *story["projection"].parents,
+            *non_story["projection"].parents,
+        ),
+        children=(
+            *story["projection"].children,
+            *non_story["projection"].children,
+        ),
+        voice_sources=(),
+        media_intents=(),
+        exclusions=non_story["projection"].exclusions,
+        identity_fallbacks=(),
+        record_links=(
+            *story["projection"].record_links,
+            *non_story["projection"].record_links,
+            duplicate_non_story,
+        ),
+    )
+    values = {
+        **non_story,
+        "projection": projection,
+        "active_parents": (
+            *story["active_parents"],
+            *non_story["active_parents"],
+        ),
+        "active_children": (
+            *story["active_children"],
+            *non_story["active_children"],
+        ),
+        "child_bm25": (),
+        "media_bm25": (),
+    }
+
+    with pytest.raises(
+        ValueError,
+        match=r"duplicate child fidelity link: char:1/culture:0010",
+    ):
+        _build(values)
