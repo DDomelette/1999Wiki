@@ -14,12 +14,14 @@
 - 批准基线提交：`300e4066630c6564d56157442765a4675b783590`。
 - 批准 Spec SHA-256：`61bf46e1ec6f44b330913d1b1effdfd1828edf72b13ccd7ea8f60c61fa7f405d`。
 - 配套 D Plan：`docs/superpowers/plans/2026-07-30-rag-story-segment-d-integration.md`。
-- E 从 D0 完成后的固定 `main` 创建，分支为 `codex/rag-e-story-segment`，工作树为 `D:\1999Wiki.worktrees\rag-e-story-segment`。
+- E 从 C8b–C9 已完成、D 已合并 C、合并后 C fidelity 已通过且 D0 完成后的固定 `main` 创建，分支为 `codex/rag-e-story-segment`，工作树为 `D:\1999Wiki.worktrees\rag-e-story-segment`。
 - E0 → E1 → E2 → E3 → E4 → E5 严格串行；每个 Task 完成后必须停在 `completed_pending_review`，由 D 独立验收、批准提交并放行下一 Task。
 - E 使用 `gpt-5.6-sol`、标准速度、`workspace-write`、`fast_mode=false`、`multi_agent=false`。
 - E 禁止子代理、第二个 CLI worker、读取 C worktree、复制其他 worktree 代码或使用对话摘要作为契约。
 - 所有 Python/pytest 命令必须使用 `D:\Anaconda32024\envs\1999wiki\python.exe`；禁止裸 `python`、`py`、`pytest`。
-- 每次启动或恢复 E，先验证 `sys.version_info == (3, 11, 15)`、`sys.prefix == D:\Anaconda32024\envs\1999wiki`、HEAD 和 D0 dependency receipt。
+- 每次启动或恢复 E，先验证 `sys.version_info == (3, 11, 15)`、`sys.prefix == D:\Anaconda32024\envs\1999wiki`、HEAD、D0 dependency receipt 及其绑定的 C release receipt。
+- C release receipt 必须证明 C8b/C8c/C8d/C9 已验收、C 已合并到 `main`、合并后真实 fidelity 正常返回、Story Parent/Atom/source refs 无 blocker；否则 E0.0 立即停止。
+- E 只消费 C release receipt 固定的 `main` build root 与公共 artifact；不得从 C branch、C worktree、ignored 诊断目录或聊天摘要补取字段。
 - E 不调用 embedding API，不创建/写入/删除 Milvus collection，不修改 active pointer，不激活候选，不写 MinIO/MySQL，不下载媒体。
 - E 可以实现和测试真实 shadow build 所需的 typed schema、序列化、反序列化和 CLI，但测试必须使用 fake embeddings/fake Milvus；真实调用由 D 合并后执行。
 - Reranker 必须保持关闭；E 的测试用 spy 断言调用次数为 0。
@@ -31,7 +33,7 @@
 - 现有 `entity_strict`、`topic_strict` 和 primary Owner Gate 不得放宽；Story 通过显式授权分支进入。
 - Planner 只提议；Policy 的检测、assignment receipt 和 `StoryAuthorizationContext/v1` 是授权事实源。
 - 质量标记在 P0 只用于诊断/反事实，纯数字、短文本、标点或异常名称形式不得被过滤或降权。
-- 所有实现采用 TDD：先最小 RED，再最小 GREEN，再阶段回归，再真实快照 create-new 证据。
+- 所有实现采用 TDD：E 只写 RED test 并停下，D 在实现前独立复跑并签发 RED acceptance，E 才做最小 GREEN、阶段回归和真实快照 create-new 证据。
 - 每次真实快照诊断先用 `[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')` 生成 `$RunId`，只写 ignored `eval/story_segment/runs/$RunId/`，不得覆盖旧运行目录。
 - 每次提交前运行 `git diff --check`、阶段测试、`git status --short`，只暂存任务 allowlist。
 - 不通过 `git reset --hard`、`git checkout --`、stash、递归删除或覆盖恢复用户/其他线程文件。
@@ -51,8 +53,10 @@
 | `src/rag/story_authorization.py` | Request-level Story detector、scope assignment、统一授权上下文、continuation 和 anchor validation |
 | `src/rag/story_retrieval.py` | Atom-to-Segment mapping、typed Dense dispatch、融合、Owner/Segment/字符/citation 预算 |
 | `src/rag/story_answer_scope.py` | `StoryAnswerScope/v2` nullable applicability、三态归一化和生成姿态 |
-| `src/rag_eval/story_segment_runner.py` | E5 离线指标、质量反事实、容量、gate 和 handoff |
-| `scripts/build_huiji_typed_index.py` | D 后置执行的 create-new typed shadow builder；E 只用 fake client 测试 |
+| `src/rag_eval/story_segment_runner.py` | E5 离线指标、质量反事实、离线容量估算、gate 和 handoff |
+| `scripts/build_story_segment_candidate.py` | 合并后由 D 调用的 create-new 离线候选重建入口；输出 `rag.story-candidate-build-input/v1`，不伪造 runtime snapshot，不调用 embedding/Milvus |
+| `scripts/probe_story_segment_storage.py` | D 后置只读探测 hash-pinned 云端 Milvus/artifact/staging 卷并生成容量 receipt；E 只用 fake SSH/subprocess 测试 |
+| `scripts/build_huiji_typed_index.py` | D 后置执行的只读 Milvus preflight 与 create-new typed shadow builder；E 只用 fake client 测试 |
 | `scripts/evaluate_story_segment_rag.py` | D 后置真实评测和 E5 fake/offline 入口 |
 
 ### 1.2 新建测试文件
@@ -80,6 +84,7 @@ tests/test_huiji_typed_shadow_builder.py
 | `src/huiji_rag/build/contracts.py` | 发布 structure/segment/typed artifact schema 和 builder input/output identities |
 | `src/huiji_rag/build/orchestrator.py` | 离线 stage 顺序、manifest/provenance、blocked/readiness 闭包 |
 | `src/huiji_rag/build/artifact_writer.py` | create-new artifact 写入、行数/哈希/schema/fingerprint |
+| `src/huiji_rag/runtime_artifacts.py` | 保持 active v1 行为不变；新增显式 typed-story v2 isolated snapshot capability、完整文件元组和 fail-closed selector |
 | `src/rag/request_plan.py` | v2 provisional/final plan、SourceQuerySpan 和一次性 Finalizer 接线 |
 | `src/rag/query_plan.py` | 仅增加 Planner Story proposal 和 branch kind；不授予权限 |
 | `src/rag/route_policy.py` | 从 final envelope 构造授权上下文并保持原 Owner Gate |
@@ -109,6 +114,7 @@ tests/test_huiji_corpus_artifacts.py
 tests/test_huiji_corpus_builder.py
 tests/test_huiji_corpus_builder_contracts.py
 tests/test_huiji_corpus_projection.py
+tests/test_huiji_runtime_artifacts.py
 tests/test_sparse_bm25.py
 tests/test_chinese_bm25_analyzer.py
 tests/test_vectorstore.py
@@ -302,8 +308,8 @@ class DenseRetrievalUnit:
     quality_flags: tuple[str, ...]
     route_tags: tuple[str, ...]
     source_ref: tuple[Mapping[str, object], ...]
-    chunk_index: int | None
-    segment_sequence: int | None
+    chunk_index: int
+    segment_sequence_index: int
     content_hash: str
     artifact_identity: str
 ```
@@ -315,7 +321,65 @@ child:<child_id>
 story_segment:<segment_id>
 ```
 
-Milvus primary key 为 `retrieval_unit_id VARCHAR(256)`；`text VARCHAR(16384)`；vector 为 `FLOAT_VECTOR(1024)`；`child_id/segment_id` 保持独立 nullable 字段。
+Milvus primary key 为 `retrieval_unit_id VARCHAR(256)`；`text VARCHAR(16384)`；vector 为 `FLOAT_VECTOR(1024)`；`child_id/segment_id` 保持独立 nullable 字段。`chunk_index` 与 `segment_sequence_index` 都是非 nullable `INT64`：Child 的 `segment_sequence_index=-1`，Story Segment 的 `chunk_index=-1`；适用字段必须 `>=0`。不得在存储层把 `None`、空串或缺字段当作 `-1`。
+
+### 2.3.1 Candidate build input 与最终 runtime snapshot
+
+现有 `RuntimeArtifactSnapshot` 的 child/media v1–v3 capability 不能靠“附加几个可选路径”静默变成 Story typed snapshot。离线产物与真实 Milvus 状态必须分成两个不可混淆的身份层。
+
+E2.1 定义并验证预向量输入：
+
+```text
+schema_version = rag.story-candidate-build-input/v1
+story_retrieval_capability = typed_story_v2
+```
+
+`rag.story-candidate-build-input/v1` 必须固定：
+
+```text
+Parent/Child/media/BM25 legacy tuple
+Story structure artifact
+Story Segment artifact
+Atom-to-Segment mapping
+SegmentContextUnit/Atom span artifact
+typed Dense JSONL + schema + manifest
+Story registry/config identities
+RequestPlan/Policy/Fusion/AnswerScope config identities
+expected typed Milvus schema fingerprint
+embedding provider/model/dimension/normalization identity
+complete ordered tuple SHA-256
+```
+
+它不得包含尚未创建的 collection 名、实际 collection schema、实际 row count 或 build receipt，也不得被 runtime selector 消费。
+
+D4 在真实 shadow collection 创建、写入和只读验证完成后，才生成最终运行快照：
+
+```text
+snapshot_schema_version = rag.runtime-artifact-snapshot/v2
+story_retrieval_capability = typed_story_v2
+```
+
+该 v2 snapshot 必须包含 candidate-build-input 的完整身份，并额外固定：
+
+```text
+actual collection name
+observed collection schema fingerprint
+observed row count and retrieval-unit type counts
+shadow build receipt path and SHA-256
+embedding build identity and ordered primary-key hash
+protected active inventory identity
+complete ordered runtime tuple SHA-256
+```
+
+规则：
+
+- E2.1 实现两个 schema/parser/validator；E2.2 的 fake builder 只能在 fake collection 写入和验证完成后生成测试用 v2 snapshot；
+- E5.3 与 D3 只能生成 `rag.story-candidate-build-input/v1`，不得伪造最终 v2 snapshot；
+- active v1/v2/v3 解析和 `resolve_runtime_artifact_snapshot()` 行为逐字节兼容；
+- 只有 `resolve_isolated_story_candidate_snapshot_v2()` 可解析 D4 已验证的 typed Story v2 snapshot；
+- selector 只读取 manifest 声明的 schema/capability，不从字段存在性推断；
+- 任一必需文件、哈希、schema、实际 row count、collection capability 或 build receipt 缺失和 active overlap 均 fail-closed；
+- v2 snapshot 在激活前只能用于显式传入的 isolated evaluator/runtime probe，不能替换 active pointer。
 
 ### 2.4 RequestPlan v2 与统一授权
 
@@ -325,7 +389,7 @@ class SourceQuerySpan:
     query_char_start: int
     query_char_end: int
     source_text_sha256: str
-    schema_version: str = "rag.source-query-span/v1"
+    schema_version: Literal["SourceQuerySpan/v1"] = "SourceQuerySpan/v1"
 
 @dataclass(frozen=True)
 class PlannedSubtaskV2:
@@ -373,7 +437,7 @@ AuthorizationCoverage = Literal[
 
 @dataclass(frozen=True)
 class StoryAuthorizationContext:
-    schema_version: Literal["rag.story-authorization-context/v1"]
+    schema_version: Literal["StoryAuthorizationContext/v1"]
     subtask_id: str
     authorization_origin: AuthorizationOrigin
     authorization_status: AuthorizationStatus
@@ -520,7 +584,7 @@ global_context_chars = 9000
 ```python
 @dataclass(frozen=True)
 class StoryAnswerScope:
-    schema_version: Literal["rag.story-answer-scope/v2"]
+    schema_version: Literal["StoryAnswerScope/v2"]
     subtask_id: str
     claim_scope: Literal[
         "local_fact",
@@ -542,11 +606,14 @@ class StoryAnswerScope:
 
 ### Task E0.0：环境、依赖和禁止操作预检
 
+**Spec coverage:** `SCOPE-P0-01` 至 `SCOPE-P0-03`、`SCOPE-P0-06`、`THREAD-P0-04` 至 `THREAD-P0-10`
+
 **Files:** no tracked changes
 
 - [ ] 读取并验证 Spec、D Plan、E Plan 和 `.codex-supervisor/workers/E/dependency-receipt.v1.json`。
 - [ ] 验证工作树 HEAD 等于 D0 receipt 的 `main_commit`。
-- [ ] 验证所有设计依赖已被 Git 跟踪，且 commit/SHA-256 与 receipt 一致。
+- [ ] 从 D0 receipt 取得 C release receipt 路径/期望 SHA-256，重新验证 `rag.thread-c-release/v1`、`e_dependency_ready=true`、C merge commit 为 HEAD 祖先、C8b–C9 identities、Story Parent/Atom/source-ref/build-manifest hashes、32 项保护状态零漂移。
+- [ ] 验证所有设计依赖已被 Git 跟踪，且 commit/SHA-256 与 receipt 一致；任何 E 输入路径都不得落在 C worktree 或 ignored `eval/task8-c-*`。
 - [ ] 验证解释器：
 
 ```powershell
@@ -555,6 +622,7 @@ class StoryAnswerScope:
 ```
 
 - [ ] 验证 reranker disabled、Milvus/embedding 环境只读，不运行网络探针。
+- [ ] 验证本轮只增加剧情派生检索视图；全局核心数据模型未被重写，reranker、Segment BM25 和全章摘要均保持禁止。
 - [ ] 记录 `git status --short`；E worktree 必须无非预期 tracked 改动。
 - [ ] 向 D 报告预检结果；未通过即停止。
 
@@ -588,7 +656,7 @@ Run RED:
 ```powershell
 & 'D:\Anaconda32024\envs\1999wiki\python.exe' -m pytest `
   tests/test_story_structure.py -q `
-  --basetemp .pytest-story-e0-structure-red
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e0-structure-red-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 Expected: import/contract tests fail。
@@ -615,7 +683,7 @@ Taxonomy 与正式 sidecar 必须调用同一个版本化 parser。不得在 `ev
   tests/test_story_structure.py `
   tests/test_huiji_corpus_projection.py `
   tests/test_huiji_corpus_builder_contracts.py -q `
-  --basetemp .pytest-story-e0-structure-green
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e0-structure-green-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 Expected: exit code 0。
@@ -700,7 +768,7 @@ canonical Parent/Atom projection
   tests/test_huiji_corpus_projection.py `
   tests/test_sparse_bm25.py `
   tests/test_chinese_bm25_analyzer.py -q `
-  --basetemp .pytest-story-e0-regression
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e0-regression-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 - [ ] **Step 6: 停在 D review**
@@ -764,7 +832,7 @@ Segment prev/next 从 Atom graph 投影；source-order 只标记邻接，不声�
   tests/test_story_structure.py `
   tests/test_huiji_corpus_artifacts.py `
   tests/test_huiji_corpus_builder.py -q `
-  --basetemp .pytest-story-e1-segments
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e1-segments-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 - [ ] **Step 6: 停在 D review**
@@ -783,10 +851,16 @@ feat(rag): build deterministic story segments
 
 - Create: `src/rag/story_context.py`
 - Create: `tests/test_story_context_units.py`
+- Modify: `src/huiji_rag/build/contracts.py`
+- Modify: `src/huiji_rag/build/orchestrator.py`
+- Modify: `src/huiji_rag/build/artifact_writer.py`
 - Modify: `src/rag/contracts.py`
 - Modify: `src/rag/citations.py`
 - Modify: `tests/test_citations.py`
 - Modify: `tests/test_rag_global_citations.py`
+- Modify: `tests/test_huiji_corpus_artifacts.py`
+- Modify: `tests/test_huiji_corpus_builder.py`
+- Modify: `tests/test_huiji_corpus_builder_contracts.py`
 
 - [ ] **Step 1: RED span tests**
 
@@ -824,7 +898,7 @@ Source Map 继续以 Atom child/source refs 为事实身份，附加 `segment_id
   tests/test_rag_global_citations.py `
   tests/test_huiji_corpus_artifacts.py `
   tests/test_huiji_corpus_builder.py -q `
-  --basetemp .pytest-story-e1-regression
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e1-regression-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 真实快照必须证明 Atom 完整覆盖、oversize 闭包、两次 Segment bytes 一致和 canonical Atom 零变化。
@@ -852,8 +926,10 @@ feat(rag): map story segments to atom citations
 - Modify: `src/huiji_rag/build/contracts.py`
 - Modify: `src/huiji_rag/build/orchestrator.py`
 - Modify: `src/huiji_rag/build/artifact_writer.py`
+- Modify: `src/huiji_rag/runtime_artifacts.py`
 - Modify: `tests/test_huiji_corpus_artifacts.py`
 - Modify: `tests/test_huiji_corpus_builder.py`
+- Modify: `tests/test_huiji_runtime_artifacts.py`
 
 - [ ] **Step 1: RED typed-row tests**
 
@@ -867,6 +943,12 @@ feat(rag): map story segments to atom citations
 - unknown/mixed-null/type mismatch fail-closed；
 - row order deterministic；
 - schema/config/artifact identity 完整。
+- exact field set 使用 `segment_sequence_index`，不存在 `segment_sequence`；两个 index 字段均为 INT64 且非适用值只能是 `-1`。
+- active v1 snapshot 行为完全不变；
+- complete candidate-build-input 固定所有离线 Story artifact、config、typed rows 和 expected collection schema；
+- candidate-build-input 若携带伪造 actual collection/row count/build receipt 则拒绝；
+- incomplete/field-inferred/active-overlap typed Story v2 snapshot fail-closed；
+- fake D4 runtime snapshot fixture 的 actual collection、observed schema/rows 和 build receipt identities 闭合。
 
 - [ ] **Step 2: 实现 builder**
 
@@ -880,7 +962,7 @@ dense_retrieval_units.v1.schema.json
 dense_retrieval_units.v1.manifest.json
 ```
 
-Manifest 包含 Child/Segment counts、Story Atom excluded count、ordered ID hash、text hash、schema/config/code/source identities。
+Manifest 包含 Child/Segment counts、Story Atom excluded count、ordered ID hash、text hash、schema/config/code/source identities，并发布 `rag.story-candidate-build-input/v1` 所需的完整离线 tuple 和 expected typed Milvus schema。不得把 Segment 路径塞进旧 snapshot 的 Child 字段，也不得在尚未构建 collection 时生成最终 v2 runtime snapshot。
 
 - [ ] **Step 4: GREEN**
 
@@ -889,8 +971,9 @@ Manifest 包含 Child/Segment counts、Story Atom excluded count、ordered ID ha
   tests/test_dense_retrieval_units.py `
   tests/test_huiji_corpus_artifacts.py `
   tests/test_huiji_corpus_builder.py `
+  tests/test_huiji_runtime_artifacts.py `
   tests/test_sparse_bm25.py -q `
-  --basetemp .pytest-story-e2-artifact
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e2-artifact-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 - [ ] **Step 5: 停在 D review**
@@ -908,6 +991,7 @@ feat(rag): publish typed dense retrieval units
 **Files:**
 
 - Modify: `src/rag/vectorstore.py`
+- Create: `scripts/probe_story_segment_storage.py`
 - Create: `scripts/build_huiji_typed_index.py`
 - Create: `tests/test_huiji_typed_shadow_builder.py`
 - Modify: `tests/test_vectorstore.py`
@@ -920,22 +1004,77 @@ Fake Milvus 必须断言：
 - PK 为 `retrieval_unit_id`；
 - type/child/segment nullable invariant；
 - schema fields/limits/dimension；
+- Milvus exact field names/types/nullability/default sentinel 与 `rag_dense_retrieval_unit/v1` 完全一致；
 - typed row round-trip；
 - `milvus_entity_to_document()` 保留 unit type 和 ID；
 - unknown type fails；
 - active legacy collection loader 仍能读 active v1；
+- active v1 string-search filter/result ordering 与既有测试逐项一致；委托 query-by-vector 不改变外部返回契约；
 - fake builder 拒绝 active/forbidden/existing target；
+- remote storage receipt 的 host/device/path/input/TTL 任一未知、stale 或不一致时，在 embedding/Milvus client 构造前拒绝；
+- Story Segment row count `>25000` 或任一受影响云端设备 projected free space `<12 GiB` 时，在 embedding/Milvus client 构造前拒绝；
+- 只读 Milvus preflight 只有在 remote storage receipt 通过后才可构造 client，且 write count 为 0；
+- missing/stale/unknown/failed Milvus preflight receipt 在 embedding provider/写 client 构造前拒绝；
+- fake collection 写入完成前不得生成 `rag.runtime-artifact-snapshot/v2`；
+- 成功 fake build 的 v2 snapshot 固定 actual collection/schema/row counts/build receipt；
+- 成功 fake build 同时输出 `active-control-runtime-snapshot.v1.json`，它是当前测试 commit 下 active v1 snapshot 的只读 raw-byte copy；
+- shadow build receipt 的 `active_control_snapshot` 固定该 copy 的相对路径、size 和 SHA-256，`candidate_runtime_snapshot` 固定最终 v2 路径/SHA-256；
+- active-control capture 前后 active pointer/config/collection inventory 逐字节一致；
 - embedding failure 保留 shadow 和 failure receipt；
 - fake embedding 不重复处理同一 ordered row；
+- query-by-vector path never calls embedding；
+- string search delegates through exactly one `embed_query()` call；
+- the same immutable query vector can be reused for Child and Story Segment filters without re-embedding；
 - 无真实网络或 Milvus。
 
 - [ ] **Step 2: 实现 typed schema/adapter**
 
 不要把 Segment 塞入现有 child-only helper；新增 typed helper，并保持旧 helper 行为不变直到独立激活。
 
-- [ ] **Step 3: 实现 D 后置 CLI**
+冻结 query reuse 接口：
 
-CLI 必须要求 handoff、typed artifact hash、schema hash、collection name、receipt root；默认拒绝缺少 active/forbidden inventory。
+```python
+def embed_query(self, query: str) -> tuple[float, ...]: ...
+
+def similarity_search_by_vector_with_relevance_scores(
+    self,
+    query_vector: Sequence[float],
+    *,
+    k: int,
+    retrieval_unit_types: tuple[RetrievalUnitType, ...],
+    owner_ids: tuple[str, ...] = (),
+) -> list[tuple[Document, float]]: ...
+```
+
+现有 string search 只能调用一次 `embed_query()` 后委托 query-by-vector。query-by-vector 必须校验维度和有限数值，不得调用 embedding provider。E3.4 对一个知识子任务先取一次 immutable vector，再分别查询 Child 与 Story Segment；spy 断言相同 query/model identity 的 embedding call count 为 1。
+
+- [ ] **Step 3: 实现 D 后置三段门**
+
+`scripts/probe_story_segment_storage.py` 与 typed-index CLI 共同提供三个严格串行入口：
+
+```text
+storage probe      读取 candidate-build-input 和 hash-pinned deployment inventory；
+                   通过 fake SSH/真实 D 只读 SSH 探测 /srv/1999wiki/milvus、
+                   /srv/1999wiki/rag-artifacts、/srv/1999wiki/import-staging；
+                   禁止构造 embedding/Milvus client
+milvus-preflight   必须重验通过且未过期的 remote storage receipt；
+                   只读验证 collection absence、active/forbidden inventory 和 RBAC；
+                   write count 必须为 0
+build              必须同时重验 storage 与 Milvus preflight receipts；
+                   此后才可构造 embedding provider/写 Milvus client；
+                   成功写入验证后生成最终 runtime snapshot v2
+```
+
+三个入口都要求同一 `rag.story-candidate-build-input/v1` 路径和期望 SHA-256。Storage receipt 固定 deployment inventory、远端 host key、路径/device、逐设备峰值公式和 `ttl_seconds=900`；硬门为 `story_segment_rows <= 25000` 且所有受影响设备 `projected_free_bytes >= 12 GiB`。Milvus preflight receipt 固定只读 inventory/RBAC、collection 名、写计数和 `ttl_seconds=300`。Builder 默认拒绝缺少 active/forbidden inventory、两个 receipt 身份不一致、任一 receipt 超时或时钟倒退；最终 v2 snapshot 不可作为 build 输入。成功 build 的固定输出契约为：
+
+```text
+shadow-build-receipt.v1.json
+active-control-runtime-snapshot.v1.json
+runtime-artifact-snapshot.v2.json
+runtime-artifact-snapshot.v2.sha256
+```
+
+`active-control-runtime-snapshot.v1.json` 只能通过现有 active-v1 resolver 读取并 raw-byte 复制；不得由 typed v2 字段反推或改写。Receipt 必须同时固定 `active_control_snapshot` 与 `candidate_runtime_snapshot`，并证明 active pointer/config/collection inventory 零漂移。
 
 - [ ] **Step 4: GREEN**
 
@@ -945,7 +1084,7 @@ CLI 必须要求 handoff、typed artifact hash、schema hash、collection name�
   tests/test_huiji_typed_shadow_builder.py `
   tests/test_vectorstore.py `
   tests/test_huiji_shadow_builder.py -q `
-  --basetemp .pytest-story-e2-vectorstore
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e2-vectorstore-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 - [ ] **Step 5: E2 无外部写探针**
@@ -992,7 +1131,8 @@ feat(rag): add typed dense shadow adapter
 - boundary overlap → request planning failure；
 - fallback 后第二次 Planner/Detector/Finalizer 为 0；
 - provisional 永不进入 serializer/retriever/memory/action；
-- v1/v2 不猜测兼容。
+- v1/v2 不猜测兼容；
+- `SourceQuerySpan/v1` 与 `rag.request_plan/v2` exact schema name/field set，拒绝旧前缀别名和额外字段。
 
 - [ ] **Step 2: 实现 v2 types/finalizer**
 
@@ -1009,7 +1149,7 @@ Detector receipt 与 assignment receipt 分离；final plan hash 只在 assignme
   tests/test_story_request_plan_v2.py `
   tests/test_request_plan.py `
   tests/test_query_plan.py -q `
-  --basetemp .pytest-story-e3-request-plan
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e3-request-plan-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 - [ ] **Step 5: 停在 D review**
@@ -1045,6 +1185,9 @@ feat(rag): finalize request plan v2
 - Planner omission/extra/reorder；
 - span assignment mismatch；
 - 非 Story KB 零误拒；
+- 零显式 Story + 已授权 character/Topic filter 的 `story_mentions/story_examples` 产生 `direct_query/open_story_domain`，四个 Story 数组为空；
+- open domain 缺 filter、未授权 filter、跨类型歧义、Planner-only filter 或 anchor-derived filter 均拒绝；
+- `StoryAuthorizationContext/v1` exact schema name/field set，拒绝 `rag.story-authorization-context/v1` 镜像、额外字段和不合法 coverage/status 组合；
 - detector deterministic identity；
 - 本地步骤 P95 测量接口。
 
@@ -1058,6 +1201,9 @@ Detector 只扫描 original query 一次；不读取 Planner refs 或 conversati
 0 explicit Story:
   non-Story branch -> no Story context
   proposed story_required -> denied unless anchor path later validates
+  proposed story_mentions|story_examples + one Policy-authorized character/Topic filter
+    -> authorized/direct_query/open_story_domain
+       detected/planner/required Story refs and authorized_story_owner_ids all empty
 
 1..3:
   exact planner/detected ordered-set match -> authorized/complete
@@ -1071,9 +1217,11 @@ Detector 只扫描 original query 一次；不读取 Planner refs 或 conversati
 
 Planner omission/extra/reorder/ambiguity fail-closed。Retriever 只能消费 `authorized_story_owner_ids`。
 
+`open_story_domain` 不是无界 Owner 放行：它没有 Story Owner allowlist，只允许 `story_filter` 中一个已经通过原 entity/topic Policy 的 canonical character 或 Topic identity；不能来自 Planner 自报字符串、conversation anchor 或 fuzzy alias。若该 filter 缺失、歧义、跨类型冲突或未获 primary Policy 授权，则拒绝 Story 补充分支。
+
 - [ ] **Step 4: 保持原 Owner Gate**
 
-`primary_owner` 仍走 entity/topic strict；`story_mentions/story_examples` 使用独立已授权 allowlist，不把 Story row 混入 primary Owner Gate。
+`primary_owner` 仍走 entity/topic strict；显式 Story 的 `story_mentions/story_examples` 使用独立已授权 Owner allowlist；`open_story_domain` 只按已授权 character/Topic filter 检索 Story mentions/examples。两者都不把 Story row 混入 primary Owner Gate，也不能读取 anchor 扩大范围。
 
 - [ ] **Step 5: GREEN**
 
@@ -1083,7 +1231,7 @@ Planner omission/extra/reorder/ambiguity fail-closed。Retriever 只能消费 `a
   tests/test_story_request_plan_v2.py `
   tests/test_route_policy.py `
   tests/test_query_plan.py -q `
-  --basetemp .pytest-story-e3-authorization
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e3-authorization-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 - [ ] **Step 6: 停在 D review**
@@ -1104,13 +1252,6 @@ feat(rag): authorize story retrieval scope
 - Modify: `tests/test_story_authorization.py`
 - Modify: `src/rag/conversation.py`
 - Modify: `tests/test_conversation_memory.py`
-- Modify: `tests/test_conversation_api.py`
-- Modify: `backend/schemas.py`
-- Modify: `frontend/react-app/src/types/index.ts`
-- Modify: `frontend/react-app/src/api/sse.ts`
-- Modify: `frontend/react-app/src/api/sse.test.ts`
-- Modify: `frontend/react-app/src/store/chatStore.ts`
-- Modify: `frontend/react-app/src/store/chatStore.test.ts`
 
 - [ ] **Step 1: RED continuation tests**
 
@@ -1122,8 +1263,6 @@ feat(rag): authorize story retrieval scope
 - 完整原 query/final plan/detection/assignment/continuation receipts 可重验；
 - canonical JSON <= 65536 bytes；
 - unknown/missing/tampered/stale/oversize fail；
-- action strict union `extra=forbid`；
-- frontend round-trip byte-equivalent fields；
 - 失败不退回 direct query，不消费部分 owners。
 
 - [ ] **Step 2: RED anchor tests**
@@ -1139,38 +1278,25 @@ feat(rag): authorize story retrieval scope
 - process restart memory loss；
 - follow-up local resolver；
 - no referential language denied；
-- SSE uncommitted turn no partial anchor；
+- pure turn-event reducer 对未提交/失败 turn 不产生可消费 anchor；
 - most recent clear shadows old set。
 
 - [ ] **Step 3: 实现 continuation**
 
 Action payload 是不可信完整输入，不是授权 token；Policy 重算 hash、Detector 和当前 registry allowlist，不调用 Planner。
 
-- [ ] **Step 4: 实现 turn-event anchor**
+- [ ] **Step 4: 实现 anchor data model、projection 与 resolver**
 
-`ConversationTurn.story_anchor_event` 是唯一事实；`_Entry` 不双写。Answer、citation validation、turn 和 event 在 lease lock 内原子追加。
+`ConversationTurn.story_anchor_event` 是唯一事实；`_Entry` 不双写。E3.3 只实现不可变 event、纯 projection/reducer、TTL 和 follow-up resolver，不接线 answer/citation/SSE 的最终提交；该原子提交由 E4.1/E4.3 在统一 execution 中完成。
 
 - [ ] **Step 5: GREEN**
 
 ```powershell
 & 'D:\Anaconda32024\envs\1999wiki\python.exe' -m pytest `
   tests/test_story_authorization.py `
-  tests/test_conversation_memory.py `
-  tests/test_conversation_api.py -q `
-  --basetemp .pytest-story-e3-continuation-anchor
+  tests/test_conversation_memory.py -q `
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e3-continuation-anchor-' + [Guid]::NewGuid().ToString('N')))
 ```
-
-再运行：
-
-```powershell
-& npm.cmd --prefix `
-  'D:\1999Wiki.worktrees\rag-e-story-segment\frontend\react-app' `
-  test -- `
-  src/api/sse.test.ts `
-  src/store/chatStore.test.ts
-```
-
-两类测试都必须 exit 0。
 
 - [ ] **Step 6: 停在 D review**
 
@@ -1197,7 +1323,16 @@ feat(rag): validate story continuation and anchors
 
 - [ ] **Step 1: RED exact numeric fusion tests**
 
-使用完整 rank tables 断言每项浮点值和排序；覆盖缺 rank、rank=0、负值、NaN/Inf、重复 channel rank、unknown unit type、同文本跨 Story、不累加第三 Atom/Segment。
+先运行两个精确 RED node：
+
+```powershell
+& 'D:\Anaconda32024\envs\1999wiki\python.exe' -m pytest `
+  tests/test_story_retrieval_fusion.py::test_real_atom_and_segment_channels_fuse_with_one_query_embedding `
+  tests/test_retriever.py::test_open_story_domain_consumes_only_authorized_canonical_filter -q `
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e3-fusion-red-' + [Guid]::NewGuid().ToString('N')))
+```
+
+第一个使用完整 rank tables 断言每项浮点值和排序；覆盖缺 rank、rank=0、负值、NaN/Inf、重复 channel rank、unknown unit type、同文本跨 Story、不累加第三 Atom/Segment。第二个证明 `open_story_domain` Retriever 只消费 Policy 已授权的 canonical character/Topic filter，显式 Story allowlist 为空、不得读取 conversation anchor、返回 Owner 最多 3 个；Planner proposal、模糊名称或未授权 filter 均不能进入搜索。
 
 - [ ] **Step 2: 实现 channel-local candidates**
 
@@ -1205,7 +1340,7 @@ Atom BM25 Top-80 和 Segment Dense Top-30 先在各通道产生；Atom 命中先
 
 - [ ] **Step 3: 实现 typed Dense dispatch/query reuse**
 
-一个知识子任务相同 query/model identity 只 embed 一次，并在 Child/Segment 搜索复用；最多两个不同 Dense query，trace 记录调用数。
+一个知识子任务相同 query/model identity 通过 E2.2 的 `embed_query()` 只 embed 一次，并把同一个不可变 vector 传给 Child/Segment 两次 query-by-vector 搜索；最多两个不同 Dense query，trace 记录 query/model identity、vector identity 和调用数。测试 spy 必须证明 string helper 未被两个通道分别调用。
 
 - [ ] **Step 4: 实现 Owner allocation**
 
@@ -1228,7 +1363,7 @@ Atom BM25 Top-80 和 Segment Dense Top-30 先在各通道产生；Atom 命中先
   tests/test_retriever.py `
   tests/test_retrieval_budget.py `
   tests/test_hybrid_retriever.py -q `
-  --basetemp .pytest-story-e3-retrieval
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e3-retrieval-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 - [ ] **Step 8: E3 阶段回归与 D review**
@@ -1254,12 +1389,16 @@ feat(rag): fuse and budget story segments
 - Modify: `src/rag/execution.py`
 - Modify: `src/rag/chain.py`
 - Modify: `src/rag/retriever.py`
+- Modify: `src/rag/conversation.py`
+- Modify: `backend/sse.py`
 - Create: `tests/test_story_segment_runtime.py`
 - Modify: `tests/test_rag_contracts.py`
 - Modify: `tests/test_citations.py`
 - Modify: `tests/test_rag_global_citations.py`
 - Modify: `tests/test_rag_execution.py`
 - Modify: `tests/test_rag_composite_execution.py`
+- Modify: `tests/test_conversation_memory.py`
+- Modify: `tests/test_sse.py`
 
 - [ ] **Step 1: RED full packet tests**
 
@@ -1276,6 +1415,9 @@ feat(rag): fuse and budget story segments
 - span/source mismatch rejects Context Unit；
 - snapshot type/config/hash mismatch blocks candidate；
 - BM25-only diagnostic not called full scheme；
+- answer + citation validation + ConversationTurn + StoryAnchorEvent 在同一 lease-lock commit 中原子成功；
+- generation/citation/aggregation/SSE interruption 任一失败都不写 partial anchor event；
+- single Story cited success set，multi/page-partial/empty/denied/failed clear，local/meta/smalltalk no-op；
 - reranker zero。
 
 - [ ] **Step 2: 接入统一 RAGExecutionService**
@@ -1294,7 +1436,8 @@ provisional plan
 → grounded generation
 → citation validation
 → deterministic aggregation
-→ atomic turn commit
+→ decide StoryAnchorEvent
+→ atomic turn + event commit
 ```
 
 - [ ] **Step 3: GREEN**
@@ -1306,8 +1449,10 @@ provisional plan
   tests/test_citations.py `
   tests/test_rag_global_citations.py `
   tests/test_rag_execution.py `
-  tests/test_rag_composite_execution.py -q `
-  --basetemp .pytest-story-e4-runtime
+  tests/test_rag_composite_execution.py `
+  tests/test_conversation_memory.py `
+  tests/test_sse.py -q `
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e4-runtime-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 - [ ] **Step 4: 停在 D review**
@@ -1351,6 +1496,7 @@ feat(rag): execute story segment context units
 - strict grounded 不拒绝事实；
 - exhaustive → non_exhaustive；
 - page_partial/sufficient/bounded 正交；
+- `StoryAnswerScope/v2` exact schema name/field set，拒绝 `rag.story-answer-scope/v2` 镜像或别名；
 - same packet repeated bytes equal；
 - no extra model/reranker calls。
 
@@ -1376,7 +1522,7 @@ Scope 不回流改变授权、候选或预算。Material shortfall 只接受固�
   tests/test_story_answer_scope.py `
   tests/test_prompts.py `
   tests/test_rag_execution.py -q `
-  --basetemp .pytest-story-e4-answer-scope
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e4-answer-scope-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 - [ ] **Step 5: 停在 D review**
@@ -1416,6 +1562,8 @@ ResponsePacket.retrieval_packet.route_decision.retrieval_outcome
 ```
 
 REST 与 SSE 的唯一公开位置固定为 `route.retrieval_outcome`；不得新增 JSON 顶层镜像，也不得从 `diagnostics["route"]` 独立重算。
+
+同组 RED 还必须覆盖 continuation/narrow action strict union `extra=forbid`、完整不可信 envelope 跨 REST/SSE/frontend round-trip 字节等价、tampered/stale/oversize action 拒绝，以及 SSE 中断不提交 E4.1 的 StoryAnchorEvent。
 
 - [ ] **Step 2: 修改 aggregate**
 
@@ -1457,7 +1605,7 @@ Scope 在 generator 前冻结并出现在 sources metadata；done 不反转此�
   tests/test_conversation_api.py `
   tests/test_rag_contracts.py `
   tests/test_rag_composite_execution.py -q `
-  --basetemp .pytest-story-e4-public
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e4-public-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 运行 frontend tests，要求 exit 0。
@@ -1524,6 +1672,18 @@ passed
 
 - [ ] **Step 4: 实现 performance/capacity**
 
+`scripts/evaluate_story_segment_rag.py` 必须提供两个显式子命令：
+
+```text
+performance-control  在同一 commit/host/process config/query set/timer 下运行
+                     active v1 与 isolated typed v2；输出原始 timing 和
+                     rag.story-segment-performance-control/v1
+evaluate             消费 hash-pinned performance-control receipt、D0 baseline、
+                     thresholds 和 candidate runtime snapshot；不得自行重测或重算对照
+```
+
+两个子命令都禁止独立 `--collection-name` / `--candidate-collection-name`；active/candidate collection 只能分别从已验证的 active-v1 和最终 v2 runtime snapshot 解析。Shadow build receipt 仅用于交叉验证 v2 snapshot 固定的 build receipt identity，不能覆盖 collection。
+
 报告：
 
 - structure/segment/typed row counts；
@@ -1535,6 +1695,8 @@ passed
 - context chars/segments/citations；
 - no reranker。
 
+RED/GREEN 必须覆盖 `performance-control` 子命令的参数闭包、`>=1` warmup、每 query `>=5` timed samples、原始样本/P50/P95、同机同提交校验，以及 `evaluate` 拒绝缺失、stale、不同 commit/host/query/config 的 receipt。
+
 - [ ] **Step 5: GREEN**
 
 ```powershell
@@ -1544,12 +1706,12 @@ passed
   tests/test_rag_eval_scoring.py `
   tests/test_rag_eval_reporting.py `
   tests/test_rag_eval_runner.py -q `
-  --basetemp .pytest-story-e5-eval
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e5-eval-' + [Guid]::NewGuid().ToString('N')))
 ```
 
 - [ ] **Step 6: 停在 D review**
 
-不提交 E5.2。D 接受后提交：
+不提交 E5.1。D 接受后提交：
 
 ```text
 test(rag): add story segment gate evaluator
@@ -1565,14 +1727,36 @@ test(rag): add story segment gate evaluator
 - Modify: `tests/test_story_segment_eval.py`
 - No runtime ranking file change
 
-- [ ] 对同一候选模拟 soft penalty，仅报告排名变化。
-- [ ] 单列 numeric、short text、exact entity/alias/ID、structured fields。
-- [ ] 证明 P0 runtime 输出在启用/禁用反事实计算时逐字节相同。
-- [ ] 证明 `context_only/deduplicate/invalid_source` 只来自结构契约，不来自质量分。
+- [ ] **Step 1: RED**
 
-- [ ] **停在 D review**
+```powershell
+& 'D:\Anaconda32024\envs\1999wiki\python.exe' -m pytest `
+  tests/test_story_segment_eval.py::test_quality_counterfactual_does_not_change_runtime_bytes -q `
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e5-quality-red-' + [Guid]::NewGuid().ToString('N')))
+```
 
-不提交 E5.3。D 接受后提交：
+Expected: 断言失败，因为反事实报告和 runtime-byte identity 尚未实现；不能接受无测试、测试名错误或环境错误作为 RED。
+
+- [ ] **Step 2: 实现只读反事实**
+
+- 对同一候选模拟 soft penalty，仅报告排名变化。
+- 单列 numeric、short text、exact entity/alias/ID、structured fields。
+- 证明 P0 runtime 输出在启用/禁用反事实计算时逐字节相同。
+- 证明 `context_only/deduplicate/invalid_source` 只来自结构契约，不来自质量分。
+
+- [ ] **Step 3: GREEN**
+
+```powershell
+& 'D:\Anaconda32024\envs\1999wiki\python.exe' -m pytest `
+  tests/test_story_segment_eval.py `
+  tests/test_rag_eval_deterministic.py `
+  tests/test_rag_eval_reporting.py -q `
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e5-quality-green-' + [Guid]::NewGuid().ToString('N')))
+```
+
+- [ ] **Step 4: 停在 D review**
+
+不提交 E5.2。D 接受后提交：
 
 ```text
 test(rag): report story quality counterfactuals
@@ -1585,11 +1769,37 @@ test(rag): report story quality counterfactuals
 **Files:**
 
 - Modify: `src/rag_eval/story_segment_runner.py`
+- Create: `scripts/build_story_segment_candidate.py`
 - Modify: `scripts/evaluate_story_segment_rag.py`
 - Modify: `tests/test_story_segment_eval.py`
 - Ignored output only: `eval/story_segment/handoffs/$RunId/`
 
-- [ ] **Step 1: 全量 E focused regression**
+- [ ] **Step 1: 写并见证 E5.3 RED**
+
+只新增 handoff closure test，先运行：
+
+```powershell
+& 'D:\Anaconda32024\envs\1999wiki\python.exe' -m pytest `
+  tests/test_story_segment_eval.py::test_clean_head_handoff_closes_all_artifact_identities -q `
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e5-handoff-red-' + [Guid]::NewGuid().ToString('N')))
+```
+
+Expected: 业务断言失败，因为 candidate-build-input producer、clean-head handoff emitter 和完整 identity closure 尚不存在。E 停在 `red_pending_d_witness`；D 按第 9 节独立见证并签发 RED acceptance 后才能继续。
+
+- [ ] **Step 2: 实现离线 builder 与 handoff emitter**
+
+实现 `scripts/build_story_segment_candidate.py` 和 evaluator/handoff contract。Producer 输出 structure、Segment、mapping、typed JSONL、`rag.story-candidate-build-input/v1`、hash-pinned deployment-inventory copy、offline capacity estimate、quality counterfactual、offline gates 和 `rag.story-candidate-build-receipt/v1`；不输出最终 `rag.runtime-artifact-snapshot/v2`，不调用 embedding/Milvus/network。Handoff emitter 支持测试中的 synthetic clean-head fixture，并在真实使用时强制 `e_commit == HEAD` 与 tracked tree clean。
+
+- [ ] **Step 3: 定向 GREEN**
+
+```powershell
+& 'D:\Anaconda32024\envs\1999wiki\python.exe' -m pytest `
+  tests/test_story_segment_eval.py::test_clean_head_handoff_closes_all_artifact_identities `
+  tests/test_story_segment_eval.py::test_candidate_build_input_excludes_unbuilt_runtime_identity -q `
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e5-handoff-green-' + [Guid]::NewGuid().ToString('N')))
+```
+
+- [ ] **Step 4: 全量 E focused regression**
 
 ```powershell
 & 'D:\Anaconda32024\envs\1999wiki\python.exe' -m pytest `
@@ -1606,10 +1816,10 @@ test(rag): report story quality counterfactuals
   tests/test_story_answer_scope.py `
   tests/test_story_segment_public_contracts.py `
   tests/test_story_segment_eval.py -q `
-  --basetemp .pytest-story-e5-focused
+  --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e5-focused-' + [Guid]::NewGuid().ToString('N')))
 ```
 
-- [ ] **Step 2: 相邻回归**
+- [ ] **Step 5: 相邻回归**
 
 运行：
 
@@ -1627,7 +1837,7 @@ frontend SSE/store
 
 全部 exit 0；任何失败进入单独 correction gate，不能折叠进 handoff。
 
-- [ ] **Step 3: deterministic fixture build x2**
+- [ ] **Step 6: deterministic fixture 与真实恢复快照 build x2**
 
 两个 create-new roots 比较：
 
@@ -1637,33 +1847,132 @@ frontend SSE/store
 - source maps/context units；
 - fake retrieval and AnswerScope bytes。
 
-- [ ] **Step 4: 真实恢复快照离线 build**
+随后用完整恢复快照在两个 create-new root 运行同一 producer。`candidate-build-input.v1.json` 必须固定 typed input path/SHA、expected collection schema、schema/config identities、row/order hashes、C/D0 receipts 和离线容量估算；禁止 actual collection/observed rows/build receipt。除 run ID/timestamp/absolute output root 等显式非身份字段外，两份业务身份必须一致。缺任一 artifact/hash 时 fail-closed，不能留下 `ready_for_d_shadow_build=true`。
 
-生成最终 structure、Segment、mapping、typed JSONL、runtime snapshot、capacity、quality counterfactual 和 offline gates。禁止 embedding/Milvus/network。
-
-- [ ] **Step 5: protected pre/post**
+- [ ] **Step 7: protected pre/post**
 
 要求 active pointer、active collection inventory、source snapshot、BM25、MinIO/MySQL/config 全部零漂移。
 
-- [ ] **Step 6: handoff**
+- [ ] **Step 8: D 审查 E5.3 tracked diff**
 
-按 D Plan 1.3 写完整文件，并计算 handoff 自身 SHA-256。`ready_for_d_shadow_build` 仅在所有不依赖真实 embedding 的 hard gate 通过且 remaining blockers 为空时为 true。
+不创建 Milvus，不调用 embedding，不激活。D 独立复跑 E5.3 测试、真实离线 build 和 protected-state 检查；此时只审查 tracked 代码，尚不生成最终 handoff。
 
-- [ ] **Step 7: 停在 D review**
-
-不创建 Milvus，不调用 embedding，不激活。D 接受后提交 E5 代码：
+- [ ] **Step 9: 提交 E5.3 并冻结 clean HEAD**
 
 ```text
 test(rag): produce story segment offline handoff
 ```
 
-真实 handoff 输出不提交。
+提交后要求：
+
+```text
+git status --short --untracked-files=no == empty
+e_commit == git rev-parse HEAD
+no further tracked mutation
+```
+
+- [ ] **Step 10: 从 clean HEAD 生成不可变 handoff**
+
+不得复用 Step 6 的 pre-commit run。必须从刚提交的 clean HEAD 在第三个 create-new root 重新运行 producer；其 canonical 业务身份必须与 D 已接受的 pre-commit build x2 一致，而 code identity 必须等于当前 `e_commit`。再按 D Plan 1.3 写完整文件并计算 handoff 自身 SHA-256。`e_commit` 必须是刚提交的 E5.3 clean HEAD；artifact/candidate-build-input/test receipt 的代码身份都必须包含该提交。`ready_for_d_shadow_build` 仅在所有不依赖真实 embedding 的 hard gate 通过且 remaining blockers 为空时为 true。
+
+- [ ] **Step 11: D 验证并接收 handoff**
+
+D 重新计算 handoff、artifact、candidate-build-input 和测试 receipt 哈希，确认 E HEAD 仍等于 `e_commit` 且无后续 tracked 改动。真实 handoff 输出不提交；D 将其复制到 D-owned create-new intake 目录并生成 intake receipt。任何差异都废弃本次 handoff，不能在 JSON 中手改提交号。
 
 ---
 
-## 9. E Task 提交与监督协议
+## 9. 每 Task RED/GREEN、真实证据与退出回执
 
-每个下列 Task 都是独立 D review gate；前一提交被 D 接受前不得开始后一 Task。建议提交边界：
+E0.0 是不提交的 preflight。其余 16 个 implementation Task 必须使用下表中精确 test node 建立 RED，再运行该 Task 正文列出的 GREEN suite；缺 test node、收集错误、解释器错误、权限错误和临时目录错误都不算 RED。
+
+标准 RED 命令：
+
+```powershell
+param(
+  [Parameter(Mandatory = $true)]
+  [string] $TaskId,
+  [Parameter(Mandatory = $true)]
+  [string[]] $RedTargets
+)
+
+$RedBase = Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-' + $TaskId.Replace('.','-') + '-red-' + [Guid]::NewGuid().ToString('N'))
+& 'D:\Anaconda32024\envs\1999wiki\python.exe' -m pytest @RedTargets -q --basetemp $RedBase
+```
+
+每个 `approved-task.md` 必须把 `$TaskId/$RedTargets` 固定为下表中的字面值。E 写完 RED test 后立即停止；D 必须在任何实现写入前按 D Plan D1 复跑相同 argv 并签发 `rag.story-segment-red-acceptance/v1`。执行 receipt 记录完整 argv，不能遗漏第二个 target。
+
+| Task | RED target | 预期业务失败 | GREEN suite | 真实证据 |
+|---|---|---|---|---|
+| E0.1 | `tests/test_story_structure.py::test_parses_story_taxonomy_and_exact_registry` | parser/registry contract 尚不存在 | E0.1 Step 5 | `not_applicable`：只验证 parser fixture；E0.2 负责真实快照 |
+| E0.2 | `tests/test_story_structure.py::test_real_snapshot_structure_artifact_closes_over_every_atom` | sidecar/artifact/closure 尚不存在 | E0.2 Step 5 | required：完整恢复快照 structure/registry/Atom closure |
+| E1.1 | `tests/test_story_segments.py::test_real_story_atoms_map_to_deterministic_segments` | Segment builder 尚不存在 | E1.1 Step 5 | required：真实 Atom 长度、boundary、oversize、graph |
+| E1.2 | `tests/test_story_context_units.py::test_real_segments_render_once_with_atom_spans` | ContextUnit/span mapping 尚不存在 | E1.2 Step 5 | required：真实 Segment/Atom 双预算与引用闭包 |
+| E2.1 | `tests/test_dense_retrieval_units.py::test_real_candidate_publishes_typed_units_and_candidate_build_input` | typed artifact/candidate-build-input 尚不存在 | E2.1 Step 4 | required：真实 candidate typed rows/build-input tuple |
+| E2.2 | `tests/test_huiji_typed_shadow_builder.py::test_storage_and_milvus_preflight_precede_external_writes`；`tests/test_huiji_typed_shadow_builder.py::test_fake_build_publishes_active_control_snapshot_without_pointer_drift` | typed adapter/query-by-vector/三段 gate/active control snapshot 尚不存在 | E2.2 Step 4 | required：真实 typed artifact + fake SSH/embedding/Milvus，未授权外部写 0 |
+| E3.1 | `tests/test_story_request_plan_v2.py::test_finalizes_composite_request_once_with_exact_spans` | v2 transaction/finalizer 尚不存在 | E3.1 Step 4 | `not_applicable`：纯 request corpus；receipt 固定 query corpus hash |
+| E3.2 | `tests/test_story_authorization.py::test_authorizes_direct_and_open_story_domains_fail_closed` | detector/context/open domain 尚不存在 | E3.2 Step 5 | required：真实 registry + 冻结正负 query corpus |
+| E3.3 | `tests/test_story_authorization.py::test_continuation_and_anchor_projection_are_deterministic` | continuation verifier/anchor reducer 尚不存在 | E3.3 Step 5 | `not_applicable`：纯 action/clock/turn fixtures，固定 registry identity |
+| E3.4 | `tests/test_story_retrieval_fusion.py::test_real_atom_and_segment_channels_fuse_with_one_query_embedding`；`tests/test_retriever.py::test_open_story_domain_consumes_only_authorized_canonical_filter` | fusion/budget/query reuse/open-domain consumption 尚不存在 | E3.4 Step 7 | required：真实 Atom/Segment candidate + fake vector ranks |
+| E4.1 | `tests/test_story_segment_runtime.py::test_runtime_v2_commits_turn_and_anchor_atomically` | unified ContextUnit execution/atomic event 尚不存在 | E4.1 Step 3 | required：isolated v2 snapshot + fake generator/vector |
+| E4.2 | `tests/test_story_answer_scope.py::test_real_evidence_packet_normalizes_scope_without_overclaim` | scope v2/姿态尚不存在 | E4.2 Step 4 | required：真实候选产生的 bounded evidence packets |
+| E4.3 | `tests/test_story_segment_public_contracts.py::test_rest_sse_and_internal_outcome_are_identical` | unique source/public projection 尚不存在 | E4.3 Step 5 | required：isolated v2 REST/SSE query corpus |
+| E5.1 | `tests/test_story_segment_eval.py::test_reports_every_hard_gate_with_denominator`；`tests/test_story_segment_eval.py::test_performance_control_produces_hash_pinned_receipt` | evaluator/gates/performance producer 尚不存在 | E5.1 Step 5 | required：完整离线 candidate + D0 gold/baseline |
+| E5.2 | `tests/test_story_segment_eval.py::test_quality_counterfactual_does_not_change_runtime_bytes` | counterfactual/runtime identity 尚不存在 | E5.2 Step 3 | required：与 E5.1 同一 candidate identity |
+| E5.3 | `tests/test_story_segment_eval.py::test_clean_head_handoff_closes_all_artifact_identities` | candidate producer/clean-head handoff closure 尚不存在 | E5.3 Step 3 | required：完整恢复快照 build x2、protected pre/post |
+
+每个 Task 在 D review 前写 create-new ignored receipt：
+
+```text
+eval/story_segment/task-receipts/<run-id>/<task-id>.v1.json
+eval/story_segment/task-receipts/<run-id>/<task-id>.v1.sha256
+eval/story_segment/task-receipts/<run-id>/<task-id>.red-acceptance.v1.json
+eval/story_segment/task-receipts/<run-id>/<task-id>.red-acceptance.v1.sha256
+```
+
+RED acceptance 由 D 写入，E 只能只读消费其路径和期望 SHA-256；E 不得生成、覆盖或修订该文件。
+
+Receipt schema 至少包含：
+
+```json
+{
+  "schema_version": "rag.story-segment-task-receipt/v1",
+  "task_id": "E0.1",
+  "base_commit": "40-hex",
+  "red_tree_identity": {
+    "manifest_path": "",
+    "manifest_sha256": "64-hex",
+    "identity_sha256": "64-hex"
+  },
+  "red_log_sha256": "64-hex",
+  "d_red_acceptance": {"path": "", "sha256": "64-hex"},
+  "red": {"argv": [], "expected_failure": "", "observed_failure": "", "passed_gate": true},
+  "green_tree_identity": {
+    "manifest_path": "",
+    "manifest_sha256": "64-hex",
+    "identity_sha256": "64-hex"
+  },
+  "green_log_sha256": "64-hex",
+  "green": {"argv": [], "exit_code": 0, "passed": 0, "failed": 0, "skipped": 0},
+  "real_evidence": {
+    "status": "required",
+    "reason": "",
+    "input_identity": {},
+    "output_sha256": "64-hex"
+  },
+  "protected_drift_count": 0,
+  "forbidden_operation_counts": {},
+  "allowed_files": [],
+  "observed_changed_files": []
+}
+```
+
+两个 tree identity 都使用 D0.1 的 `codex.allowed-tree-identity/v1` 算法，并计入 allowlist 内所有未跟踪文件。`d_red_acceptance` 必须绑定同一 base、`red_tree_identity`、E RED log 和 D 独立 RED log；实现开始后不得补签。`real_evidence.status` 只能为 `required` 或 `not_applicable`；`not_applicable` 必须与表中理由完全相同。D 独立验证 receipt、实际日志、diff 和 OS/产物状态后才允许提交。
+
+---
+
+## 10. E Task 提交与监督协议
+
+E0.0 只生成 preflight receipt。下列 16 个 implementation Task 都是独立 D review gate；前一提交被 D 接受前不得开始后一 Task。提交边界：
 
 ```text
 E0.1  feat(rag): parse story source structure
@@ -1697,7 +2006,7 @@ E5.3  test(rag): produce story segment offline handoff
 
 ---
 
-## 10. 完整 Spec 追踪矩阵
+## 11. 完整 Spec 追踪矩阵
 
 | Spec 范围 | E Plan Task | RED/Gate |
 |---|---|---|
@@ -1743,25 +2052,27 @@ E5.3  test(rag): produce story segment offline handoff
 
 ---
 
-## 11. E 完成标准
+## 12. E 完成标准
 
-1. 每个规范 Story Atom 恰好一条 structure sidecar；显式图闭合、source-order 明确、invalid graph 阻断。
-2. 纯数字、短文本、内部 ID 和歧义 alias 按统一 registry 规则处理，无逐实体补丁。
-3. 每个 Atom 在一个 Segment 版本中恰好一次；Atom parent/ID/content/source 不变。
-4. oversize Atom 形成单 Atom Segment，Dense limit fail-closed，不截断。
-5. Segment 两次构建字节一致，prev/next/branch/merge 闭合。
-6. Segment 正文一次封装；每个非空 Atom 一个 span 和 citation source。
-7. Story Atom 仍在 BM25，typed Dense 输入中 Story Atom 数为 0。
-8. 非 Story Child 和 Story Segment 使用显式 typed IDs/fields；Segment 不冒充 Child。
-9. RequestPlan v2 只运行一次 Detector 和至多一次本地 fallback；所有 Story occurrence 唯一归属。
-10. Direct、continuation、anchor 三来源共享一个授权上下文和 Retriever 入口。
-11. 1–3 Story 获准且全覆盖；4–32 可分页且每页可达 authorized；33+ narrowing；无 Composite 比较。
-12. 原 Owner Gate 未放宽，角色/Topic Story 补充分支只消费授权 allowlist/关系。
-13. 融合公式、排序、Owner 配额和五类预算完全确定；Topic/Page 不被 Story 淹没。
-14. 有可提交证据的 shortfall 输出非空 grounded answer；授权边界、failed、empty 不混淆。
-15. AnswerScope 只在适用 Story 分支存在；不新增模型调用。
-16. 请求级唯一 retrieval outcome 来自 `ResponsePacket.retrieval_packet.route_decision.retrieval_outcome`；REST/SSE 一致。
-17. Reranker 调用为 0；质量反事实不改变 runtime。
-18. 全部 focused/adjacent tests 通过，真实离线 snapshot protected drift 为 0。
-19. E handoff 完整且 `ready_for_d_shadow_build` 的含义仅为可交 D。
-20. E 未调用 embedding、未写 Milvus、未激活；后续真实向量重建只由 D 执行。
+1. C release receipt 已复验：C8b–C9 已合并，Story Parent/Atom/source refs 来自固定 `main` artifact，E 不读取 C worktree。
+2. 每个规范 Story Atom 恰好一条 structure sidecar；显式图闭合、source-order 明确、invalid graph 阻断。
+3. 纯数字、短文本、内部 ID 和歧义 alias 按统一 registry 规则处理，无逐实体补丁。
+4. 每个 Atom 在一个 Segment 版本中恰好一次；Atom parent/ID/content/source 不变。
+5. oversize Atom 形成单 Atom Segment，Dense limit fail-closed，不截断。
+6. Segment 两次构建字节一致，prev/next/branch/merge 闭合。
+7. Segment 正文一次封装；每个非空 Atom 一个 span 和 citation source。
+8. Story Atom 仍在 BM25，typed Dense 输入中 Story Atom 数为 0。
+9. 非 Story Child 和 Story Segment 使用显式 typed IDs/fields；`segment_sequence_index`/sentinel 契约精确，Segment 不冒充 Child。
+10. `rag.story-candidate-build-input/v1` 与写后 `rag.runtime-artifact-snapshot/v2` 身份分离；fake builder 证明最终 v2 只能在 actual collection/schema/rows/build receipt 齐全后解析，active v1 行为不变。
+11. RequestPlan v2 只运行一次 Detector 和至多一次本地 fallback；所有 Story occurrence 唯一归属。
+12. Direct、continuation、anchor 三来源共享一个授权上下文和 Retriever 入口；open Story domain 只消费已授权 character/Topic filter。
+13. 1–3 Story 获准且全覆盖；4–32 可分页且每页可达 authorized；33+ narrowing；无 Composite 比较。
+14. 原 Owner Gate 未放宽，角色/Topic Story 补充分支只消费授权 allowlist/关系。
+15. 融合公式、排序、Owner 配额和五类预算完全确定；Topic/Page 不被 Story 淹没；同一 query vector 跨 Child/Segment 复用。
+16. 有可提交证据的 shortfall 输出非空 grounded answer；授权边界、failed、empty 不混淆。
+17. AnswerScope 只在适用 Story 分支存在；不新增模型调用。
+18. 请求级唯一 retrieval outcome 来自 `ResponsePacket.retrieval_packet.route_decision.retrieval_outcome`；REST/SSE 一致。
+19. Reranker 调用为 0；质量反事实不改变 runtime。
+20. 16 个 implementation Task 均有 D 在实现前见证的 RED acceptance、独立 RED/GREEN tree/log 和真实证据 receipt；全部 focused/adjacent tests 通过，真实离线 snapshot protected drift 为 0。
+21. E handoff 在 E5.3 clean commit 后生成，包含 candidate-build-input 与离线容量估算，不包含未构建的 v2 runtime snapshot；`ready_for_d_shadow_build` 的含义仅为可交 D。
+22. E 未调用 embedding、未写 Milvus、未激活；后续真实向量重建只由 D 执行。
