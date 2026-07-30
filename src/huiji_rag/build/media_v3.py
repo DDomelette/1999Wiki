@@ -24,6 +24,7 @@ from src.huiji_rag.normalizer import normalize_language
 from .contracts import (
     VoiceBindingResult,
     canonical_json_bytes,
+    compute_binding_id,
     compute_resource_id,
     ordered_media_v3_row,
 )
@@ -34,6 +35,17 @@ from .wikitext_projection import normalize_wikitext_filename
 
 _SHA1_RE = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_LEGACY_MEDIA_CATEGORIES = frozenset(
+    {
+        "preserved_binding",
+        "rekeyed_binding",
+        "source_removed_with_evidence",
+        "missing_local_bytes",
+        "missing_resource_metadata",
+        "ambiguous_binding",
+        "conflicting_binding",
+    }
+)
 _VOICE_PREFIX_TO_LANGUAGE = {
     "zh": "zh",
     "en": "en",
@@ -160,11 +172,49 @@ class LegacyMediaReconciliation:
     unexplained_binding_loss: int
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "occurrence_rows", _frozen_rows(self.occurrence_rows))
+        rows = tuple(dict(row) for row in self.occurrence_rows)
+        observed = Counter(str(row.get("classification") or "") for row in rows)
+        observed.pop("", None)
+        if len(observed) == 0 and rows:
+            raise ValueError("legacy media occurrence classification is missing")
+        unknown_categories = set(observed) - _LEGACY_MEDIA_CATEGORIES
+        if unknown_categories:
+            raise ValueError(
+                "legacy media occurrence classification is not approved: "
+                + ",".join(sorted(unknown_categories))
+            )
+        supplied_counts = dict(self.category_counts)
+        if self.active_occurrence_count != len(rows):
+            raise ValueError(
+                "legacy media active_occurrence_count does not match occurrence rows"
+            )
+        if supplied_counts != dict(observed):
+            raise ValueError(
+                "legacy media category_counts do not match occurrence rows"
+            )
+        expected_loss = sum(
+            observed[category]
+            for category in (
+                "missing_local_bytes",
+                "missing_resource_metadata",
+                "ambiguous_binding",
+                "conflicting_binding",
+            )
+        )
+        if self.unexplained_binding_loss != expected_loss:
+            raise ValueError(
+                "legacy media unexplained_binding_loss does not match blocker categories"
+            )
+        occurrence_ids = [str(row.get("occurrence_id") or "") for row in rows]
+        if any(not value for value in occurrence_ids) or len(set(occurrence_ids)) != len(
+            occurrence_ids
+        ):
+            raise ValueError("legacy media occurrence IDs must be non-empty and unique")
+        object.__setattr__(self, "occurrence_rows", _frozen_rows(rows))
         object.__setattr__(
             self,
             "category_counts",
-            MappingProxyType(dict(sorted(self.category_counts.items()))),
+            MappingProxyType(dict(sorted(supplied_counts.items()))),
         )
 
 
@@ -720,138 +770,535 @@ def reconcile_active_media_occurrences(
     voice_result: VoiceBindingResult,
     *,
     raw_root: Path,
+    resource_manifest_rows: Iterable[Mapping[str, Any]],
+    verified_source_removal_receipts: Iterable[Mapping[str, Any]] = (),
 ) -> LegacyMediaReconciliation:
-    """Classify every legacy media occurrence without using it as candidate input."""
-    candidate_rows = tuple(assembly.runtime_rows)
-    candidate_by_media_child: dict[tuple[str, str], list[Mapping[str, Any]]] = defaultdict(list)
-    candidate_by_media: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
-    candidate_children = {child.block.child_id: child for child in projection.children}
-    child_rekeys = {
-        link.legacy_id: link.candidate_id
-        for link in projection.record_links
-        if link.record_kind == "child" and link.legacy_id and link.candidate_id
-    }
-    for row in candidate_rows:
-        media_id = str(row["media_id"])
-        candidate_by_media_child[(media_id, str(row["child_id"]))].append(row)
-        candidate_by_media[media_id].append(row)
-
-    voice_status: dict[tuple[str, str], set[str]] = defaultdict(set)
-    for binding in voice_result.binding_rows:
-        effective_status = str(
-            voice_result.status_by_source.get(binding.source_id, binding.status.value)
+    """Classify each legacy occurrence from exact, closed, byte-verified evidence."""
+    del voice_result  # Voice ownership is frozen in projection.voice_sources.
+    candidate_rows = tuple(dict(row) for row in assembly.runtime_rows)
+    candidates_by_media_sha1: dict[
+        tuple[str, str], list[dict[str, Any]]
+    ] = defaultdict(list)
+    for candidate in candidate_rows:
+        candidates_by_media_sha1[
+            (
+                str(candidate.get("media_id") or ""),
+                str(candidate.get("sha1") or "").lower(),
+            )
+        ].append(candidate)
+    manifests_by_sha1: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for manifest_row in resource_manifest_rows:
+        manifest = dict(manifest_row)
+        manifests_by_sha1[str(manifest.get("sha1") or "").lower()].append(
+            manifest
         )
-        for match in binding.matches:
-            voice_status[(binding.child_id, match.sha1)].add(effective_status)
-
+    source_relations_by_token = _legacy_media_source_relation_index(
+        candidate_rows, projection
+    )
+    candidate_children = {
+        child.block.child_id: child for child in projection.children
+    }
+    candidate_parents = {parent.parent_id: parent for parent in projection.parents}
+    successors = _legacy_media_successor_sets(projection)
+    receipts = tuple(dict(row) for row in verified_source_removal_receipts)
     root = Path(raw_root).resolve()
     local_hash_cache: dict[Path, tuple[str, str, int]] = {}
+    prepared = _deterministic_legacy_occurrences(active_rows)
     occurrence_rows: list[dict[str, Any]] = []
-    categories: Counter[str] = Counter()
-    for index, source_row in enumerate(active_rows):
-        active = dict(source_row)
+    collision_candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for active, active_row_sha256, duplicate_ordinal, occurrence_id in prepared:
+        old_parent_id = str(active.get("parent_id") or "")
+        old_child_id = str(active.get("child_id") or "")
+        parent_successors = _successors_for_legacy_identity(
+            "parent", old_parent_id, successors, candidate_parents
+        )
+        child_successors = _successors_for_legacy_identity(
+            "child", old_child_id, successors, candidate_children
+        )
         media_id = str(active.get("media_id") or "")
         sha1 = str(active.get("sha1") or "").lower()
-        old_child_id = str(active.get("child_id") or "")
-        candidate_child_id = child_rekeys.get(old_child_id, old_child_id)
-        direct = candidate_by_media_child.get((media_id, candidate_child_id), ())
-        same_resource = candidate_by_media.get(media_id, ())
-        candidate_binding_ids = sorted({str(row["binding_id"]) for row in direct})
-        resource_id = (
-            str(same_resource[0]["resource_id"])
-            if same_resource
-            else ""
+        manifest = _exact_legacy_manifest(
+            active, manifests_by_sha1.get(sha1, ())
         )
-        classification = "preserved_binding"
-        reason_code = "active_occurrence_maps_to_one_v3_binding"
-        if len(direct) > 1:
-            classification = "schema_split_binding"
-            reason_code = "active_occurrence_maps_to_multiple_explicit_v3_bindings"
-        elif not direct:
-            statuses = sorted(voice_status.get((candidate_child_id, sha1), ()))
-            if str(active.get("asset_type") or "") == "voice" and statuses:
-                classification = "evb_status_excluded"
-                reason_code = "evb_" + "+".join(statuses)
-            else:
-                owner_id = f"character:{str(active.get('entity_id') or '')}"
-                owner_bindings = [
-                    row
-                    for row in same_resource
-                    if str(row["owner_entity_id"]) == owner_id
-                ]
-                candidate_binding_ids = sorted(
-                    {str(row["binding_id"]) for row in owner_bindings}
-                )
-                if owner_bindings:
-                    classification = "owner_relation_migrated"
-                    reason_code = "resource_preserved_under_explicit_owner_relation"
-                else:
-                    classification = "legacy_non_explicit_relation"
-                    reason_code = "legacy_filename_guess_has_no_explicit_crawler_relation"
-
+        candidate_bucket = candidates_by_media_sha1.get((media_id, sha1), ())
+        exact_candidates = tuple(
+            row
+            for row in candidate_bucket
+            if manifest is not None
+            and _exact_legacy_resource_match(active, row, manifest)
+        )
+        candidate_binding_ids = sorted(
+            {str(row["binding_id"]) for row in exact_candidates}
+        )
+        candidate_source_refs = _sorted_candidate_source_refs(exact_candidates)
+        resource_ids = sorted({str(row["resource_id"]) for row in exact_candidates})
+        resource_id = resource_ids[0] if len(resource_ids) == 1 else ""
+        classification = "missing_resource_metadata"
+        reason_code = "exact_resource_identity_missing"
         local_evidence: dict[str, Any] = {}
-        if not resource_id:
-            try:
-                local_path = _resolve_local_media_path(
-                    root, str(active.get("local_relpath") or "")
-                )
-                actual_sha1, sha256, size = _hash_active_file(
-                    local_path, local_hash_cache
-                )
-                if not _SHA1_RE.fullmatch(sha1) or actual_sha1 != sha1:
-                    raise _ResourceResolutionError(
-                        "active_sha1_mismatch", str(active.get("local_relpath") or "")
-                    )
-                resource_id = compute_resource_id(sha256)
-                local_evidence = {
-                    "content_sha256": sha256,
-                    "size": size,
-                    "local_relpath": local_path.relative_to(root).as_posix(),
-                }
-            except _ResourceResolutionError as error:
-                classification = "unexplained_missing_resource"
-                reason_code = error.reason_code
+        collision_binding_id = ""
 
-        active_row_sha256 = hashlib.sha256(
-            canonical_json_bytes(active, trailing_newline=False)
-        ).hexdigest()
-        occurrence_id = "active-occurrence:sha256:" + hashlib.sha256(
-            canonical_json_bytes(
-                ["huiji.active-media-occurrence/v1", index, active_row_sha256],
-                trailing_newline=False,
+        if not exact_candidates:
+            matching_receipts = [
+                receipt
+                for receipt in receipts
+                if _verified_removal_receipt_matches(active, receipt)
+            ]
+            if len(matching_receipts) == 1:
+                classification = "source_removed_with_evidence"
+                reason_code = "verified_source_removal_receipt"
+            elif len(matching_receipts) > 1:
+                classification = "ambiguous_binding"
+                reason_code = "duplicate_source_removal_receipts"
+            elif manifest is not None:
+                classification = "ambiguous_binding"
+                reason_code = "zero_exact_candidate_cardinality"
+        else:
+            source_relations = tuple(
+                relation
+                for candidate in exact_candidates
+                for relation in source_relations_by_token.get(
+                    str(candidate.get("source_binding_token") or ""), ()
+                )
             )
-        ).hexdigest()
-        source_child = candidate_children.get(candidate_child_id)
+            if (
+                len(exact_candidates) > 1
+                or len(source_relations) != 1
+                or len(parent_successors) != 1
+                or len(child_successors) != 1
+            ):
+                classification = "ambiguous_binding"
+                reason_code = "non_unique_candidate_source_or_successor"
+            else:
+                candidate = exact_candidates[0]
+                collision_binding_id = str(candidate["binding_id"])
+                if not _legacy_media_closure_passes(
+                    active,
+                    candidate,
+                    source_relations,
+                    parent_successors,
+                    child_successors,
+                    candidate_parents,
+                    candidate_children,
+                ):
+                    classification = "conflicting_binding"
+                    reason_code = "owner_parent_child_or_source_closure_failed"
+                else:
+                    try:
+                        local_path = _resolve_local_media_path(
+                            root, str(manifest.get("local_relpath") or "")
+                        )
+                        actual_sha1, actual_sha256, actual_size = _hash_active_file(
+                            local_path, local_hash_cache
+                        )
+                        expected_size = int(manifest["size"])
+                        if actual_size != expected_size:
+                            raise _ResourceResolutionError(
+                                "local_size_mismatch", str(actual_size)
+                            )
+                        if actual_sha1 != str(candidate["sha1"]) or actual_sha1 != str(
+                            active.get("sha1") or ""
+                        ).lower():
+                            raise _ResourceResolutionError(
+                                "local_sha1_mismatch", actual_sha1
+                            )
+                        if actual_sha256 != str(candidate["content_sha256"]):
+                            raise _ResourceResolutionError(
+                                "local_sha256_mismatch", actual_sha256
+                            )
+                        active_sha256 = str(active.get("content_sha256") or "")
+                        if active_sha256 and active_sha256 != actual_sha256:
+                            raise _ResourceResolutionError(
+                                "active_sha256_mismatch", actual_sha256
+                            )
+                        local_evidence = {
+                            "content_sha256": actual_sha256,
+                            "size": actual_size,
+                            "sha1": actual_sha1,
+                            "local_relpath": local_path.relative_to(root).as_posix(),
+                        }
+                        transitioned = (
+                            str(candidate["parent_id"]) != old_parent_id
+                            or str(candidate["child_id"]) != old_child_id
+                        )
+                        classification = (
+                            "rekeyed_binding" if transitioned else "preserved_binding"
+                        )
+                        reason_code = (
+                            "approved_parent_or_child_rekey_with_verified_bytes"
+                            if transitioned
+                            else "exact_closed_binding_with_verified_bytes"
+                        )
+                    except (_ResourceResolutionError, OSError, ValueError) as error:
+                        classification = "missing_local_bytes"
+                        reason_code = (
+                            error.reason_code
+                            if isinstance(error, _ResourceResolutionError)
+                            else "local_byte_verification_failed"
+                        )
+
         occurrence = {
             "schema_version": "huiji.active-media-occurrence-map/v1",
             "occurrence_id": occurrence_id,
-            "active_row_index": index,
+            "active_row_index": -1,
+            "active_duplicate_ordinal": duplicate_ordinal,
             "active_row_sha256": active_row_sha256,
-            "active_media_id": media_id,
-            "active_sha1": sha1,
-            "active_parent_id": str(active.get("parent_id") or ""),
+            "active_media_id": str(active.get("media_id") or ""),
+            "active_sha1": str(active.get("sha1") or "").lower(),
+            "active_parent_id": old_parent_id,
             "active_child_id": old_child_id,
-            "candidate_child_id": candidate_child_id,
+            "candidate_parent_ids": list(parent_successors),
+            "candidate_child_ids": list(child_successors),
+            "candidate_child_id": (
+                child_successors[0] if len(child_successors) == 1 else ""
+            ),
             "resource_id": resource_id,
             "candidate_binding_ids": candidate_binding_ids,
             "classification": classification,
             "reason_code": reason_code,
-            "candidate_source_refs": (
-                []
-                if source_child is None
-                else [dict(ref) for ref in source_child.block.source_refs]
-            ),
+            "candidate_source_refs": candidate_source_refs,
             "local_evidence": local_evidence,
         }
         occurrence_rows.append(occurrence)
-        categories[classification] += 1
+        if collision_binding_id:
+            collision_candidates[collision_binding_id].append(occurrence)
 
+    for binding_id, competing in sorted(collision_candidates.items()):
+        if len(competing) <= 1:
+            continue
+        for occurrence in competing:
+            occurrence["classification"] = "ambiguous_binding"
+            occurrence["reason_code"] = "candidate_consumed_by_multiple_occurrences"
+            occurrence["candidate_binding_ids"] = [binding_id]
+            occurrence["local_evidence"] = {}
+
+    occurrence_rows.sort(key=lambda row: str(row["occurrence_id"]))
+    for index, occurrence in enumerate(occurrence_rows):
+        occurrence["active_row_index"] = index
+    categories = Counter(str(row["classification"]) for row in occurrence_rows)
+    unexplained_binding_loss = sum(
+        categories[category]
+        for category in (
+            "missing_local_bytes",
+            "missing_resource_metadata",
+            "ambiguous_binding",
+            "conflicting_binding",
+        )
+    )
     return LegacyMediaReconciliation(
         occurrence_rows=tuple(occurrence_rows),
         category_counts=dict(categories),
         active_occurrence_count=len(occurrence_rows),
-        unexplained_binding_loss=categories["unexplained_missing_resource"],
+        unexplained_binding_loss=unexplained_binding_loss,
     )
+
+
+def _deterministic_legacy_occurrences(
+    active_rows: Iterable[Mapping[str, Any]],
+) -> list[tuple[dict[str, Any], str, int, str]]:
+    rows = [dict(row) for row in active_rows]
+    rows.sort(key=lambda row: canonical_json_bytes(row, trailing_newline=False))
+    duplicate_counts: Counter[str] = Counter()
+    prepared: list[tuple[dict[str, Any], str, int, str]] = []
+    for row in rows:
+        row_sha256 = hashlib.sha256(
+            canonical_json_bytes(row, trailing_newline=False)
+        ).hexdigest()
+        duplicate_ordinal = duplicate_counts[row_sha256]
+        duplicate_counts[row_sha256] += 1
+        occurrence_id = "active-occurrence:sha256:" + hashlib.sha256(
+            canonical_json_bytes(
+                [
+                    "huiji.active-media-occurrence/v2",
+                    row_sha256,
+                    duplicate_ordinal,
+                ],
+                trailing_newline=False,
+            )
+        ).hexdigest()
+        prepared.append((row, row_sha256, duplicate_ordinal, occurrence_id))
+    return prepared
+
+
+def _legacy_media_successor_sets(
+    projection: CorpusProjection,
+) -> dict[tuple[str, str], tuple[str, ...]]:
+    grouped: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for link in projection.record_links:
+        if (
+            link.record_kind in {"parent", "child"}
+            and link.legacy_id
+            and link.candidate_id
+        ):
+            grouped[(link.record_kind, link.legacy_id)].add(link.candidate_id)
+    return {key: tuple(sorted(values)) for key, values in grouped.items()}
+
+
+def _successors_for_legacy_identity(
+    record_kind: str,
+    legacy_id: str,
+    successors: Mapping[tuple[str, str], tuple[str, ...]],
+    current: Mapping[str, Any],
+) -> tuple[str, ...]:
+    explicit = successors.get((record_kind, legacy_id))
+    if explicit is not None:
+        return explicit
+    return (legacy_id,) if legacy_id and legacy_id in current else ()
+
+
+def _exact_legacy_resource_match(
+    active: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+) -> bool:
+    media_id = str(active.get("media_id") or "")
+    sha1 = str(active.get("sha1") or "").lower()
+    filename = str(active.get("filename") or "")
+    title = str(active.get("title") or "")
+    if (
+        _legacy_row_has_candidate_fields(active)
+        or not _SHA1_RE.fullmatch(sha1)
+        or media_id != f"media:sha1:{sha1}"
+        or str(candidate.get("media_id") or "") != media_id
+        or str(candidate.get("sha1") or "").lower() != sha1
+        or not filename
+        or str(candidate.get("filename") or "") != filename
+        or not title
+        or str(manifest.get("sha1") or "").lower() != sha1
+        or str(manifest.get("name") or "") != filename
+        or str(manifest.get("title") or "") != title
+    ):
+        return False
+    content_sha256 = str(candidate.get("content_sha256") or "").lower()
+    if (
+        not _SHA256_RE.fullmatch(content_sha256)
+        or str(candidate.get("resource_id") or "")
+        != compute_resource_id(content_sha256)
+    ):
+        return False
+    try:
+        if int(manifest.get("size")) != int(candidate.get("size")):
+            return False
+    except (TypeError, ValueError):
+        return False
+    crawler_refs = [
+        ref
+        for ref in candidate.get("source_refs", ())
+        if str(ref.get("source_kind") or "") == "crawler_resource"
+    ]
+    if len(crawler_refs) != 1:
+        return False
+    resource_ref = crawler_refs[0]
+    if (
+        str(resource_ref.get("source_title") or "") != title
+        or str(resource_ref.get("source_row_id") or "")
+        != f"crawler-resource:{sha1}:{filename}"
+        or not _SHA256_RE.fullmatch(
+            str(resource_ref.get("source_content_sha256") or "").lower()
+        )
+    ):
+        return False
+    try:
+        return str(candidate.get("binding_id") or "") == compute_binding_id(candidate)
+    except ValueError:
+        return False
+
+
+def _exact_legacy_manifest(
+    active: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]
+) -> dict[str, Any] | None:
+    if _legacy_row_has_candidate_fields(active):
+        return None
+    sha1 = str(active.get("sha1") or "").lower()
+    filename = str(active.get("filename") or "")
+    title = str(active.get("title") or "")
+    if not _SHA1_RE.fullmatch(sha1) or not filename or not title:
+        return None
+    logical_rows: dict[bytes, dict[str, Any]] = {}
+    for raw_row in rows:
+        row = dict(raw_row)
+        if (
+            str(row.get("sha1") or "").lower() != sha1
+            or str(row.get("name") or "") != filename
+            or str(row.get("title") or "") != title
+        ):
+            continue
+        logical_rows[canonical_json_bytes(row, trailing_newline=False)] = row
+    if len(logical_rows) != 1:
+        return None
+    manifest = next(iter(logical_rows.values()))
+    try:
+        size = int(manifest.get("size"))
+    except (TypeError, ValueError):
+        return None
+    if isinstance(manifest.get("size"), bool) or size < 0:
+        return None
+    if not str(manifest.get("local_relpath") or ""):
+        return None
+    manifest["size"] = size
+    return manifest
+
+
+def _legacy_row_has_candidate_fields(active: Mapping[str, Any]) -> bool:
+    return any(
+        field_name in active
+        for field_name in (
+            "size",
+            "owner_entity_id",
+            "owner_page_id",
+            "source_refs",
+            "binding_id",
+            "resource_id",
+            "source_binding_token",
+            "content_sha256",
+        )
+    )
+
+
+def _legacy_media_source_relation_index(
+    candidate_rows: Sequence[Mapping[str, Any]],
+    projection: CorpusProjection,
+) -> dict[str, tuple[Mapping[str, Any], ...]]:
+    relations: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for intent in projection.media_intents:
+        relations[intent.source_binding_token].append(intent.to_json())
+    voice_by_child_language: dict[
+        tuple[str, str], list[Any]
+    ] = defaultdict(list)
+    for source in projection.voice_sources:
+        voice_by_child_language[
+            (source.child_id, normalize_language(source.language)[0])
+        ].append(source)
+    indexed_voice_tokens: set[str] = set()
+    for candidate in candidate_rows:
+        if str(candidate.get("media_role") or "") != "voice":
+            continue
+        token = str(candidate.get("source_binding_token") or "")
+        if not token or token in indexed_voice_tokens:
+            continue
+        indexed_voice_tokens.add(token)
+        language = normalize_language(str(candidate.get("language") or ""))[0]
+        for source in voice_by_child_language.get(
+            (str(candidate.get("child_id") or ""), language), ()
+        ):
+            relations[token].append(
+                {
+                    "source_binding_token": token,
+                    "owner_entity_id": candidate.get("owner_entity_id"),
+                    "owner_page_id": candidate.get("owner_page_id"),
+                    "parent_id": source.parent_id,
+                    "child_id": source.child_id,
+                    "section": "voice",
+                    "media_role": "voice",
+                }
+            )
+    return {key: tuple(value) for key, value in relations.items()}
+
+
+def _legacy_media_closure_passes(
+    active: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    source_relations: Sequence[Mapping[str, Any]],
+    parent_successors: Sequence[str],
+    child_successors: Sequence[str],
+    candidate_parents: Mapping[str, Any],
+    candidate_children: Mapping[str, SemanticChild],
+) -> bool:
+    if len(source_relations) != 1:
+        return False
+    relation = source_relations[0]
+    identity_fields = (
+        "source_binding_token",
+        "owner_entity_id",
+        "owner_page_id",
+        "parent_id",
+        "child_id",
+        "section",
+        "media_role",
+    )
+    if any(
+        str(relation.get(field) or "") != str(candidate.get(field) or "")
+        for field in identity_fields
+    ):
+        return False
+    candidate_parent_id = str(candidate.get("parent_id") or "")
+    candidate_child_id = str(candidate.get("child_id") or "")
+    parent = candidate_parents.get(candidate_parent_id)
+    child = candidate_children.get(candidate_child_id)
+    if (
+        parent is None
+        or child is None
+        or child.block.parent_id != candidate_parent_id
+        or child.owner_entity_id != str(candidate.get("owner_entity_id") or "")
+        or child.owner_page_id != str(candidate.get("owner_page_id") or "")
+        or candidate_child_id not in parent.child_ids
+        or tuple(parent_successors) != (candidate_parent_id,)
+        or tuple(child_successors) != (candidate_child_id,)
+    ):
+        return False
+    active_owner = _legacy_character_owner_identity(active)
+    if active_owner is None:
+        return False
+    active_owner_entity, active_owner_page = active_owner
+    return (
+        active_owner_entity == str(candidate.get("owner_entity_id") or "")
+        and active_owner_page == str(candidate.get("owner_page_id") or "")
+    )
+
+
+def _legacy_character_owner_identity(
+    active: Mapping[str, Any],
+) -> tuple[str, str] | None:
+    entity_id = str(active.get("entity_id") or "")
+    parent_id = str(active.get("parent_id") or "")
+    owner_page_id = f"char:{entity_id}" if entity_id else ""
+    if not owner_page_id or not parent_id.startswith(owner_page_id + "/"):
+        return None
+    return f"character:{entity_id}", owner_page_id
+
+
+def _verified_removal_receipt_matches(
+    active: Mapping[str, Any], receipt: Mapping[str, Any]
+) -> bool:
+    payload = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    expected_hash = hashlib.sha256(
+        canonical_json_bytes(payload, trailing_newline=False)
+    ).hexdigest()
+    frozen = {
+        "schema_version": "huiji.verified-source-removal-receipt/v1",
+        "legacy_media_id": str(active.get("media_id") or ""),
+        "sha1": str(active.get("sha1") or "").lower(),
+        "filename": str(active.get("filename") or ""),
+        "title": str(active.get("title") or ""),
+        "parent_id": str(active.get("parent_id") or ""),
+        "child_id": str(active.get("child_id") or ""),
+    }
+    return (
+        str(receipt.get("receipt_sha256") or "").lower() == expected_hash
+        and all(str(payload.get(key) or "") == value for key, value in frozen.items())
+        and bool(str(payload.get("removal_reason") or ""))
+        and bool(
+            _SHA256_RE.fullmatch(
+                str(payload.get("source_inventory_sha256") or "").lower()
+            )
+        )
+        and set(payload) == {
+            *frozen,
+            "source_inventory_sha256",
+            "removal_reason",
+        }
+    )
+
+
+def _sorted_candidate_source_refs(
+    candidates: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    unique: dict[bytes, dict[str, Any]] = {}
+    for candidate in candidates:
+        for source_ref in candidate.get("source_refs", ()):
+            row = dict(source_ref)
+            unique[canonical_json_bytes(row, trailing_newline=False)] = row
+    return [unique[key] for key in sorted(unique)]
 
 
 def _append_exact_voice_rows(

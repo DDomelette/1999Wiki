@@ -446,6 +446,7 @@ class HuijiCorpusBuilder:
                 projection,
                 voice_result,
                 raw_root=request.raw_root,
+                resource_manifest_rows=resource_rows,
             )
             fidelity = build_fidelity_ledger(
                 active_parent_rows=active["parents"],

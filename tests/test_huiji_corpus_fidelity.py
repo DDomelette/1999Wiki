@@ -704,3 +704,110 @@ def test_non_story_duplicate_legacy_links_remain_fail_closed() -> None:
         match=r"duplicate child fidelity link: char:1/culture:0010",
     ):
         _build(values)
+
+
+def test_fidelity_retains_media_blocker_categories_and_sums_aggregate_loss() -> None:
+    values = _fixture()
+    blocker_counts = {
+        "missing_local_bytes": 2,
+        "missing_resource_metadata": 3,
+        "ambiguous_binding": 5,
+        "conflicting_binding": 7,
+    }
+    occurrences = []
+    index = 0
+    for category, count in blocker_counts.items():
+        for _ in range(count):
+            index += 1
+            occurrences.append(
+                {
+                    "occurrence_id": "active-occurrence:sha256:" + f"{index:064x}",
+                    "active_row_sha256": f"{index + 100:064x}",
+                    "active_media_id": "media:sha1:" + f"{index:040x}",
+                    "active_sha1": f"{index:040x}",
+                    "active_parent_id": "char:1/culture",
+                    "active_child_id": "char:1/culture:0010",
+                    "candidate_child_id": "char:1/collection/10",
+                    "resource_id": "",
+                    "candidate_binding_ids": [],
+                    "classification": category,
+                    "reason_code": "c8c_contract_fixture",
+                    "candidate_source_refs": [],
+                    "local_evidence": {},
+                }
+            )
+    values["legacy"] = LegacyMediaReconciliation(
+        occurrence_rows=tuple(reversed(occurrences)),
+        category_counts=blocker_counts,
+        active_occurrence_count=len(occurrences),
+        unexplained_binding_loss=17,
+    )
+    values["media_bm25"] = tuple(
+        {"media_id": row["active_media_id"], "search_text": "media"}
+        for row in reversed(occurrences)
+    )
+
+    result = _build(values)
+
+    media_rows = [
+        row for row in result.ledger_rows if row["record_kind"] == "media_binding"
+    ]
+    assert {
+        category: sum(
+            row["classification"] == category for row in media_rows
+        )
+        for category in blocker_counts
+    } == blocker_counts
+    assert result.unexplained_binding_loss == sum(blocker_counts.values()) == 17
+    assert result.build_diff["unexplained_binding_loss"] == 17
+    assert result.blockers == tuple(
+        sorted(
+            (
+                "legacy_media_missing_local_bytes:2",
+                "legacy_media_missing_resource_metadata:3",
+                "legacy_media_ambiguous_binding:5",
+                "legacy_media_conflicting_binding:7",
+                "unexplained_binding_loss:17",
+            )
+        )
+    )
+    assert [row["active_identity"] for row in media_rows] == sorted(
+        row["active_identity"] for row in media_rows
+    )
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ["active_occurrence_count", "category_counts", "aggregate_loss"],
+)
+def test_legacy_media_reconciliation_rejects_duplicate_fact_mismatch(
+    mismatch: str,
+) -> None:
+    rows = (
+        {
+            "occurrence_id": "active-occurrence:sha256:" + "1" * 64,
+            "classification": "missing_local_bytes",
+        },
+        {
+            "occurrence_id": "active-occurrence:sha256:" + "2" * 64,
+            "classification": "conflicting_binding",
+        },
+    )
+    values = {
+        "occurrence_rows": rows,
+        "category_counts": {
+            "missing_local_bytes": 1,
+            "conflicting_binding": 1,
+        },
+        "active_occurrence_count": 2,
+        "unexplained_binding_loss": 2,
+    }
+    if mismatch == "active_occurrence_count":
+        values["active_occurrence_count"] = 3
+    elif mismatch == "category_counts":
+        values["category_counts"] = {"missing_local_bytes": 2}
+    else:
+        values["unexplained_binding_loss"] = 1
+
+    with pytest.raises(ValueError):
+        LegacyMediaReconciliation(**values)

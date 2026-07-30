@@ -133,6 +133,15 @@ def build_fidelity_ledger(
         }
         ledger.append(row)
         categories[row["classification"]] += 1
+    for category in (
+        "missing_local_bytes",
+        "missing_resource_metadata",
+        "ambiguous_binding",
+        "conflicting_binding",
+    ):
+        count = int(legacy_media.category_counts.get(category, 0))
+        if count:
+            blockers.append(f"legacy_media_{category}:{count}")
     if legacy_media.unexplained_binding_loss:
         blockers.append(
             f"unexplained_binding_loss:{legacy_media.unexplained_binding_loss}"

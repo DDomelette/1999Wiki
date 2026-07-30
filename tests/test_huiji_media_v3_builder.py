@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from src.huiji_rag.build.contracts import VoiceBindingInput
+from src.huiji_rag.build import media_v3 as media_v3_module
+from src.huiji_rag.build.contracts import (
+    VoiceBindingInput,
+    canonical_json_bytes,
+    compute_binding_id,
+)
 from src.huiji_rag.build.contracts import normalize_media_v3_rows
 from src.huiji_rag.build.media_v3 import (
     MediaV3Config,
@@ -18,9 +24,10 @@ from src.huiji_rag.build.projection import (
     CorpusProjection,
     MediaBindingIntent,
     SemanticChild,
+    SemanticRecordLink,
 )
 from src.huiji_rag.build.voice_stage import VoiceBindingStage
-from src.huiji_rag.models import ChildBlock, VoiceSourceRow
+from src.huiji_rag.models import ChildBlock, ParentBlock, VoiceSourceRow
 
 
 SOURCE_SHA = "f" * 64
@@ -262,6 +269,148 @@ def _fixture(tmp_path: Path):
     return config, resources, projection, voice_result, prepared
 
 
+def _legacy_media_case(tmp_path: Path):
+    config, resources, projection, voice_result, _prepared = _fixture(tmp_path)
+    collection = next(
+        child for child in projection.children if child.block.section_kind == "collection"
+    )
+    parent = ParentBlock(
+        parent_id=collection.block.parent_id,
+        entity_id=collection.block.entity_id,
+        entity_name=collection.block.entity_name,
+        entity_aliases=(),
+        category=collection.block.category,
+        section_kind=collection.block.section_kind,
+        title=collection.block.title,
+        summary_text=collection.block.text,
+        source_refs=collection.block.source_refs,
+        child_ids=(collection.block.child_id,),
+        content_hash=collection.block.content_hash,
+    )
+    projection = replace(projection, parents=(parent,))
+    assembly = assemble_media_v3(config, projection, resources, voice_result)
+    candidate = next(
+        dict(row)
+        for row in assembly.runtime_rows
+        if row["media_role"] == "collection_item"
+    )
+    crawler_ref = next(
+        ref
+        for ref in candidate["source_refs"]
+        if ref["source_kind"] == "crawler_resource"
+    )
+    active = {
+        "entity_id": candidate["entity_id"],
+        "entity_name": candidate["entity_name"],
+        "parent_id": candidate["parent_id"],
+        "child_id": candidate["child_id"],
+        "media_id": candidate["media_id"],
+        "sha1": candidate["sha1"],
+        "filename": candidate["filename"],
+        "title": crawler_ref["source_title"],
+        "local_relpath": "legacy/path/is/not/manifest/evidence.png",
+        "asset_type": candidate["asset_type"],
+        "mime": candidate["mime"],
+        "url": candidate["url"],
+    }
+    return config, resources, projection, voice_result, assembly, active
+
+
+def _reconcile_case(
+    config: MediaV3Config,
+    projection: CorpusProjection,
+    voice_result,
+    assembly,
+    resource_manifest_rows,
+    *active_rows: dict[str, object],
+    verified_source_removal_receipts=None,
+):
+    kwargs = {
+        "raw_root": config.raw_root,
+        "resource_manifest_rows": resource_manifest_rows,
+    }
+    if verified_source_removal_receipts is not None:
+        kwargs["verified_source_removal_receipts"] = (
+            verified_source_removal_receipts
+        )
+    return reconcile_active_media_occurrences(
+        active_rows, assembly, projection, voice_result, **kwargs
+    )
+
+
+def _candidate_for_active(assembly, active: dict[str, object]) -> dict[str, object]:
+    return next(
+        dict(row)
+        for row in assembly.runtime_rows
+        if row["media_id"] == active["media_id"]
+        and row["sha1"] == active["sha1"]
+        and row["filename"] == active["filename"]
+    )
+
+
+def _manifest_for_active(resource_rows, active: dict[str, object]) -> dict[str, object]:
+    return next(
+        dict(row)
+        for row in resource_rows
+        if row["sha1"] == active["sha1"]
+        and row["name"] == active["filename"]
+        and row["title"] == active["title"]
+    )
+
+
+def _verified_removal_receipt(
+    active: dict[str, object], **overrides: object
+) -> dict[str, object]:
+    payload = {
+        "schema_version": "huiji.verified-source-removal-receipt/v1",
+        "legacy_media_id": active["media_id"],
+        "sha1": active["sha1"],
+        "filename": active["filename"],
+        "title": active["title"],
+        "parent_id": active["parent_id"],
+        "child_id": active["child_id"],
+        "source_inventory_sha256": "9" * 64,
+        "removal_reason": "relation_removed_from_pinned_source",
+        **overrides,
+    }
+    return {
+        **payload,
+        "receipt_sha256": hashlib.sha256(
+            canonical_json_bytes(payload, trailing_newline=False)
+        ).hexdigest(),
+    }
+
+
+def _with_candidate_rows(assembly, *rows: dict[str, object]):
+    inventory_by_binding = {
+        row["binding_id"]: dict(row) for row in assembly.binding_inventory
+    }
+    inventories = []
+    for row in rows:
+        base = dict(next(iter(inventory_by_binding.values())))
+        for field in (
+            "binding_id",
+            "resource_id",
+            "owner_entity_id",
+            "owner_page_id",
+            "parent_id",
+            "child_id",
+            "media_role",
+            "source_binding_token",
+            "sha1",
+            "content_sha256",
+            "size",
+        ):
+            base[field] = row[field]
+        inventories.append(base)
+    return replace(
+        assembly,
+        runtime_rows=tuple(rows),
+        binding_inventory=tuple(inventories),
+        binding_count=len(rows),
+    )
+
+
 def test_media_v3_uses_explicit_relations_and_preserves_shared_bindings(tmp_path: Path) -> None:
     config, resources, projection, voice_result, prepared = _fixture(tmp_path)
 
@@ -469,19 +618,13 @@ def test_local_path_escape_is_diagnostic_and_blocks_readiness(tmp_path: Path) ->
     )
 
 
-def test_active_occurrence_mapping_preserves_multiplicity_and_classifies_legacy_guess(
+def test_active_occurrence_mapping_preserves_multiplicity_and_blocks_legacy_guess(
     tmp_path: Path,
 ) -> None:
-    config, resources, projection, voice_result, _prepared = _fixture(tmp_path)
-    assembly = assemble_media_v3(config, projection, resources, voice_result)
-    inventory_by_binding = {
-        row["binding_id"]: row for row in assembly.binding_inventory
-    }
-    preserved = dict(assembly.runtime_rows[0])
-    preserved["local_relpath"] = inventory_by_binding[preserved["binding_id"]][
-        "local_relpath"
-    ]
-    broad_resource = next(row for row in resources if row["name"] == "Bgmusic_theme.mp3")
+    config, resources, projection, voice_result, assembly, exact = (
+        _legacy_media_case(tmp_path)
+    )
+    broad_resource = _resource(config.raw_root, "Bgmusic_theme.mp3", b"legacy guess")
     broad = {
         "media_id": "media:sha1:" + str(broad_resource["sha1"]),
         "sha1": broad_resource["sha1"],
@@ -493,27 +636,29 @@ def test_active_occurrence_mapping_preserves_multiplicity_and_classifies_legacy_
     }
 
     result = reconcile_active_media_occurrences(
-        (preserved, preserved, broad),
+        (exact, dict(exact), broad),
         assembly,
         projection,
         voice_result,
         raw_root=config.raw_root,
+        resource_manifest_rows=resources,
     )
 
     assert result.active_occurrence_count == 3
     assert len(result.occurrence_rows) == 3
     assert len({row["occurrence_id"] for row in result.occurrence_rows}) == 3
     assert result.category_counts == {
-        "legacy_non_explicit_relation": 1,
-        "preserved_binding": 2,
+        "ambiguous_binding": 2,
+        "missing_resource_metadata": 1,
     }
-    assert result.unexplained_binding_loss == 0
+    assert result.unexplained_binding_loss == 3
     legacy = next(
         row
         for row in result.occurrence_rows
-        if row["classification"] == "legacy_non_explicit_relation"
+        if row["active_media_id"] == broad["media_id"]
     )
-    assert str(legacy["resource_id"]).startswith("resource:sha256:")
+    assert legacy["classification"] == "missing_resource_metadata"
+    assert legacy["resource_id"] == ""
     assert legacy["candidate_binding_ids"] == []
 
 
@@ -980,4 +1125,745 @@ def test_media_v3_rejects_unknown_child_and_invalid_source_ref_closure(
     assert all(
         any(token in blocker for blocker in result.blockers)
         for token in reasons
+    )
+
+
+def test_legacy_media_real_v1_boundary_uses_separate_manifest_bytes(
+    tmp_path: Path,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    manifest = _manifest_for_active(resources, active)
+    candidate = _candidate_for_active(assembly, active)
+    candidate_only_fields = {
+        "size",
+        "owner_entity_id",
+        "owner_page_id",
+        "source_refs",
+        "binding_id",
+        "resource_id",
+        "source_binding_token",
+        "content_sha256",
+    }
+
+    assert "resource_manifest_rows" in inspect.signature(
+        reconcile_active_media_occurrences
+    ).parameters
+    assert candidate_only_fields.isdisjoint(active)
+
+    result = _reconcile_case(
+        config, projection, voice_result, assembly, resources, active
+    )
+
+    assert result.category_counts == {"preserved_binding": 1}
+    assert result.occurrence_rows[0]["candidate_binding_ids"] == [
+        candidate["binding_id"]
+    ]
+    assert result.occurrence_rows[0]["local_evidence"] == {
+        "content_sha256": candidate["content_sha256"],
+        "size": manifest["size"],
+        "sha1": manifest["sha1"],
+        "local_relpath": manifest["local_relpath"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("manifest_case", "expected"),
+    [
+        ("identical_duplicate", "preserved_binding"),
+        ("missing", "missing_resource_metadata"),
+        ("conflicting_duplicate", "missing_resource_metadata"),
+        ("invalid_size", "missing_resource_metadata"),
+        ("candidate_size_mismatch", "ambiguous_binding"),
+        ("missing_manifest_bytes", "missing_local_bytes"),
+    ],
+)
+def test_legacy_media_manifest_identity_is_unique_exact_and_authoritative(
+    tmp_path: Path,
+    manifest_case: str,
+    expected: str,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    manifest = _manifest_for_active(resources, active)
+    other_resources = tuple(
+        row
+        for row in resources
+        if not (
+            row["sha1"] == active["sha1"]
+            and row["name"] == active["filename"]
+            and row["title"] == active["title"]
+        )
+    )
+    manifests = resources
+    if manifest_case == "identical_duplicate":
+        manifests = (*resources, dict(manifest))
+    elif manifest_case == "missing":
+        manifests = other_resources
+    elif manifest_case == "conflicting_duplicate":
+        manifests = (*resources, {**manifest, "size": int(manifest["size"]) + 1})
+    elif manifest_case == "invalid_size":
+        manifests = (*other_resources, {**manifest, "size": "invalid"})
+    elif manifest_case == "candidate_size_mismatch":
+        candidate = _candidate_for_active(assembly, active)
+        candidate["size"] = int(candidate["size"]) + 1
+        assembly = _with_candidate_rows(assembly, candidate)
+    elif manifest_case == "missing_manifest_bytes":
+        manifests = (
+            *other_resources,
+            {**manifest, "local_relpath": "assets/missing/manifest-path.png"},
+        )
+
+    result = _reconcile_case(
+        config, projection, voice_result, assembly, manifests, active
+    )
+
+    assert result.occurrence_rows[0]["classification"] == expected
+
+
+@pytest.mark.parametrize(
+    "active_change",
+    [
+        {"entity_id": ""},
+        {"parent_id": "page:1001/collection"},
+    ],
+)
+def test_legacy_media_owner_derivation_is_limited_to_character_rows(
+    tmp_path: Path,
+    active_change: dict[str, str],
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    active.update(active_change)
+    if "parent_id" in active_change:
+        candidate = _candidate_for_active(assembly, active)
+        projection = replace(
+            projection,
+            record_links=(
+                SemanticRecordLink(
+                    record_kind="parent",
+                    legacy_id=str(active["parent_id"]),
+                    candidate_id=str(candidate["parent_id"]),
+                    change_kind="preserved_rekeyed",
+                    source_title="Data:Char/1001.json",
+                    source_content_sha256=SOURCE_SHA,
+                    json_path="$.character_data.0",
+                    legacy_section="collection",
+                    candidate_section="collection",
+                ),
+            ),
+        )
+
+    result = _reconcile_case(
+        config, projection, voice_result, assembly, resources, active
+    )
+
+    assert result.occurrence_rows[0]["classification"] == "conflicting_binding"
+
+
+def test_legacy_media_candidate_lookup_is_bounded_to_exact_media_sha1_bucket(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    candidate = _candidate_for_active(assembly, active)
+    unrelated = []
+    for index in range(40):
+        sha1 = f"{index + 100:040x}"
+        row = {
+            **candidate,
+            "media_id": f"media:sha1:{sha1}",
+            "sha1": sha1,
+            "source_sha1": sha1,
+            "source_binding_token": f"unrelated:{index}",
+        }
+        row["binding_id"] = compute_binding_id(row)
+        unrelated.append(row)
+    assembly = _with_candidate_rows(assembly, *unrelated, candidate)
+    calls = 0
+    exact_match = media_v3_module._exact_legacy_resource_match
+
+    def counted_exact_match(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return exact_match(*args, **kwargs)
+
+    monkeypatch.setattr(
+        media_v3_module, "_exact_legacy_resource_match", counted_exact_match
+    )
+
+    result = _reconcile_case(
+        config, projection, voice_result, assembly, resources, active
+    )
+
+    assert result.occurrence_rows[0]["classification"] == "preserved_binding"
+    assert calls == 1
+
+
+def test_legacy_media_complete_child_and_parent_successor_sets_stay_ambiguous(
+    tmp_path: Path,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    candidate = _candidate_for_active(assembly, active)
+    legacy_child = "char:1001/culture:legacy"
+    legacy_parent = "char:1001/culture"
+    active.update({"child_id": legacy_child, "parent_id": legacy_parent})
+    links = tuple(
+        SemanticRecordLink(
+            record_kind=kind,
+            legacy_id=legacy_id,
+            candidate_id=candidate_id,
+            change_kind="preserved_rekeyed",
+            source_title="Data:Char/1001.json",
+            source_content_sha256=SOURCE_SHA,
+            json_path="$.character_data.0",
+            legacy_section="culture",
+            candidate_section="collection",
+        )
+        for kind, legacy_id, candidate_id in (
+            ("child", legacy_child, candidate["child_id"]),
+            ("child", legacy_child, str(candidate["child_id"]) + ":successor"),
+            ("parent", legacy_parent, candidate["parent_id"]),
+            ("parent", legacy_parent, str(candidate["parent_id"]) + ":successor"),
+        )
+    )
+
+    result = _reconcile_case(
+        config,
+        replace(projection, record_links=links),
+        voice_result,
+        assembly,
+        resources,
+        active,
+    )
+
+    assert result.occurrence_rows[0]["classification"] == "ambiguous_binding"
+    assert result.occurrence_rows[0]["candidate_child_ids"] == sorted(
+        [candidate["child_id"], str(candidate["child_id"]) + ":successor"]
+    )
+    assert result.occurrence_rows[0]["candidate_parent_ids"] == sorted(
+        [candidate["parent_id"], str(candidate["parent_id"]) + ":successor"]
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "legacy_media_id",
+        "legacy_sha1",
+        "stem_only",
+        "fuzzy_title",
+        "ordinal_only",
+        "count_only",
+    ],
+)
+def test_legacy_media_resource_identity_requires_every_exact_field(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    candidate = _candidate_for_active(assembly, active)
+    if mutation == "legacy_media_id":
+        active["media_id"] = "media:sha1:" + "0" * 40
+    elif mutation == "legacy_sha1":
+        active["sha1"] = "0" * 40
+    elif mutation == "stem_only":
+        active["filename"] = Path(str(candidate["filename"])).stem
+    elif mutation == "fuzzy_title":
+        active["title"] = str(active["title"]).lower()
+    elif mutation == "ordinal_only":
+        active["filename"] = ""
+        active["legacy_ordinal"] = candidate["sort_order"]
+    elif mutation == "count_only":
+        active["filename"] = ""
+        active["candidate_count_hint"] = 1
+    changed = _with_candidate_rows(assembly, candidate)
+
+    result = _reconcile_case(
+        config, projection, voice_result, changed, resources, active
+    )
+
+    expected = (
+        "ambiguous_binding"
+        if mutation == "legacy_media_id"
+        else "missing_resource_metadata"
+    )
+    assert result.occurrence_rows[0]["classification"] == expected
+    assert result.occurrence_rows[0]["candidate_binding_ids"] == []
+
+
+@pytest.mark.parametrize(
+    "candidate_identity_failure",
+    [
+        "filename",
+        "crawler_ref_row_id",
+        "crawler_ref_title",
+        "content_sha256",
+        "resource_id",
+        "size",
+        "binding_id",
+    ],
+)
+def test_legacy_media_valid_manifest_candidate_identity_failures_are_zero_exact_candidate_ambiguity(
+    tmp_path: Path,
+    candidate_identity_failure: str,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    manifest = _manifest_for_active(resources, active)
+    candidate = _candidate_for_active(assembly, active)
+    if candidate_identity_failure == "filename":
+        candidate["filename"] = "different-" + str(candidate["filename"])
+    elif candidate_identity_failure.startswith("crawler_ref_"):
+        field = (
+            "source_row_id"
+            if candidate_identity_failure == "crawler_ref_row_id"
+            else "source_title"
+        )
+        candidate["source_refs"] = [
+            {
+                **dict(ref),
+                **(
+                    {field: "mismatched-crawler-resource-evidence"}
+                    if ref["source_kind"] == "crawler_resource"
+                    else {}
+                ),
+            }
+            for ref in candidate["source_refs"]
+        ]
+    elif candidate_identity_failure == "content_sha256":
+        candidate["content_sha256"] = "0" * 64
+    elif candidate_identity_failure == "resource_id":
+        candidate["resource_id"] = "resource:sha256:" + "1" * 64
+        candidate["binding_id"] = compute_binding_id(candidate)
+    elif candidate_identity_failure == "size":
+        candidate["size"] = int(candidate["size"]) + 1
+    else:
+        candidate["binding_id"] = "binding:sha256:" + "0" * 64
+    changed = _with_candidate_rows(assembly, candidate)
+    coarse_bucket = [
+        row
+        for row in changed.runtime_rows
+        if row["media_id"] == active["media_id"]
+        and row["sha1"] == active["sha1"]
+    ]
+
+    result = _reconcile_case(
+        config, projection, voice_result, changed, resources, active
+    )
+
+    assert manifest["sha1"] == active["sha1"]
+    assert len(coarse_bucket) == 1
+    assert result.occurrence_rows[0]["candidate_binding_ids"] == []
+    assert result.occurrence_rows[0]["classification"] == "ambiguous_binding"
+
+
+@pytest.mark.parametrize("cardinality", ["candidate", "source", "successor"])
+def test_legacy_media_non_unique_cardinality_is_ambiguous(
+    tmp_path: Path,
+    cardinality: str,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    candidate = _candidate_for_active(assembly, active)
+    expected_binding_ids = [candidate["binding_id"]]
+    if cardinality == "candidate":
+        duplicate = {**candidate, "source_binding_token": "collection:200:duplicate"}
+        duplicate["binding_id"] = compute_binding_id(duplicate)
+        assembly = _with_candidate_rows(assembly, candidate, duplicate)
+        expected_binding_ids.append(duplicate["binding_id"])
+    elif cardinality == "source":
+        intent = next(
+            item
+            for item in projection.media_intents
+            if item.source_binding_token == candidate["source_binding_token"]
+        )
+        projection = replace(projection, media_intents=(*projection.media_intents, intent))
+    else:
+        legacy_child = "char:1001/culture:legacy"
+        active["child_id"] = legacy_child
+        links = tuple(
+            SemanticRecordLink(
+                record_kind="child",
+                legacy_id=legacy_child,
+                candidate_id=value,
+                change_kind="preserved_rekeyed",
+                source_title="Data:Char/1001.json",
+                source_content_sha256=SOURCE_SHA,
+                json_path="$.character_data.0",
+                legacy_section="culture",
+                candidate_section="collection",
+            )
+            for value in (candidate["child_id"], str(candidate["child_id"]) + ":other")
+        )
+        projection = replace(projection, record_links=links)
+
+    result = _reconcile_case(
+        config, projection, voice_result, assembly, resources, active
+    )
+
+    assert result.occurrence_rows[0]["classification"] == "ambiguous_binding"
+    assert result.occurrence_rows[0]["candidate_binding_ids"] == sorted(
+        expected_binding_ids
+    )
+
+
+def test_legacy_media_zero_candidate_cardinality_is_ambiguous(
+    tmp_path: Path,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    assembly = _with_candidate_rows(assembly)
+
+    result = _reconcile_case(
+        config, projection, voice_result, assembly, resources, active
+    )
+
+    assert result.occurrence_rows[0]["classification"] == "ambiguous_binding"
+    assert result.occurrence_rows[0]["candidate_binding_ids"] == []
+
+
+def test_legacy_media_zero_source_relation_cardinality_is_ambiguous(
+    tmp_path: Path,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    candidate = _candidate_for_active(assembly, active)
+    projection = replace(
+        projection,
+        media_intents=tuple(
+            intent
+            for intent in projection.media_intents
+            if intent.source_binding_token != candidate["source_binding_token"]
+        ),
+    )
+
+    result = _reconcile_case(
+        config, projection, voice_result, assembly, resources, active
+    )
+
+    assert result.occurrence_rows[0]["classification"] == "ambiguous_binding"
+    assert result.occurrence_rows[0]["candidate_binding_ids"] == [
+        candidate["binding_id"]
+    ]
+
+
+@pytest.mark.parametrize("successor_kind", ["parent", "child"])
+def test_legacy_media_zero_successor_cardinality_is_ambiguous(
+    tmp_path: Path,
+    successor_kind: str,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    candidate = _candidate_for_active(assembly, active)
+    active[f"{successor_kind}_id"] = f"char:1001/legacy-{successor_kind}"
+
+    result = _reconcile_case(
+        config, projection, voice_result, assembly, resources, active
+    )
+
+    row = result.occurrence_rows[0]
+    assert row["classification"] == "ambiguous_binding"
+    assert row[f"candidate_{successor_kind}_ids"] == []
+    assert row["candidate_binding_ids"] == [candidate["binding_id"]]
+
+
+@pytest.mark.parametrize(
+    "evidence_case",
+    [
+        "absent_manifest",
+        "conflicting_manifest",
+        "invalid_manifest",
+    ],
+)
+def test_legacy_media_absent_invalid_or_conflicting_manifest_remains_missing_metadata(
+    tmp_path: Path,
+    evidence_case: str,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    manifest = _manifest_for_active(resources, active)
+    other_resources = tuple(
+        row
+        for row in resources
+        if not (
+            row["sha1"] == active["sha1"]
+            and row["name"] == active["filename"]
+            and row["title"] == active["title"]
+        )
+    )
+    manifests = resources
+    if evidence_case == "absent_manifest":
+        manifests = other_resources
+    elif evidence_case == "conflicting_manifest":
+        manifests = (*resources, {**manifest, "size": int(manifest["size"]) + 1})
+    elif evidence_case == "invalid_manifest":
+        manifests = (*other_resources, {**manifest, "size": "invalid"})
+
+    result = _reconcile_case(
+        config, projection, voice_result, assembly, manifests, active
+    )
+
+    assert result.occurrence_rows[0]["classification"] == (
+        "missing_resource_metadata"
+    )
+
+
+def test_legacy_media_singleton_cardinalities_with_closure_identity_mismatch_are_conflicting(
+    tmp_path: Path,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    candidate = _candidate_for_active(assembly, active)
+    candidate["owner_page_id"] = "char:9999"
+    candidate["binding_id"] = compute_binding_id(candidate)
+    assembly = _with_candidate_rows(assembly, candidate)
+
+    result = _reconcile_case(
+        config, projection, voice_result, assembly, resources, active
+    )
+
+    row = result.occurrence_rows[0]
+    assert row["classification"] == "conflicting_binding"
+    assert row["candidate_parent_ids"] == [candidate["parent_id"]]
+    assert row["candidate_child_ids"] == [candidate["child_id"]]
+    assert row["candidate_binding_ids"] == [candidate["binding_id"]]
+
+
+def test_legacy_media_bytes_are_checked_after_ambiguity_and_closure(
+    tmp_path: Path,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    manifest = _manifest_for_active(resources, active)
+    other_resources = tuple(
+        row
+        for row in resources
+        if not (
+            row["sha1"] == active["sha1"]
+            and row["name"] == active["filename"]
+            and row["title"] == active["title"]
+        )
+    )
+    missing_bytes_resources = (
+        *other_resources,
+        {**manifest, "local_relpath": "assets/missing/not-present.png"},
+    )
+    candidate = _candidate_for_active(assembly, active)
+    duplicate = {**candidate, "source_binding_token": "collection:200:duplicate"}
+    duplicate["binding_id"] = compute_binding_id(duplicate)
+    ambiguous = _with_candidate_rows(assembly, candidate, duplicate)
+    conflict_candidate = {**candidate, "owner_page_id": "char:9999"}
+    conflict_candidate["binding_id"] = compute_binding_id(conflict_candidate)
+    conflicting = _with_candidate_rows(assembly, conflict_candidate)
+
+    missing_result = _reconcile_case(
+        config,
+        projection,
+        voice_result,
+        assembly,
+        missing_bytes_resources,
+        active,
+    )
+    ambiguous_result = _reconcile_case(
+        config,
+        projection,
+        voice_result,
+        ambiguous,
+        missing_bytes_resources,
+        active,
+    )
+    conflict_result = _reconcile_case(
+        config,
+        projection,
+        voice_result,
+        conflicting,
+        missing_bytes_resources,
+        active,
+    )
+
+    assert missing_result.occurrence_rows[0]["classification"] == "missing_local_bytes"
+    assert ambiguous_result.occurrence_rows[0]["classification"] == "ambiguous_binding"
+    assert conflict_result.occurrence_rows[0]["classification"] == "conflicting_binding"
+    assert missing_result.occurrence_rows[0]["local_evidence"] == {}
+
+
+def test_legacy_media_verified_bytes_distinguish_preserved_and_proven_rekey(
+    tmp_path: Path,
+) -> None:
+    config, resources, projection, voice_result, assembly, preserved = (
+        _legacy_media_case(tmp_path)
+    )
+    manifest = _manifest_for_active(resources, preserved)
+    candidate = _candidate_for_active(assembly, preserved)
+    legacy_parent = "char:1001/culture"
+    legacy_child = "char:1001/culture:0200"
+    rekeyed = {**preserved, "parent_id": legacy_parent, "child_id": legacy_child}
+    links = tuple(
+        SemanticRecordLink(
+            record_kind=kind,
+            legacy_id=legacy_id,
+            candidate_id=candidate_id,
+            change_kind="preserved_rekeyed",
+            source_title="Data:Char/1001.json",
+            source_content_sha256=SOURCE_SHA,
+            json_path="$.character_data.0",
+            legacy_section="culture",
+            candidate_section="collection",
+        )
+        for kind, legacy_id, candidate_id in (
+            ("parent", legacy_parent, candidate["parent_id"]),
+            ("child", legacy_child, candidate["child_id"]),
+        )
+    )
+    changed = replace(projection, record_links=links)
+
+    preserved_result = _reconcile_case(
+        config, projection, voice_result, assembly, resources, preserved
+    )
+    rekeyed_result = _reconcile_case(
+        config, changed, voice_result, assembly, resources, rekeyed
+    )
+
+    assert preserved_result.occurrence_rows[0]["classification"] == "preserved_binding"
+    assert rekeyed_result.occurrence_rows[0]["classification"] == "rekeyed_binding"
+    for result in (preserved_result, rekeyed_result):
+        assert result.occurrence_rows[0]["local_evidence"] == {
+            "content_sha256": candidate["content_sha256"],
+            "size": manifest["size"],
+            "sha1": manifest["sha1"],
+            "local_relpath": manifest["local_relpath"],
+        }
+
+
+def test_legacy_media_source_removal_requires_hash_pinned_explicit_evidence(
+    tmp_path: Path,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    absent = replace(assembly, runtime_rows=(), binding_inventory=(), binding_count=0)
+    valid_receipt = _verified_removal_receipt(active)
+    forged_receipt = {
+        **valid_receipt,
+        "child_id": "char:1001/forged-child",
+    }
+
+    assert "verified_source_removal_receipts" in inspect.signature(
+        reconcile_active_media_occurrences
+    ).parameters
+
+    no_evidence = _reconcile_case(
+        config,
+        projection,
+        voice_result,
+        absent,
+        resources,
+        active,
+        verified_source_removal_receipts=(),
+    )
+    forged = _reconcile_case(
+        config,
+        projection,
+        voice_result,
+        absent,
+        resources,
+        active,
+        verified_source_removal_receipts=(forged_receipt,),
+    )
+    with_evidence = _reconcile_case(
+        config,
+        projection,
+        voice_result,
+        absent,
+        resources,
+        active,
+        verified_source_removal_receipts=(valid_receipt,),
+    )
+    duplicate_evidence = _reconcile_case(
+        config,
+        projection,
+        voice_result,
+        absent,
+        resources,
+        active,
+        verified_source_removal_receipts=(valid_receipt, dict(valid_receipt)),
+    )
+
+    assert no_evidence.occurrence_rows[0]["classification"] != (
+        "source_removed_with_evidence"
+    )
+    assert forged.occurrence_rows[0]["classification"] != (
+        "source_removed_with_evidence"
+    )
+    assert with_evidence.occurrence_rows[0]["classification"] == (
+        "source_removed_with_evidence"
+    )
+    assert duplicate_evidence.occurrence_rows[0]["classification"] == (
+        "ambiguous_binding"
+    )
+
+
+def test_legacy_media_duplicate_candidate_consumption_is_ambiguous(
+    tmp_path: Path,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+
+    result = _reconcile_case(
+        config,
+        projection,
+        voice_result,
+        assembly,
+        resources,
+        active,
+        dict(active),
+    )
+
+    assert result.category_counts == {"ambiguous_binding": 2}
+    assert all(
+        row["candidate_binding_ids"]
+        == [_candidate_for_active(assembly, active)["binding_id"]]
+        for row in result.occurrence_rows
+    )
+
+
+def test_legacy_media_occurrence_identity_order_and_categories_are_deterministic(
+    tmp_path: Path,
+) -> None:
+    config, resources, projection, voice_result, assembly, active = (
+        _legacy_media_case(tmp_path)
+    )
+    second = {**active, "legacy_occurrence_token": "second"}
+    first = {**active, "legacy_occurrence_token": "first"}
+
+    forward = _reconcile_case(
+        config, projection, voice_result, assembly, resources, first, second
+    )
+    reverse = _reconcile_case(
+        config, projection, voice_result, assembly, resources, second, first
+    )
+
+    assert forward.occurrence_rows == reverse.occurrence_rows
+    assert forward.category_counts == reverse.category_counts
+    assert [row["occurrence_id"] for row in forward.occurrence_rows] == sorted(
+        row["occurrence_id"] for row in forward.occurrence_rows
     )
