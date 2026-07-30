@@ -1392,11 +1392,11 @@ Material shortfall 只包括第 20 节固定的八个证据 shortfall code，且
 
 `ANSWER-P0-10`：`SubtaskInfo.story_answer_scope` 的类型固定为 `StoryAnswerScope/v2 | null`；各 `BranchResult` 只提供归一化输入和 shortfall。顶层响应按原子任务顺序公开仅含非空项的 `story_subtask_scopes[]`，不为非 Story 或未执行 Story 分支制造占位 scope，也不生成跨异构子任务的单一 `claim_scope`。
 
-`ANSWER-P0-11`：顶层只保留现有 `ResponsePacket.retrieval_outcome` 作为知识检索汇总事实，不新增或持久化第二份 `overall_evidence_state`。聚合时先从知识分支结果中过滤 `not_applicable`：过滤后为空则为 `not_applicable`；全部为 `sufficient`、`empty` 或 `failed` 时分别返回同名状态；其他组合返回 `partial`。local/meta/smalltalk 不参加，`failed/not_applicable` 不得转换为 `empty`。
+`ANSWER-P0-11`：请求级唯一内部事实源固定为 `ResponsePacket.retrieval_packet.route_decision.retrieval_outcome`，不新增 `ResponsePacket.retrieval_outcome` 镜像，也不新增或持久化第二份 `overall_evidence_state`。聚合时先从知识分支结果中过滤 `not_applicable`，再把唯一结果写入冻结前的 `RouteDecision`：过滤后为空则为 `not_applicable`；全部为 `sufficient`、`empty` 或 `failed` 时分别返回同名状态；其他组合返回 `partial`。local/meta/smalltalk 不参加，`failed/not_applicable` 不得转换为 `empty`。
 
-`ANSWER-P0-12`：REST 与 SSE 必须公开一致的 nullable `SubtaskInfo.story_answer_scope`、`story_subtask_scopes[]`、顶层 `retrieval_outcome` 和 shortfall codes。非空 scope 在 generator 开始前由冻结 packet 计算并先进入流式 metadata；流式首段不得先声称完整、结束时再追加相反 shortfall。
+`ANSWER-P0-12`：REST 与 SSE 必须公开一致的 nullable `SubtaskInfo.story_answer_scope`、`story_subtask_scopes[]`、`route.retrieval_outcome` 和 shortfall codes。serializer 必须从 `retrieval_packet.route_decision.retrieval_outcome` 投影公开 `route.retrieval_outcome`；不得从 `diagnostics["route"]` 读取、重算或选择另一个 outcome。diagnostics 若为 trace 保留派生副本，该副本只能由同一个 `RouteDecision` 生成并接受一致性校验，不能成为 serializer、REST、SSE 或 fallback 的输入。非空 scope 在 generator 开始前由冻结 packet 计算并先进入流式 metadata；流式首段不得先声称完整、结束时再追加相反 shortfall。
 
-`ANSWER-P0-13`：测试必须覆盖：非 Story KB 正常参与顶层 outcome 且 scope 为 `null`；Story `denied`；Story `needs_continuation`；一个成功 KB 与一个 `boundary_story_scope_invalid` 共存；已授权 Story retrieval `failed`；已授权 Story 零 ContextUnit。前四类不得触发 empty fallback，failed 必须保留 failed 语义，只有最后一类产生非空 scope 且 `evidence_state=empty`。复合请求中的 `not_applicable` 分支不得使现有 KB 聚合器抛出契约错误。
+`ANSWER-P0-13`：测试必须覆盖：非 Story KB 正常参与顶层 outcome 且 scope 为 `null`；Story `denied`；Story `needs_continuation`；一个成功 KB 与一个 `boundary_story_scope_invalid` 共存；已授权 Story retrieval `failed`；已授权 Story 零 ContextUnit。前四类不得触发 empty fallback，failed 必须保留 failed 语义，只有最后一类产生非空 scope 且 `evidence_state=empty`。复合请求中的 `not_applicable` 分支不得使现有 KB 聚合器抛出契约错误。每个用例还必须断言内部 `route_decision.retrieval_outcome`、REST `route.retrieval_outcome`、SSE `sources.route.retrieval_outcome` 与 SSE `done.route.retrieval_outcome` 四者完全一致，并使用故意冲突的 diagnostics fixture 证明公开值仍来自 `RouteDecision`。
 
 ## 21. 全章总结边界
 
@@ -1728,13 +1728,14 @@ canonical_evidence_text_sha256
 | 有 relevant final-context 证据的 shortfall 错误拒答次数 | `0` |
 | StoryAnswerScope/v2 适用性与确定性归一化正确率 | `1.00`；present/null 矩阵正确，同一适用 packet 重复结果字节一致 |
 | KB `not_applicable` 聚合与 empty-fallback 隔离正确率 | `1.00`；边界/拒绝/继续分支零错误 empty fallback |
+| 请求级 retrieval outcome 内外投影一致率 | `1.00`；内部 RouteDecision、REST、SSE sources 与 SSE done 字节值一致 |
 | 非穷尽回答错误声称完整/唯一/全部次数 | `0` |
 | 答案范围判断新增模型/API 调用次数 | `0` |
 | Reranker API 调用次数 | `0` |
 
 `GATE-P0-01`：任一硬门槛失败即 `no_go`；不得用其他指标平均分、人工主观印象或生成回答流畅度抵消。
 
-`GATE-P0-02`：引用闭合、重复正文、分支越界、Owner 越权、RequestPlan v2 单次 finalization/span 归属、Policy Story mention precision/recall、self-contained continuation 无损重验、anchor set/clear/遮蔽、required Story 授权、StoryAnswerScope 适用性与确定性归一化、`not_applicable`/empty-fallback 隔离、shortfall 错误拒答、非穷尽过度声明、baseline 等价证据误判、超长 Atom 闭合、protected 零退化、容量和 provenance 属于零容忍门槛。
+`GATE-P0-02`：引用闭合、重复正文、分支越界、Owner 越权、RequestPlan v2 单次 finalization/span 归属、Policy Story mention precision/recall、self-contained continuation 无损重验、anchor set/clear/遮蔽、required Story 授权、StoryAnswerScope 适用性与确定性归一化、`not_applicable`/empty-fallback 隔离、RouteDecision/REST/SSE outcome 投影一致、shortfall 错误拒答、非穷尽过度声明、baseline 等价证据误判、超长 Atom 闭合、protected 零退化、容量和 provenance 属于零容忍门槛。
 
 `GATE-P0-03`：若 Segment Dense 未达阈值，允许保留 E 的代码与影子报告继续诊断，但不得重建为可激活候选，也不得临时开启 Reranker 掩盖问题。
 
@@ -1883,7 +1884,8 @@ canonical_evidence_text_sha256
 - 分支级失败隔离；
 - 硬授权边界与软 evidence shortfall 分离；
 - 仅适用于已授权且完成检索 Story 子任务的 nullable `StoryAnswerScope/v2`、三态归一化、正交 coverage、默认尽力回答、严格姿态和非穷尽措辞；
-- 复用现有顶层 `retrieval_outcome` 聚合，过滤 `not_applicable` 且不新增 `overall_evidence_state`；
+- 复用 `ResponsePacket.retrieval_packet.route_decision.retrieval_outcome` 作为请求级唯一事实，聚合前过滤 `not_applicable`，且不新增 `ResponsePacket.retrieval_outcome` 或 `overall_evidence_state`；
+- REST 与 SSE 统一投影为 `route.retrieval_outcome`，serializer 不从 diagnostics 读取 outcome；
 - 同步/流式响应一致。
 
 ### E5：离线评测与 D Handoff
@@ -1924,7 +1926,7 @@ canonical_evidence_text_sha256
 21. 单 Story 多细节不会只保留一个局部邻接簇。
 22. `暴雨是什么` 等 Topic 查询保留 Topic/Page 定义证据。
 23. 数字实体、短对白、精确标识和角色关系评测达到零退化/精度门槛。
-24. `StoryAnswerScope/v2` 不新增模型调用；present/null 适用性矩阵唯一，适用分支的 `sufficient/partial/empty` 本地归一化唯一，partial 有证据时输出非空尽力回答，因果推断有标记，正交 coverage 可共存，非穷尽回答零完整性过度声明；非 Story、边界、拒绝、继续和失败分支不得生成伪 scope。
+24. `StoryAnswerScope/v2` 不新增模型调用；present/null 适用性矩阵唯一，适用分支的 `sufficient/partial/empty` 本地归一化唯一，partial 有证据时输出非空尽力回答，因果推断有标记，正交 coverage 可共存，非穷尽回答零完整性过度声明；非 Story、边界、拒绝、继续和失败分支不得生成伪 scope；请求级 outcome 的 RouteDecision、REST、SSE sources 与 SSE done 投影完全一致。
 25. 硬授权边界与软 evidence shortfall 不混用；shortfall 不触发 empty/free fallback。
 26. 重复正文、引用闭合、分支越界、Owner 越权和所有 go/no-go 指标达到第 26.1 节硬阈值。
 27. Reranker 保持关闭且调用次数为零。
@@ -2047,11 +2049,11 @@ canonical_evidence_text_sha256
 |---|---|---|
 | 非授权 Story 状态没有合法 coverage | authorized 必须携带四值之一；proposed/denied/needs-continuation 固定 coverage 为 `null` | 给 coverage 增加 `not_applicable`、空字符串或默认 `complete` |
 | 非 Story、boundary 和 failed 被强制生成 Story scope | `SubtaskInfo.story_answer_scope` nullable；只有 ready + authorized + completed retrieval + frozen packet 才生成 | 为所有 KB 创建占位 Story context/scope，或把 failed/boundary 伪装成 empty |
-| 顶层存在第二份 evidence 汇总事实 | 复用 `ResponsePacket.retrieval_outcome`；聚合前过滤 `not_applicable`，全被过滤才返回 `not_applicable` | 新增并持久化 `overall_evidence_state`，或让 REST/SSE 分别重算 |
+| 顶层存在第二份 evidence 汇总事实 | 复用 `ResponsePacket.retrieval_packet.route_decision.retrieval_outcome`；聚合前过滤 `not_applicable`，全被过滤才返回 `not_applicable` | 新增 `ResponsePacket.retrieval_outcome`、持久化 `overall_evidence_state`，或让 diagnostics/REST/SSE 分别重算 |
 | 成功 KB 与边界分支共存时聚合不可达 | `not_applicable` 分支不参与 evidence 聚合，成功 KB 继续决定顶层 outcome；分支边界/action 独立保留 | 因一个 boundary 拒绝完整复合请求，或将 boundary 当 empty 触发自由补充 |
 
 `REVIEW-P0-16`：授权适用性、检索执行结果和答案范围是三个正交层次：nullable Story context 表达是否适用；context status/coverage 表达是否获准及覆盖范围；`retrieval_outcome` 表达执行结果；nullable Story scope 只表达已完成 Story evidence packet 的答案强度。实现不得把任意两层压缩为一个扩展枚举。
 
-`REVIEW-P0-17`：顶层 `retrieval_outcome` 是唯一汇总事实。`not_applicable` 表示该知识分支没有执行检索，必须在聚合前过滤；`failed` 表示尝试执行但失败，必须保留；只有真实执行且零证据的 `empty` 才能进入既有 empty policy。
+`REVIEW-P0-17`：`ResponsePacket.retrieval_packet.route_decision.retrieval_outcome` 是请求级唯一汇总事实。`not_applicable` 表示该知识分支没有执行检索，必须在进入 `aggregate_retrieval_outcome()` 前过滤；`failed` 表示尝试执行但失败，必须保留；只有真实执行且零证据的 `empty` 才能进入既有 empty policy。REST 与 SSE 只能把该值投影到 `route.retrieval_outcome`；diagnostics 不是公开序列化或 fallback 的事实源。
 
 `REVIEW-P0-18`：本轮新增的只是 nullable invariant、既有聚合器的确定性过滤规则和六类状态测试，不授权通用 `KnowledgeAnswerScope`、新的 API 调用、另一套 fallback、旧 v1 兼容猜测或分支白名单。
