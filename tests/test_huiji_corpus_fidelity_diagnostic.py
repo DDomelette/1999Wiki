@@ -705,7 +705,7 @@ def _run_config(
             "policy_selection": {},
             "run": {"run_id": "task8-c-20260729T161119Z"},
             "stage_metrics": {},
-            "status": "accepted",
+            "status": "completed_pending_review",
             "story_record_link_evidence": {
                 "parent": {
                     "candidate_count": 1,

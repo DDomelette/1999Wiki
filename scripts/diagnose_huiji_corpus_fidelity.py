@@ -945,7 +945,7 @@ def load_validated_evidence(config: dict[str, object]) -> SimpleNamespace:
     if (
         c8b_taxonomy.get("schema_version")
         != "huiji.task8-c8b-story-legacy-taxonomy/v1"
-        or c8b_taxonomy.get("status") != "accepted"
+        or c8b_taxonomy.get("status") != "completed_pending_review"
         or not isinstance(c8b_taxonomy.get("story_record_link_evidence"), dict)
     ):
         raise ValueError("C8b taxonomy identity mismatch")
