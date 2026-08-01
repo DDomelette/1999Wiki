@@ -1097,7 +1097,9 @@ def _is_story_ledger_row(row: Mapping[str, object]) -> bool:
     )
 
 
-def _partition_summary(fidelity: object) -> tuple[dict[str, object], list[dict[str, object]]]:
+def _partition_summary(
+    fidelity: object,
+) -> tuple[dict[str, object], dict[str, object]]:
     ledger = tuple(dict(row) for row in fidelity.ledger_rows)
     story_rows = [row for row in ledger if _is_story_ledger_row(row)]
     non_story_rows = [
@@ -1117,7 +1119,7 @@ def _partition_summary(fidelity: object) -> tuple[dict[str, object], list[dict[s
                 _hash_text(str(value)) for value in story_child.get("candidate_identities", ())
             ),
         }
-    non_story = [
+    sanitized_non_story_rows = [
         {
             "record_kind": str(row.get("record_kind") or ""),
             "classification": str(row.get("classification") or ""),
@@ -1130,8 +1132,35 @@ def _partition_summary(fidelity: object) -> tuple[dict[str, object], list[dict[s
         }
         for row in non_story_rows
     ]
-    non_story.sort(key=lambda row: tuple(str(row[key]) for key in sorted(row)))
-    return story_evidence, non_story
+    sanitized_non_story_rows.sort(
+        key=lambda row: tuple(str(row[key]) for key in sorted(row))
+    )
+    non_story_evidence = {
+        "record_count": len(sanitized_non_story_rows),
+        "partition_sha256": _sha256(_canonical_bytes(sanitized_non_story_rows)),
+        "record_kind_counts": dict(
+            sorted(
+                Counter(
+                    row["record_kind"] for row in sanitized_non_story_rows
+                ).items()
+            )
+        ),
+        "classification_counts": dict(
+            sorted(
+                Counter(
+                    row["classification"] for row in sanitized_non_story_rows
+                ).items()
+            )
+        ),
+        "reason_code_counts": dict(
+            sorted(
+                Counter(
+                    row["reason_code"] for row in sanitized_non_story_rows
+                ).items()
+            )
+        ),
+    }
+    return story_evidence, non_story_evidence
 
 
 def _summary(config: Mapping[str, Any], fidelity: object) -> dict[str, object]:

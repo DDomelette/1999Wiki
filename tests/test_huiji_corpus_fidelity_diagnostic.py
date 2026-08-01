@@ -2500,22 +2500,15 @@ def test_diagnostic_calls_full_fidelity_and_separates_blocker_classes(
         _hashed("story:9/story:step-0001"),
     ]
     non_story_evidence = summary["non_story_partition_evidence"]
-    assert non_story_evidence == [
-        {
-            "record_kind": "child",
-            "classification": "blocked_ambiguous",
-            "reason_code": "candidate_identity_ambiguous",
-            "active_identity_sha256": _hashed(
-                "story:mismatched-prefix/profile:0000"
-            ),
-            "candidate_identities_sha256": _hashed(
-                "character:9/profile-v2:0000"
-            ),
-            "source_evidence_sha256": _hashed(
-                "Data:Character/9.json\0" + "b" * 64
-            ),
-        }
-    ]
+    assert non_story_evidence == {
+        "record_count": 1,
+        "partition_sha256": (
+            "776f6df8e213b5427da2957dc7a1320c7e999b0cf043238c144de50a6fae3f90"
+        ),
+        "record_kind_counts": {"child": 1},
+        "classification_counts": {"blocked_ambiguous": 1},
+        "reason_code_counts": {"candidate_identity_ambiguous": 1},
+    }
     assert "story" not in json.dumps(summary["non_story_media_blocker_counts"])
 
 
@@ -2828,6 +2821,109 @@ def test_diagnostic_blocks_network_external_writers_and_media_bytes(
     assert subprocess_counts == {"total": 1, "allowed": 1, "forbidden": 0}
     receipt = json.loads((output_root / OUTPUT_NAMES[1]).read_bytes())
     assert receipt["activity_counters"] == ACTIVITY_COUNTERS
+
+
+def test_summary_compacts_non_story_partition_beyond_sample_limit() -> None:
+    module = _load_diagnostic()
+    rows = []
+    for index in range(7):
+        row = copy.deepcopy(_non_story_ledger_row())
+        row["record_kind"] = "child" if index < 4 else "parent"
+        row["active_identity"] = f"character:{index}/profile"
+        row["candidate_identities"] = [f"character:{index}/profile-v2"]
+        if index >= 4:
+            row["classification"] = "corrected_semantics"
+            row["reason_code"] = "section_semantics_changed"
+        rows.append(row)
+    fidelity = SimpleNamespace(passed=False, blockers=(), ledger_rows=tuple(rows))
+    config = {
+        "run_id": RUN_ID,
+        "sample_limit_per_blocker_prefix": 2,
+        "expected_protected_identity_count": 32,
+        "expected_legacy_media_category_counts": {
+            category: 0 for category in MEDIA_COUNTS
+        },
+    }
+
+    summary = module._summary(config, fidelity)
+    evidence = summary["non_story_partition_evidence"]
+
+    assert isinstance(evidence, dict), "full non-Story rows must not be serialized"
+    assert set(evidence) == {
+        "record_count",
+        "partition_sha256",
+        "record_kind_counts",
+        "classification_counts",
+        "reason_code_counts",
+    }
+    assert evidence["record_count"] == 7
+    assert evidence["record_kind_counts"] == {"child": 4, "parent": 3}
+    assert evidence["classification_counts"] == {
+        "blocked_ambiguous": 4,
+        "corrected_semantics": 3,
+    }
+    assert evidence["reason_code_counts"] == {
+        "candidate_identity_ambiguous": 4,
+        "section_semantics_changed": 3,
+    }
+    assert len(evidence["partition_sha256"]) == 64
+    assert all(not isinstance(value, list) for value in evidence.values())
+    assert all(len(samples) <= 2 for samples in summary["structured_samples"].values())
+    single_evidence = module._summary(
+        config,
+        SimpleNamespace(passed=False, blockers=(), ledger_rows=(rows[0],)),
+    )["non_story_partition_evidence"]
+    assert set(single_evidence) == set(evidence)
+    assert all(not isinstance(value, list) for value in single_evidence.values())
+
+
+@pytest.mark.parametrize(
+    "changed_field",
+    (
+        "record_kind",
+        "classification",
+        "reason_code",
+        "active_identity",
+        "candidate_identities",
+        "source_evidence",
+    ),
+)
+def test_non_story_partition_digest_is_order_independent_and_field_complete(
+    changed_field: str,
+) -> None:
+    module = _load_diagnostic()
+    rows = []
+    for index in range(3):
+        row = copy.deepcopy(_non_story_ledger_row())
+        row["active_identity"] = f"character:{index}/profile"
+        row["candidate_identities"] = [f"character:{index}/profile-v2"]
+        rows.append(row)
+    fidelity = SimpleNamespace(ledger_rows=tuple(rows))
+    reversed_fidelity = SimpleNamespace(ledger_rows=tuple(reversed(rows)))
+
+    baseline = module._partition_summary(fidelity)[1]
+    reversed_evidence = module._partition_summary(reversed_fidelity)[1]
+
+    assert reversed_evidence == baseline
+    changed_rows = copy.deepcopy(rows)
+    changed = changed_rows[0]
+    if changed_field == "record_kind":
+        changed[changed_field] = "parent"
+    elif changed_field == "classification":
+        changed[changed_field] = "corrected_semantics"
+    elif changed_field == "reason_code":
+        changed[changed_field] = "section_semantics_changed"
+    elif changed_field == "active_identity":
+        changed[changed_field] = "character:changed/profile"
+    elif changed_field == "candidate_identities":
+        changed[changed_field] = ["character:changed/profile-v2"]
+    else:
+        changed[changed_field][0]["source_content_sha256"] = "e" * 64
+    changed_evidence = module._partition_summary(
+        SimpleNamespace(ledger_rows=tuple(changed_rows))
+    )[1]
+
+    assert changed_evidence["partition_sha256"] != baseline["partition_sha256"]
 
 
 def test_diagnostic_bounds_sanitizes_and_deterministically_orders_samples(
