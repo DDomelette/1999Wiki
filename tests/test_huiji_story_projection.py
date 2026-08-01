@@ -260,6 +260,39 @@ def test_same_priority_story_name_conflict_blocks_only_affected_story() -> None:
     }
 
 
+def test_unique_direct_name_ignores_conflicting_lower_priority_aliases() -> None:
+    result = project_stories(
+        [
+            _story(
+                "450",
+                {
+                    "info": {"title": "Direct Name"},
+                    "1": {"text": _multilingual("Kept")},
+                },
+            ),
+            _nested_episode("First Losing Name", main="450"),
+            _nested_episode(
+                "Second Losing Name",
+                main="450",
+                title="Data:Episode/10103.json",
+                revid=362385,
+            ),
+        ]
+    )
+
+    assert result.blocked_story_ids == ()
+    assert result.parents[0].entity_name == "Direct Name"
+    assert result.parents[0].entity_aliases == ()
+    assert result.children[0].block.entity_aliases == ()
+    assert [
+        (ref["source_title"], ref["json_path"])
+        for ref in result.parents[0].source_refs
+    ] == [
+        ("Data:Story/450.json", "$"),
+        ("Data:Story/450.json", "$.info.title"),
+    ]
+
+
 def test_lower_priority_names_become_sorted_aliases() -> None:
     result = project_stories(
         [

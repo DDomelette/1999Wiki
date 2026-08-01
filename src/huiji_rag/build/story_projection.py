@@ -278,18 +278,24 @@ def _resolve_name(
     grouped: dict[int, set[str]] = {}
     for item in values:
         grouped.setdefault(item.priority, set()).add(item.name)
-    if any(len(names) > 1 for names in grouped.values()):
-        return None
     if not grouped:
         return f"Data:Story/{story_id}", (), True, ()
     winning_priority = min(grouped)
-    entity_name = next(iter(grouped[winning_priority]))
+    winning_names = grouped[winning_priority]
+    if len(winning_names) != 1:
+        return None
+    entity_name = next(iter(winning_names))
+    retained_priorities = {
+        priority
+        for priority, names in grouped.items()
+        if priority == winning_priority or len(names) == 1
+    }
     aliases = tuple(
         sorted(
             {
                 name
                 for priority, names in grouped.items()
-                if priority > winning_priority
+                if priority in retained_priorities and priority > winning_priority
                 for name in names
                 if name != entity_name
             },
@@ -299,7 +305,8 @@ def _resolve_name(
     source_refs = tuple(
         source_ref
         for item in values
-        if item.name == entity_name or item.name in aliases
+        if item.priority in retained_priorities
+        and (item.name == entity_name or item.name in aliases)
         for source_ref in item.source_refs
     )
     return entity_name, aliases, False, source_refs
