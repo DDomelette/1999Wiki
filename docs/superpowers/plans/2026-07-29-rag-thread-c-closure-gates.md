@@ -321,6 +321,75 @@ The commit contains C8c only and downloads no media.
 
 ---
 
+### Task 4A: Close the Approved Control-Only Story Exclusion Migration
+
+**Files:**
+
+- Modify: `src/huiji_rag/build/story_projection.py`
+- Modify: `src/huiji_rag/build/projection.py`
+- Modify: `src/huiji_rag/build/fidelity.py`
+- Test: `tests/test_huiji_story_projection.py`
+- Test: `tests/test_huiji_corpus_projection.py`
+- Test: `tests/test_huiji_corpus_fidelity.py`
+- Evidence: one new ignored bounded diagnostic directory only if needed
+
+**Interfaces:**
+
+- Consumes: accepted C8b and C8c commits, accepted Story-name correction commit
+  `5283b5494fc8d47daa47b1740ae21962b6b00e1f`, and approved section 7.2 of
+  `2026-07-29-rag-thread-c-story-migration-decision.md`.
+- Produces: one atomic, source-backed Story `profile` Parent/Child-to-exclusion
+  `corrected_semantics` contract. It produces no candidate Story text.
+
+- [ ] **Step 1: Pin the amended decision and verify the clean base**
+
+The fresh C high session receives the exact decision-file SHA-256, expected
+HEAD/tree, exact allowlist, Conda interpreter, and forbidden operations. Any
+tracked, staged, or unmerged drift blocks the task.
+
+- [ ] **Step 2: Add RED tests before production changes**
+
+RED must prove the approved empty-object and control-only cases are not yet
+closed, then cover the complete matrix from decision section 9: hidden speaker
+state, visible or potentially visible content, wrong source evidence, partial
+legacy closure, duplicate/competing exclusion consumption, non-Story isolation,
+determinism, and absence of per-ID exceptions.
+
+D must observe and record the exact failing test nodes before GREEN begins.
+
+- [ ] **Step 3: Implement only the Story-specific atomic transition**
+
+Use the existing `ProjectionExclusion` as the sole source-side fact. Harden the
+Story empty/control-only classification, carry its deterministic source proof,
+and validate the complete active Parent/Child pair atomically in fidelity.
+Do not create synthetic Story atoms, a generic cross-kind migration API, a
+second manually populated migration list, or any media/runtime change.
+
+- [ ] **Step 4: Run GREEN and adjacent regression**
+
+Use a fresh OS temporary `--basetemp` for every pytest command. Run the exact RED
+nodes, all three directly affected test files, and the existing five-file
+76-test regression floor. A bounded, read-only in-memory snapshot diagnostic may
+then prove exactly 15 control-only/empty Story exclusion groups close, the 11
+accepted restored Story sources remain projected, protected identities remain
+32 with zero drift, and no media/network/vector/activation/production operation
+occurs. Do not invoke the C8d CLI or build a candidate.
+
+- [ ] **Step 5: D independently reviews and commits the correction**
+
+D reviews the full source/test diff, RED and GREEN identities, bounded evidence,
+tracked/index/unmerged state, and forbidden-operation counters. After approval,
+stage only the allowlisted implementation and test files and commit:
+
+```text
+fix(rag): reconcile control-only story exclusions
+```
+
+The decision and plan amendment must already be hash-pinned in a preceding
+D-owned documentation commit. C8d cannot resume until both commits are accepted.
+
+---
+
 ### Task 5: Run C8d With a Self-Contained Diagnostic Entry Point
 
 **Files:**
@@ -331,7 +400,8 @@ The commit contains C8c only and downloads no media.
 
 **Interfaces:**
 
-- Consumes: accepted C8a, C8b, and C8c commits plus the frozen source snapshot.
+- Consumes: accepted C8a, C8b, C8c, and Task 4A commits plus the frozen source
+  snapshot.
 - Produces: immutable full fidelity evidence and remaining blocker-prefix counts.
 
 - [ ] **Step 1: Freeze the diagnostic identity**

@@ -1,6 +1,8 @@
 # Thread C C8b Story Migration Architecture Decision
 
-**Status:** Approved by user on 2026-07-30 for C8b implementation only.
+**Status:** Approved by user on 2026-07-30 for C8b implementation; amended
+by user approval on 2026-08-02 for the bounded control-only Story exclusion
+migration in section 7.2.
 
 **Owner:** Thread D
 
@@ -15,6 +17,15 @@
 - Protected identities: 32
 - Protected drift: 0
 - Forbidden-operation counters: all zero
+
+**Supplementary control-only evidence:**
+
+- Accepted projection commit: `5283b5494fc8d47daa47b1740ae21962b6b00e1f`
+- Accepted tree: `8f6c0b2e3526c9e69c551342297246b09313184f`
+- Read-only forensic CLI session: `019fbeb0-fb34-76f3-afd9-e41dfbe5ee2a`
+- Model gate: `gpt-5.6-sol`, `model_reasoning_effort=high`, fast mode and
+  multi-agent disabled
+- Forbidden operations: all zero; no candidate build or C8d/C9 run occurred
 
 ## 1. Decision Summary
 
@@ -203,7 +214,9 @@ New and old rows may coexist only when they represent distinct source facts
 with independent stable identities. Coexistence is not a way to bypass a
 missing migration link.
 
-## 7. The 26 Unmatched Source Groups
+## 7. Unmatched and Control-Only Source Groups
+
+### 7.1 Revision-lineage rule for otherwise unmatched source groups
 
 Exact title with a different source hash is not sufficient by itself.
 
@@ -222,6 +235,69 @@ If any condition is missing, the blocker remains. `source_removed` is allowed
 only when the source inventory explicitly proves removal; it cannot be
 inferred from a hash mismatch.
 
+The initial taxonomy contained 26 unmatched source groups. Commit
+`5283b5494fc8d47daa47b1740ae21962b6b00e1f` restored 11 of them through a
+unique, higher-priority source-backed Story name. Those 11 use the existing
+Parent/Child Story expansion contract and are not part of section 7.2.
+
+### 7.2 Atomic legacy Story profile to source-backed exclusion migration
+
+The remaining 15 source identities are:
+
+```text
+0, 106, 108, 127, 202523, 305690, 309709, 309710, 309711,
+310505, 310507, 310510, 310512, 312710, 313411
+```
+
+The accepted read-only forensic pass proved that their exact current source
+pages still exist and match the legacy source title, revision, and content
+hash. Story `0` contains an empty object. The other 14 contain only supported
+numeric step/control structures: across 43 inspected steps there is no
+source-backed user-visible dialogue, choice, or scene content. Story `108`
+contains hidden speaker-name state with `show_name=false`; it is control state,
+not independently visible Story text. Four Episode `beforeStory` relations
+provide names for `310505`, `310507`, `310510`, and `310512`, but no Story body.
+
+These sources are not `source_removed`, corrupt, or unsupported visible Story.
+The old active corpus instead materialized one generic `profile` Parent and one
+generic Child per source from serialized control JSON. Restoring that aggregate,
+creating synthetic atoms, or selecting a control field as text is forbidden.
+
+For this class only, fidelity may close the exact legacy Parent/Child pair as
+one atomic `corrected_semantics` transition to one source-backed Story
+exclusion. The transition is valid only when all of the following are true:
+
+- exactly one active Story `profile` Parent and exactly one active Story
+  `profile` Child share one canonical source identity;
+- exactly one candidate `ProjectionExclusion` has the same normalized
+  `Data:Story/<story-id>.json` title, content SHA-256, revision identity,
+  root JSON path, Story entity identity, and an approved control-only reason;
+- the current source is valid JSON and the Story ID parsed from the title agrees
+  with the exclusion and active owner identities;
+- the hardened Story projector deterministically proves zero visible Story
+  atoms while distinguishing control-only/empty input from unsupported visible
+  structures;
+- the migration consumes the complete legacy Parent/Child pair and the one
+  exclusion as a single group; partial Parent-only or Child-only closure is
+  invalid;
+- the exclusion evidence is consumed by no competing migration group and is
+  not duplicated as a second source-side fact;
+- both legacy ledger rows identify the same atomic migration group and use
+  `classification=corrected_semantics` with no candidate text identity;
+- the existing exclusion ledger remains source-backed and deterministic.
+
+The source-side single source of truth is the existing `ProjectionExclusion`.
+Any revision or zero-visible-atom proof required by this path must be carried
+deterministically with that exclusion and validated by fidelity; a second
+manually populated migration list is forbidden.
+
+The following remain fail-closed as `blocked_ambiguous`: wrong or missing
+title/hash/revision/path evidence, invalid JSON, any supported or unsupported
+user-visible Story content, inconsistent owner or Story ID, multiple active
+Parents or Children, incomplete Parent/Child closure, duplicate or competing
+exclusions, and every non-Story record. The implementation must be structural
+and source-derived; a per-ID allowlist is forbidden.
+
 ## 8. Fidelity Contract Changes
 
 C8b may change only the minimum contract needed to represent an approved
@@ -239,6 +315,12 @@ Story expansion:
 6. Emit all candidate IDs in one deterministic fidelity-ledger row and mark
    every target consumed.
 7. Preserve the existing one-to-one behavior for every non-Story record.
+8. Permit the section 7.2 transition without manufacturing a candidate Parent
+   or Child. Validate it as one atomic Story-specific group before either legacy
+   row is classified or consumed.
+9. Do not generalize Parent/Child-to-exclusion migration beyond the exact Story
+   control-only contract, and do not introduce a second projection or fidelity
+   fact source for the same exclusion.
 
 No general-purpose one-to-many reconciliation API is authorized.
 
@@ -258,6 +340,17 @@ RED tests must cover:
 - fuzzy, positional, ordinal, and count-only matching absent;
 - 26-style unmatched records remain blockers;
 - non-Story duplicate legacy links still fail closed.
+- a valid empty-object Story closes one exact legacy Parent/Child pair through
+  one source-backed exclusion;
+- a valid control-only numeric-step Story closes through the same group rule;
+- hidden speaker state with `show_name=false` is not emitted as visible text;
+- visible dialogue, choice, scene, or unsupported potentially visible structure
+  cannot use the exclusion migration;
+- wrong revision, hash, root path, Story owner, partial legacy closure, duplicate
+  exclusion, or competing consumption remains blocked;
+- the accepted 15-row behavior is derived from source structure rather than an
+  ID allowlist;
+- the transition produces no candidate Parent/Child text or stable text ID.
 
 GREEN verification must include:
 
@@ -293,10 +386,20 @@ feat(rag): classify story and legacy corpus migration
 
 C8c does not start until D accepts that commit.
 
+The section 7.2 amendment is a bounded post-C8b correction gate after the
+already accepted C8c commit. It must end in its own reviewed commit before C8d
+is run again. It does not reopen or alter accepted C8c media semantics.
+
 ## 11. Approval Gate
 
-Approved by the user on 2026-07-30.
+Approved by the user on 2026-07-30. The section 7.2 amendment was approved by
+the user on 2026-08-02.
 
 This approval authorizes only the test-first C8b implementation above. It does not
 authorize C8c media reconciliation, downloads, vector rebuilding, activation,
 or production writes.
+
+The 2026-08-02 amendment authorizes only the test-first, Story-specific atomic
+Parent/Child-to-exclusion `corrected_semantics` transition. It does not
+authorize media changes, candidate construction, C8d/C9 execution, downloads,
+embeddings, vector rebuilding, activation, or production writes.
