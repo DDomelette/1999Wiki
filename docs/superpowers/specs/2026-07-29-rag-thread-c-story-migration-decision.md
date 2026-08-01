@@ -294,8 +294,10 @@ manually populated migration list is forbidden.
 The following remain fail-closed as `blocked_ambiguous`: wrong or missing
 title/hash/revision/path evidence, invalid JSON, any supported or unsupported
 user-visible Story content, inconsistent owner or Story ID, multiple active
-Parents or Children, incomplete Parent/Child closure, duplicate or competing
-exclusions, and every non-Story record. The implementation must be structural
+Parents or Children, incomplete Parent/Child closure, conflicting duplicate or
+competing exclusions, and every non-Story record. An exact duplicate exclusion
+payload continues to use the approved C8a deterministic deduplication rule and
+must not create a second migration fact. The implementation must be structural
 and source-derived; a per-ID allowlist is forbidden.
 
 ## 8. Fidelity Contract Changes
@@ -346,8 +348,10 @@ RED tests must cover:
 - hidden speaker state with `show_name=false` is not emitted as visible text;
 - visible dialogue, choice, scene, or unsupported potentially visible structure
   cannot use the exclusion migration;
-- wrong revision, hash, root path, Story owner, partial legacy closure, duplicate
-  exclusion, or competing consumption remains blocked;
+- an exact duplicate exclusion payload deduplicates deterministically and still
+  yields one migration fact;
+- wrong revision, hash, root path, Story owner, partial legacy closure,
+  conflicting duplicate exclusion, or competing consumption remains blocked;
 - the accepted 15-row behavior is derived from source structure rather than an
   ID allowlist;
 - the transition produces no candidate Parent/Child text or stable text ID.

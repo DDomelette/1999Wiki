@@ -352,8 +352,9 @@ tracked, staged, or unmerged drift blocks the task.
 RED must prove the approved empty-object and control-only cases are not yet
 closed, then cover the complete matrix from decision section 9: hidden speaker
 state, visible or potentially visible content, wrong source evidence, partial
-legacy closure, duplicate/competing exclusion consumption, non-Story isolation,
-determinism, and absence of per-ID exceptions.
+legacy closure, exact-duplicate deterministic deduplication, conflicting or
+competing exclusion consumption, non-Story isolation, determinism, and absence
+of per-ID exceptions.
 
 D must observe and record the exact failing test nodes before GREEN begins.
 
