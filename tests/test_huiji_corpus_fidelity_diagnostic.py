@@ -539,7 +539,9 @@ def _c8c_taxonomy(
     }
 
 
-def _run_config(tmp_path: Path) -> tuple[Path, str, Path, dict[str, object]]:
+def _run_config(
+    tmp_path: Path, *, accepted_taxonomy_manifest_row_count: int | None = None
+) -> tuple[Path, str, Path, dict[str, object]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     repository = tmp_path / "repository"
     protected_state_root = tmp_path / "protected-state"
@@ -1039,7 +1041,14 @@ def _run_config(tmp_path: Path) -> tuple[Path, str, Path, dict[str, object]]:
         {
             "identity": Path(identity["path"]).relative_to(repository).as_posix(),
             "label": label,
-            "row_count": identity.get("row_count"),
+            "row_count": (
+                len(taxonomy["rows"])
+                if label == "accepted_taxonomy"
+                and accepted_taxonomy_manifest_row_count is None
+                else accepted_taxonomy_manifest_row_count
+                if label == "accepted_taxonomy"
+                else identity.get("row_count")
+            ),
             "sha256": identity["sha256"],
             "size": identity["size_bytes"],
         }
@@ -1327,6 +1336,14 @@ def test_cli_requires_hash_pinned_run_config_and_exact_identity_chain(
         for label, identity in config["inputs"].items()
     }
     taxonomy = json.loads(verified["c8c_taxonomy"][1])
+    product_manifest = json.loads(verified["c8c_product_manifest"][1])
+    accepted_taxonomy_witness = next(
+        identity
+        for identity in product_manifest["inputs"]
+        if identity["label"] == "accepted_taxonomy"
+    )
+    assert "row_count" not in config["inputs"]["c8c_taxonomy"]
+    assert accepted_taxonomy_witness["row_count"] == len(taxonomy["rows"]) == 6
     active_media_rows = [
         json.loads(line)
         for line in verified["active_media"][1].decode("utf-8").splitlines()
@@ -1453,6 +1470,16 @@ def test_cli_requires_hash_pinned_run_config_and_exact_identity_chain(
         config_path, expected_run_config_sha256=digest, output_root=output_root
     )
     assert loaded == config
+    wrong_path, wrong_digest, wrong_output, _wrong_config = _run_config(
+        tmp_path / "wrong-taxonomy-row-count",
+        accepted_taxonomy_manifest_row_count=5,
+    )
+    with pytest.raises(ValueError, match="product input identity cross-check"):
+        module.load_run_config(
+            wrong_path,
+            expected_run_config_sha256=wrong_digest,
+            output_root=wrong_output,
+        )
     assert C8B_EVIDENCE_MANIFEST_SHA256 == "977cde250ec88e970150ce98d97339f17555639dbcf905154ffd4c9a283e5fc0"
     assert C8B_TAXONOMY_SHA256 == "44a511ba41a7067e4536c51226c8c40603c55806653a22bde468be066ac32ecd"
     assert C8C_PRODUCT_MANIFEST_SHA256 == "dc7dc31936c8e85d6c6f3af5a10c1eeb9a70300ac9990476d8f27bb1b164e764"

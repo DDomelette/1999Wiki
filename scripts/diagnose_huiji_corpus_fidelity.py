@@ -639,6 +639,7 @@ def _validate_c8c_chain(
             or (row_count is not None and (type(row_count) is not int or row_count < 0))
         ):
             raise ValueError("C8c product input identity is invalid")
+        is_accepted_taxonomy = identity["label"] == "accepted_taxonomy"
         witness_path = _contained_file(
             repository_root,
             repository_root / relative,
@@ -648,7 +649,14 @@ def _validate_c8c_chain(
         if (
             len(witness_raw) != size
             or _sha256(witness_raw) != digest
-            or (row_count is not None and witness_raw.count(b"\n") != row_count)
+            or (
+                row_count is not None
+                and (
+                    row_count != len(rows)
+                    if is_accepted_taxonomy
+                    else witness_raw.count(b"\n") != row_count
+                )
+            )
         ):
             raise ValueError("C8c product input identity cross-check mismatch")
         witnessed_paths.append(relative.as_posix())
@@ -670,7 +678,11 @@ def _validate_c8c_chain(
         expected = {
             "identity": path.relative_to(repository_root).as_posix(),
             "label": _C8C_MANIFEST_LABELS[index],
-            "row_count": config["inputs"][c8d_label].get("row_count"),
+            "row_count": (
+                len(rows)
+                if c8d_label == "c8c_taxonomy"
+                else config["inputs"][c8d_label].get("row_count")
+            ),
             "sha256": config["inputs"][c8d_label]["sha256"],
             "size": config["inputs"][c8d_label]["size_bytes"],
         }
