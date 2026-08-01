@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import replace
 
 import pytest
@@ -11,6 +13,7 @@ from src.huiji_rag.build.projection import (
     ProjectionExclusion,
     SemanticChild,
     SemanticRecordLink,
+    project_crawler_semantics,
 )
 from src.huiji_rag.models import ChildBlock, ParentBlock
 
@@ -307,6 +310,89 @@ def _story_fixture(*, tokens: tuple[str, ...] = ("step-z", "step-a")):
         "child_bm25": (),
         "media_bm25": (),
     }
+
+
+def _story_exclusion_fixture(
+    payload: dict[str, object],
+    *,
+    story_id: str = "8200",
+):
+    source_title = f"Data:Story/{story_id}.json"
+    content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    source_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    revid = 91
+    source_row = {
+        "title": source_title,
+        "revid": revid,
+        "content": content,
+        "content_sha256": source_sha256,
+    }
+    projection = project_crawler_semantics([source_row])
+    legacy_owner = hashlib.sha1(source_title.encode("utf-8")).hexdigest()[:12]
+    legacy_parent_id = f"story:{legacy_owner}/profile"
+    legacy_child_id = f"story:{legacy_owner}:0000"
+    source_ref = {
+        "source_kind": "crawler_data_page",
+        "source_title": source_title,
+        "source_row_id": f"{source_title}:{revid}:$",
+        "source_content_sha256": source_sha256,
+        "revid": revid,
+        "json_path": "$",
+    }
+    active_parent = {
+        "parent_id": legacy_parent_id,
+        "entity_id": legacy_owner,
+        "entity_name": source_title,
+        "entity_type": "story",
+        "category": "story",
+        "section_kind": "profile",
+        "source_refs": [source_ref],
+        "child_ids": [legacy_child_id],
+    }
+    active_child = {
+        "child_id": legacy_child_id,
+        "parent_id": legacy_parent_id,
+        "entity_id": legacy_owner,
+        "entity_name": source_title,
+        "entity_type": "story",
+        "category": "story",
+        "section_kind": "profile",
+        "source_refs": [source_ref],
+    }
+    return {
+        "projection": projection,
+        "active_parents": (active_parent,),
+        "active_children": (active_child,),
+        "active_excluded": (),
+        "legacy": LegacyMediaReconciliation(
+            occurrence_rows=(),
+            category_counts={},
+            active_occurrence_count=0,
+            unexplained_binding_loss=0,
+        ),
+        "child_bm25": (),
+        "media_bm25": (),
+    }
+
+
+def _active_story_rows(result):
+    return tuple(
+        row
+        for row in result.ledger_rows
+        if row["record_kind"] in {"parent", "child"} and row["active_identity"]
+    )
+
+
+def _assert_story_exclusion_migration_rejected(values) -> None:
+    try:
+        result = _build(values)
+    except ValueError:
+        return
+    assert result.passed is False
+    assert all(
+        row["classification"] != "corrected_semantics"
+        for row in _active_story_rows(result)
+    )
 
 
 def _build_story_or_fail(values):
@@ -659,6 +745,226 @@ def test_story_child_expansion_rejects_partial_or_mixed_groups() -> None:
     assert "unexplained_child_missing:story:legacy-9001:0000" in unmatched_result.blockers
     assert "unexplained_parent_addition:story:other/story" in unmatched_result.blockers
     assert "unexplained_child_addition:story:other/story/step-only" in unmatched_result.blockers
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {},
+        {
+            "1": {
+                "step": [],
+                "type": 0,
+                "name": ["Hidden narrator"],
+                "show_name": False,
+                "text": [""],
+                "choice": [],
+            }
+        },
+    ),
+    ids=("empty-object", "numeric-control-only"),
+)
+def test_control_only_story_exclusion_atomically_closes_complete_profile_pair(
+    payload: dict[str, object],
+) -> None:
+    values = _story_exclusion_fixture(payload)
+
+    first = _build(values)
+    second = _build(values)
+
+    assert first.passed is True, (
+        "one complete control-only Story profile Parent/Child pair must close "
+        f"atomically through its source exclusion; blockers={first.blockers!r}"
+    )
+    assert first.unexplained_parent_child_loss == 0
+    assert values["projection"].parents == ()
+    assert values["projection"].children == ()
+    assert values["projection"].record_links == ()
+    assert len(values["projection"].exclusions) == 1
+    exclusion_fact = values["projection"].exclusions[0].to_json()
+    active_rows = _active_story_rows(first)
+    assert len(active_rows) == 2
+    assert {row["record_kind"] for row in active_rows} == {"parent", "child"}
+    assert all(row["classification"] == "corrected_semantics" for row in active_rows)
+    assert all(row["candidate_identities"] == [] for row in active_rows)
+    assert all(row["source_evidence"] == [exclusion_fact] for row in active_rows)
+    assert len(
+        {row["details"]["atomic_migration_group_id"] for row in active_rows}
+    ) == 1
+    assert active_rows == _active_story_rows(second)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ("source-title", "source-hash", "revision", "root-path", "story-owner"),
+)
+def test_control_only_story_exclusion_source_and_owner_mismatch_fail_closed(
+    fault: str,
+) -> None:
+    values = _story_exclusion_fixture({})
+    parents = [dict(row) for row in values["active_parents"]]
+    children = [dict(row) for row in values["active_children"]]
+    if fault == "story-owner":
+        parents[0]["entity_id"] = "wrong-owner"
+        children[0]["entity_id"] = "wrong-owner"
+    else:
+        replacement = {
+            "source-title": {"source_title": "Data:Story/wrong.json"},
+            "source-hash": {"source_content_sha256": "f" * 64},
+            "revision": {"revid": 92},
+            "root-path": {"json_path": "$.1"},
+        }[fault]
+        parents[0]["source_refs"] = [{**parents[0]["source_refs"][0], **replacement}]
+        children[0]["source_refs"] = [{**children[0]["source_refs"][0], **replacement}]
+    values["active_parents"] = tuple(parents)
+    values["active_children"] = tuple(children)
+
+    _assert_story_exclusion_migration_rejected(values)
+
+
+@pytest.mark.parametrize("missing_kind", ("parent", "child"))
+def test_control_only_story_exclusion_requires_complete_profile_pair(
+    missing_kind: str,
+) -> None:
+    values = _story_exclusion_fixture({})
+    active_key = {
+        "parent": "active_parents",
+        "child": "active_children",
+    }[missing_kind]
+    values[active_key] = ()
+
+    _assert_story_exclusion_migration_rejected(values)
+
+
+def test_invalid_or_unsupported_story_exclusion_cannot_close_profile_pair() -> None:
+    invalid = _story_exclusion_fixture({})
+    invalid_content = '{"1":'
+    invalid_row = {
+        "title": "Data:Story/8200.json",
+        "revid": 91,
+        "content": invalid_content,
+        "content_sha256": hashlib.sha256(invalid_content.encode("utf-8")).hexdigest(),
+        "json_valid": False,
+        "json_error": "fixture invalid payload",
+    }
+    invalid["projection"] = project_crawler_semantics([invalid_row])
+    for record_kind in ("active_parents", "active_children"):
+        row = dict(invalid[record_kind][0])
+        row["source_refs"] = [
+            {
+                **row["source_refs"][0],
+                "source_content_sha256": invalid_row["content_sha256"],
+            }
+        ]
+        invalid[record_kind] = (row,)
+    _assert_story_exclusion_migration_rejected(invalid)
+
+    unsupported = _story_exclusion_fixture(
+        {"1": {"subtitle": ["Potentially visible caption"]}}
+    )
+    _assert_story_exclusion_migration_rejected(unsupported)
+
+
+def test_exact_duplicate_story_exclusion_yields_one_atomic_migration_fact() -> None:
+    single = _story_exclusion_fixture({})
+    duplicate = _story_exclusion_fixture({})
+    exclusion = duplicate["projection"].exclusions[0]
+    duplicate["projection"] = replace(
+        duplicate["projection"], exclusions=(exclusion, exclusion)
+    )
+
+    single_result = _build(single)
+    first = _build(duplicate)
+    second = _build(duplicate)
+
+    assert first.passed is True, (
+        "an exact duplicate Story exclusion must deduplicate before the complete "
+        "profile pair closes atomically; "
+        f"blockers={first.blockers!r}"
+    )
+    active_rows = _active_story_rows(first)
+    assert len(active_rows) == 2
+    assert all(row["classification"] == "corrected_semantics" for row in active_rows)
+    assert all(row["candidate_identities"] == [] for row in active_rows)
+    assert len(
+        {row["details"]["atomic_migration_group_id"] for row in active_rows}
+    ) == 1
+    assert first.ledger_rows == single_result.ledger_rows
+    assert first.ledger_rows == second.ledger_rows
+
+
+def test_conflicting_duplicate_story_exclusion_identity_fails_closed() -> None:
+    values = _story_exclusion_fixture({})
+    exclusion = values["projection"].exclusions[0]
+    conflicting = replace(
+        exclusion,
+        details={**exclusion.details, "story_structure_kind": "conflicting"},
+    )
+    values["projection"] = replace(
+        values["projection"], exclusions=(exclusion, conflicting)
+    )
+
+    with pytest.raises(ValueError, match="conflicting candidate exclusion identity"):
+        _build(values)
+
+
+def test_competing_story_exclusion_consumption_fails_closed() -> None:
+    competing = _story_exclusion_fixture({})
+    second_parent = {
+        **competing["active_parents"][0],
+        "parent_id": "story:competing/profile",
+        "child_ids": ["story:competing:0000"],
+    }
+    second_child = {
+        **competing["active_children"][0],
+        "child_id": "story:competing:0000",
+        "parent_id": "story:competing/profile",
+    }
+    competing["active_parents"] = (*competing["active_parents"], second_parent)
+    competing["active_children"] = (*competing["active_children"], second_child)
+    _assert_story_exclusion_migration_rejected(competing)
+
+
+def test_story_exclusion_cannot_consume_competing_profile_record_link() -> None:
+    values = _story_exclusion_fixture({})
+    active_parent_id = values["active_parents"][0]["parent_id"]
+    exclusion = values["projection"].exclusions[0]
+    competing_link = SemanticRecordLink(
+        record_kind="parent",
+        legacy_id=active_parent_id,
+        candidate_id="story:competing/story",
+        change_kind="corrected_semantics",
+        source_title=exclusion.source_title,
+        source_content_sha256=exclusion.source_content_sha256,
+        json_path="$",
+        legacy_section="profile",
+        candidate_section="story",
+    )
+    values["projection"] = replace(
+        values["projection"], record_links=(competing_link,)
+    )
+
+    _assert_story_exclusion_migration_rejected(values)
+
+
+def test_non_story_record_cannot_consume_story_control_only_exclusion() -> None:
+    values = _story_exclusion_fixture({})
+    values["active_parents"] = (
+        {
+            **values["active_parents"][0],
+            "entity_type": "item",
+            "category": "item",
+        },
+    )
+    values["active_children"] = (
+        {
+            **values["active_children"][0],
+            "entity_type": "item",
+            "category": "item",
+        },
+    )
+
+    _assert_story_exclusion_migration_rejected(values)
 
 
 def test_non_story_duplicate_legacy_links_remain_fail_closed() -> None:

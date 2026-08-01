@@ -688,3 +688,81 @@ def test_story_stage_replaces_generic_story_profile_projection() -> None:
     assert all(
         parent.parent_id != "story:304502/profile" for parent in projection.parents
     )
+
+
+@pytest.mark.parametrize(
+    ("story_id", "payload", "reason_code", "structure_kind"),
+    (
+        ("8100", {}, "empty_story", "empty_object"),
+        (
+            "8101",
+            {
+                "1": {
+                    "step": [],
+                    "type": 0,
+                    "name": ["Hidden narrator"],
+                    "show_name": False,
+                    "text": [""],
+                    "choice": [],
+                }
+            },
+            "control_only_story",
+            "control_only",
+        ),
+    ),
+    ids=("empty-object", "numeric-control-only"),
+)
+def test_control_only_story_emits_one_proven_exclusion_without_text_identity(
+    story_id: str,
+    payload: dict[str, object],
+    reason_code: str,
+    structure_kind: str,
+) -> None:
+    row = _row(f"Data:Story/{story_id}.json", payload, revid=81)
+
+    first = project_crawler_semantics([row])
+    second = project_crawler_semantics([row])
+
+    assert first.parents == ()
+    assert first.children == ()
+    assert first.record_links == ()
+    assert len(first.exclusions) == 1
+    exclusion = first.exclusions[0]
+    assert exclusion.reason_code == reason_code
+    assert exclusion.source_title == row["title"]
+    assert exclusion.source_content_sha256 == row["content_sha256"]
+    assert exclusion.entity_id == story_id
+    assert exclusion.json_path == "$"
+    assert exclusion.details["revid"] == 81
+    assert exclusion.details["story_structure_kind"] == structure_kind
+    assert exclusion.details["visible_story_atom_count"] == 0
+    assert first.exclusions == second.exclusions
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"1": {"dialogue": "Visible dialogue"}},
+        {"1": {"choices": ["Visible choice"]}},
+        {"1": {"scene": "Visible scene"}},
+        {"1": {"subtitle": ["Unsupported potential caption"]}},
+    ),
+    ids=("dialogue", "choice", "scene", "unsupported-potentially-visible"),
+)
+def test_visible_or_potentially_visible_story_cannot_emit_control_only_exclusion(
+    payload: dict[str, object],
+) -> None:
+    projection = project_crawler_semantics(
+        [_row("Data:Story/8102.json", payload, revid=82)]
+    )
+
+    assert all(
+        exclusion.reason_code not in {"empty_story", "control_only_story"}
+        for exclusion in projection.exclusions
+    )
+    if "subtitle" not in payload["1"]:
+        assert projection.parents
+        assert projection.children
+    else:
+        assert projection.parents == ()
+        assert projection.children == ()

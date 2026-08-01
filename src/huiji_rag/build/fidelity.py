@@ -10,7 +10,12 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .contracts import canonical_json_bytes
 from .media_v3 import LegacyMediaReconciliation
-from .projection import CorpusProjection, SemanticChild, SemanticRecordLink
+from .projection import (
+    CorpusProjection,
+    ProjectionExclusion,
+    SemanticChild,
+    SemanticRecordLink,
+)
 
 
 _ALLOWED_CHANGE_KINDS = frozenset(
@@ -55,6 +60,14 @@ class FidelityResult:
         return not self.blockers
 
 
+@dataclass(frozen=True)
+class _StoryExclusionMigration:
+    atomic_migration_group_id: str
+    parent_id: str
+    child_id: str
+    exclusion: ProjectionExclusion
+
+
 def build_fidelity_ledger(
     *,
     active_parent_rows: Iterable[Mapping[str, Any]],
@@ -74,6 +87,11 @@ def build_fidelity_ledger(
     candidate_parents = tuple(parent.to_json() for parent in projection.parents)
     candidate_children = tuple(
         child.block.to_json() for child in projection.children
+    )
+    story_exclusion_migrations = _story_exclusion_migrations(
+        active_parents,
+        active_children,
+        projection,
     )
 
     ledger: list[dict[str, Any]] = []
@@ -96,6 +114,7 @@ def build_fidelity_ledger(
             id_field,
             projection.record_links,
             projection,
+            story_exclusion_migrations,
         )
         ledger.extend(rows)
         blockers.extend(row_blockers)
@@ -218,6 +237,9 @@ def _reconcile_records(
     id_field: str,
     links: Sequence[SemanticRecordLink],
     projection: CorpusProjection | None = None,
+    story_exclusion_migrations: Mapping[
+        tuple[str, str], _StoryExclusionMigration
+    ] = MappingProxyType({}),
 ) -> tuple[
     list[dict[str, Any]],
     list[str],
@@ -266,11 +288,18 @@ def _reconcile_records(
     story_expansion_candidate_ids: set[str] = set()
     unexplained = 0
     for active_id, old_row in active.items():
+        exclusion_migration = story_exclusion_migrations.get(
+            (record_kind, active_id)
+        )
         group = tuple(links_by_legacy.get(active_id, ()))
         candidate_ids = tuple(
-            sorted(link.candidate_id for link in group)
-            if group
-            else (active_id,)
+            ()
+            if exclusion_migration is not None
+            else (
+                sorted(link.candidate_id for link in group)
+                if group
+                else (active_id,)
+            )
         )
         candidate_group = tuple(
             candidate[candidate_id]
@@ -278,10 +307,16 @@ def _reconcile_records(
             if candidate_id in candidate
         )
         link = group[0] if len(group) == 1 else None
-        classification = group[0].change_kind if group else "preserved_exact"
+        classification = (
+            "corrected_semantics"
+            if exclusion_migration is not None
+            else (group[0].change_kind if group else "preserved_exact")
+        )
         reason_code = classification
         story_valid = False
-        if group and _looks_like_story_correction(record_kind, group):
+        if exclusion_migration is not None:
+            reason_code = "story_control_only_exclusion_migration"
+        elif group and _looks_like_story_correction(record_kind, group):
             story_valid, reason_code = _validate_story_correction_group(
                 record_kind=record_kind,
                 active_id=active_id,
@@ -307,7 +342,9 @@ def _reconcile_records(
         elif len(group) > 1:
             raise ValueError(f"duplicate {record_kind} fidelity link: {active_id}")
 
-        if not candidate_group:
+        if exclusion_migration is not None:
+            pass
+        elif not candidate_group:
             if classification != "blocked_ambiguous":
                 classification = "unexplained_missing"
                 reason_code = "active_identity_has_no_candidate_record"
@@ -351,7 +388,7 @@ def _reconcile_records(
                 reason_code = "section_correction_not_whitelisted"
                 blockers.append(f"unapproved_section_correction:{active_id}")
 
-        can_consume = (
+        can_consume = exclusion_migration is not None or (
             classification in _ALLOWED_CHANGE_KINDS
             and len(candidate_group) == len(candidate_ids)
             and not (
@@ -407,22 +444,41 @@ def _reconcile_records(
             candidate_hash = _hash_identity_list(
                 _row_hash(row) for row in candidate_group
             )
-        source_evidence = [
-            _link_source_evidence(item)
-            for item in sorted(group, key=lambda item: item.candidate_id)
-        ]
+        source_evidence = (
+            [exclusion_migration.exclusion.to_json()]
+            if exclusion_migration is not None
+            else [
+                _link_source_evidence(item)
+                for item in sorted(group, key=lambda item: item.candidate_id)
+            ]
+        )
         ledger_id = _ledger_id(
             record_kind,
             active_id,
-            "|".join(candidate_ids),
-        )
-        details = {
-            "payload_changed": bool(
-                candidate_group and active_hash != candidate_hash
+            (
+                exclusion_migration.atomic_migration_group_id
+                if exclusion_migration is not None
+                else "|".join(candidate_ids)
             ),
-            "legacy_section": "" if not group else group[0].legacy_section,
-            "candidate_section": "" if not group else group[0].candidate_section,
-        }
+        )
+        details = (
+            {
+                "payload_changed": True,
+                "legacy_section": "profile",
+                "candidate_section": "",
+                "atomic_migration_group_id": (
+                    exclusion_migration.atomic_migration_group_id
+                ),
+            }
+            if exclusion_migration is not None
+            else {
+                "payload_changed": bool(
+                    candidate_group and active_hash != candidate_hash
+                ),
+                "legacy_section": "" if not group else group[0].legacy_section,
+                "candidate_section": "" if not group else group[0].candidate_section,
+            }
+        )
         if is_story_expansion:
             details["candidate_count"] = len(candidate_group)
         row = {
@@ -788,17 +844,11 @@ def _reconcile_exclusions(
     active_rows: Sequence[Mapping[str, Any]], projection: CorpusProjection
 ) -> tuple[list[dict[str, Any]], list[str]]:
     candidate_by_source: dict[str, list[Any]] = defaultdict(list)
-    candidate_by_identity: dict[str, Any] = {}
-    for exclusion in projection.exclusions:
-        candidate_identity = _exclusion_candidate_identity(exclusion)
-        existing = candidate_by_identity.get(candidate_identity)
-        if existing is not None:
-            if existing.to_json() != exclusion.to_json():
-                raise ValueError(
-                    "fidelity ledger contains conflicting candidate exclusion identity"
-                )
-            continue
-        candidate_by_identity[candidate_identity] = exclusion
+    candidate_by_identity = {
+        _exclusion_candidate_identity(exclusion): exclusion
+        for exclusion in _deduplicated_projection_exclusions(projection.exclusions)
+    }
+    for exclusion in candidate_by_identity.values():
         candidate_by_source[exclusion.source_title].append(exclusion)
     ledger: list[dict[str, Any]] = []
     blockers: list[str] = []
@@ -879,6 +929,199 @@ def _exclusion_candidate_identity(exclusion: Any) -> str:
     return (
         f"{exclusion.source_title}#{exclusion.json_path}:{exclusion.reason_code}:"
         f"source:{exclusion.source_identity}"
+    )
+
+
+def _deduplicated_projection_exclusions(
+    exclusions: Sequence[ProjectionExclusion],
+) -> tuple[ProjectionExclusion, ...]:
+    by_identity: dict[str, ProjectionExclusion] = {}
+    for exclusion in exclusions:
+        candidate_identity = _exclusion_candidate_identity(exclusion)
+        existing = by_identity.get(candidate_identity)
+        if existing is not None:
+            if existing.to_json() != exclusion.to_json():
+                raise ValueError(
+                    "fidelity ledger contains conflicting candidate exclusion identity"
+                )
+            continue
+        by_identity[candidate_identity] = exclusion
+    return tuple(by_identity.values())
+
+
+def _story_exclusion_migrations(
+    active_parents: Sequence[Mapping[str, Any]],
+    active_children: Sequence[Mapping[str, Any]],
+    projection: CorpusProjection,
+) -> dict[tuple[str, str], _StoryExclusionMigration]:
+    parents_by_source: dict[
+        tuple[str, str, str, str], list[Mapping[str, Any]]
+    ] = defaultdict(list)
+    children_by_source: dict[
+        tuple[str, str, str, str], list[Mapping[str, Any]]
+    ] = defaultdict(list)
+    for row in active_parents:
+        identity = _legacy_story_profile_source_identity(row)
+        if identity is not None:
+            parents_by_source[identity].append(row)
+    for row in active_children:
+        identity = _legacy_story_profile_source_identity(row)
+        if identity is not None:
+            children_by_source[identity].append(row)
+
+    exclusions_by_source: dict[
+        tuple[str, str, str, str], list[ProjectionExclusion]
+    ] = defaultdict(list)
+    for exclusion in _deduplicated_projection_exclusions(projection.exclusions):
+        source_identity = _control_only_story_exclusion_identity(exclusion)
+        if source_identity is not None:
+            exclusions_by_source[source_identity].append(exclusion)
+
+    linked_legacy_records = {
+        (link.record_kind, link.legacy_id) for link in projection.record_links
+    }
+    result: dict[tuple[str, str], _StoryExclusionMigration] = {}
+    for source_identity, exclusions in exclusions_by_source.items():
+        if len(exclusions) != 1:
+            continue
+        exclusion = exclusions[0]
+        parents = parents_by_source.get(source_identity, ())
+        children = children_by_source.get(source_identity, ())
+        if len(parents) != 1 or len(children) != 1:
+            continue
+        parent = parents[0]
+        child = children[0]
+        source_title = source_identity[0]
+        legacy_owner = hashlib.sha1(source_title.encode("utf-8")).hexdigest()[:12]
+        parent_id = f"story:{legacy_owner}/profile"
+        child_id = f"story:{legacy_owner}:0000"
+        if (
+            ("parent", parent_id) in linked_legacy_records
+            or ("child", child_id) in linked_legacy_records
+        ):
+            continue
+        if not _valid_legacy_story_profile_pair(
+            parent,
+            child,
+            legacy_owner=legacy_owner,
+            parent_id=parent_id,
+            child_id=child_id,
+        ):
+            continue
+        group_id = "story-exclusion-migration:sha256:" + hashlib.sha256(
+            canonical_json_bytes(
+                [
+                    "huiji.story-exclusion-migration/v1",
+                    *source_identity,
+                    exclusion.source_identity,
+                    parent_id,
+                    child_id,
+                ],
+                trailing_newline=False,
+            )
+        ).hexdigest()
+        migration = _StoryExclusionMigration(
+            atomic_migration_group_id=group_id,
+            parent_id=parent_id,
+            child_id=child_id,
+            exclusion=exclusion,
+        )
+        result[("parent", parent_id)] = migration
+        result[("child", child_id)] = migration
+    return result
+
+
+def _legacy_story_profile_source_identity(
+    row: Mapping[str, Any],
+) -> tuple[str, str, str, str] | None:
+    if not _is_legacy_story_profile(active_row=row):
+        return None
+    raw_refs = row.get("source_refs") or ()
+    if len(raw_refs) != 1 or not isinstance(raw_refs[0], Mapping):
+        return None
+    raw = raw_refs[0]
+    source_kind = str(raw.get("source_kind") or raw.get("kind") or "")
+    source_title = str(raw.get("source_title") or raw.get("title") or "")
+    source_sha256 = str(
+        raw.get("source_content_sha256") or raw.get("content_sha256") or ""
+    )
+    revid = str(raw.get("revid") or "")
+    json_path = str(raw.get("json_path") or "")
+    if (
+        not source_kind
+        or re.fullmatch(r"Data:Story/([^/]+)\.json", source_title) is None
+        or _SHA256_RE.fullmatch(source_sha256) is None
+        or not revid
+        or json_path != "$"
+    ):
+        return None
+    return source_title, source_sha256, revid, json_path
+
+
+def _control_only_story_exclusion_identity(
+    exclusion: ProjectionExclusion,
+) -> tuple[str, str, str, str] | None:
+    title_match = re.fullmatch(r"Data:Story/([^/]+)\.json", exclusion.source_title)
+    if (
+        title_match is None
+        or _SHA256_RE.fullmatch(exclusion.source_content_sha256) is None
+    ):
+        return None
+    expected_structure = {
+        "empty_story": "empty_object",
+        "control_only_story": "control_only",
+    }.get(exclusion.reason_code)
+    details = dict(exclusion.details)
+    revid = str(details.get("revid") or "")
+    visible_count = details.get("visible_story_atom_count")
+    if (
+        expected_structure is None
+        or details.get("story_structure_kind") != expected_structure
+        or not isinstance(visible_count, int)
+        or isinstance(visible_count, bool)
+        or visible_count != 0
+        or not revid
+        or exclusion.json_path != "$"
+        or exclusion.entity_id != title_match.group(1)
+    ):
+        return None
+    expected_identity = hashlib.sha256(
+        canonical_json_bytes(
+            [
+                exclusion.source_title,
+                exclusion.json_path,
+                exclusion.source_content_sha256,
+            ],
+            trailing_newline=False,
+        )
+    ).hexdigest()
+    if exclusion.source_identity != expected_identity:
+        return None
+    return (
+        exclusion.source_title,
+        exclusion.source_content_sha256,
+        revid,
+        exclusion.json_path,
+    )
+
+
+def _valid_legacy_story_profile_pair(
+    parent: Mapping[str, Any],
+    child: Mapping[str, Any],
+    *,
+    legacy_owner: str,
+    parent_id: str,
+    child_id: str,
+) -> bool:
+    return (
+        str(parent.get("parent_id") or "") == parent_id
+        and str(parent.get("entity_id") or "") == legacy_owner
+        and tuple(parent.get("child_ids") or ()) == (child_id,)
+        and str(child.get("child_id") or "") == child_id
+        and str(child.get("parent_id") or "") == parent_id
+        and str(child.get("entity_id") or "") == legacy_owner
+        and _is_legacy_story_profile(active_row=parent)
+        and _is_legacy_story_profile(active_row=child)
     )
 
 

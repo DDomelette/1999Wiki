@@ -25,6 +25,63 @@ _DIALOGUE_KEYS = frozenset({"dialogue", "text", "content"})
 _SPEAKER_KEYS = frozenset({"speaker", "speakerName", "roleName", "name"})
 _SCENE_KEYS = frozenset({"scene", "sceneId", "sceneName"})
 _CHOICE_KEYS = frozenset({"choice", "choices", "options"})
+_ROOT_METADATA_KEYS = frozenset({"info", "name", "title"})
+_INFO_METADATA_KEYS = frozenset({"id", "name", "start", "title"})
+_ROOT_SPEAKER_CONTEXT_KEYS = frozenset({"hide_name", "show_name"}).union(
+    _DIALOGUE_KEYS,
+    _SCENE_KEYS,
+    _CHOICE_KEYS,
+)
+_STEP_CONTROL_KEYS = frozenset(
+    {
+        "action",
+        "audio",
+        "auto",
+        "background",
+        "bg",
+        "bool_1",
+        "branch",
+        "camera",
+        "condition",
+        "duration",
+        "effect",
+        "expression",
+        "head_icon",
+        "hide_name",
+        "id",
+        "is_end",
+        "jump",
+        "live2d",
+        "music",
+        "next",
+        "no_l2d",
+        "pos",
+        "position",
+        "resource",
+        "resource_path",
+        "shake",
+        "show_name",
+        "show_name_en",
+        "skin",
+        "sound",
+        "speed",
+        "step",
+        "stepId",
+        "step_id",
+        "trigger",
+        "type",
+        "uid",
+        "voice",
+        "wait",
+    }
+)
+_SUPPORTED_STEP_KEYS = frozenset().union(
+    _DIALOGUE_KEYS,
+    _SPEAKER_KEYS,
+    _SCENE_KEYS,
+    _CHOICE_KEYS,
+    _STEP_CONTROL_KEYS,
+)
 
 
 @dataclass(frozen=True)
@@ -217,10 +274,36 @@ def project_stories(rows: Iterable[Mapping[str, Any]]) -> StoryProjection:
             weak_name,
             tuple(sorted(relation_tags.get(story_id, ()))),
         )
+        structure_kind = _story_structure_kind(record.payload, story_children)
+        diagnostic_details = {
+            "revid": record.row.get("revid"),
+            "story_structure_kind": structure_kind,
+            "visible_story_atom_count": len(story_children),
+        }
+        if structure_kind == "unsupported_potentially_visible":
+            blocked.add(story_id)
+            diagnostics.append(
+                StoryDiagnostic(
+                    "unsupported_story_structure",
+                    story_id,
+                    str(record.row["title"]),
+                    diagnostic_details,
+                )
+            )
+            continue
         identity_fallbacks.extend(fallbacks)
         if not story_children:
             diagnostics.append(
-                StoryDiagnostic("empty_story", story_id, str(record.row["title"]))
+                StoryDiagnostic(
+                    (
+                        "empty_story"
+                        if structure_kind == "empty_object"
+                        else "control_only_story"
+                    ),
+                    story_id,
+                    str(record.row["title"]),
+                    diagnostic_details,
+                )
             )
             continue
         parent_id = f"story:{story_id}/story"
@@ -444,6 +527,115 @@ def _visible_step_content(step: Mapping[str, Any]) -> tuple[str, str]:
             for choice in _choice_texts(value):
                 lines.append(f"Choice: {choice}")
     return "\n".join(lines), scene_value
+
+
+def _story_structure_kind(
+    payload: Mapping[str, Any],
+    children: Sequence[StoryChildProjection],
+) -> str:
+    if not payload:
+        return "empty_object"
+    if children:
+        return "visible_story"
+    if _has_unsupported_story_structure(payload):
+        return "unsupported_potentially_visible"
+    return "control_only"
+
+
+def _has_unsupported_story_structure(payload: Mapping[str, Any]) -> bool:
+    root_name_is_speaker_state = "name" in payload and any(
+        key in payload for key in _ROOT_SPEAKER_CONTEXT_KEYS
+    )
+    direct_step = {
+        key: value
+        for key, value in payload.items()
+        if key in _SUPPORTED_STEP_KEYS
+        and (
+            key not in _ROOT_METADATA_KEYS
+            or (key == "name" and root_name_is_speaker_state)
+        )
+    }
+    if direct_step and _step_has_unsupported_structure(direct_step):
+        return True
+    for key, value in payload.items():
+        if key == "info":
+            if _info_has_unsupported_structure(value):
+                return True
+            continue
+        if key in _ROOT_METADATA_KEYS or key in _SUPPORTED_STEP_KEYS:
+            continue
+        if key.isdigit():
+            if not isinstance(value, Mapping):
+                return _has_value(value)
+            if _step_has_unsupported_structure(value):
+                return True
+            continue
+        if key not in _STEP_CONTAINERS:
+            return _has_value(value)
+        if isinstance(value, list):
+            for item in value:
+                if not isinstance(item, Mapping):
+                    if _has_value(item):
+                        return True
+                    continue
+                if _step_has_unsupported_structure(item):
+                    return True
+        elif isinstance(value, Mapping):
+            for item in value.values():
+                if not isinstance(item, Mapping):
+                    if _has_value(item):
+                        return True
+                    continue
+                if _step_has_unsupported_structure(item):
+                    return True
+        elif _has_value(value):
+            return True
+    return False
+
+
+def _info_has_unsupported_structure(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return _has_value(value)
+    for key, item in value.items():
+        if key not in _INFO_METADATA_KEYS:
+            if _has_value(item):
+                return True
+            continue
+        if not _is_supported_metadata_value(item):
+            return True
+    return False
+
+
+def _is_supported_metadata_value(value: Any) -> bool:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return True
+    return isinstance(value, list) and all(
+        item is None or isinstance(item, (bool, int, float, str))
+        for item in value
+    )
+
+
+def _step_has_unsupported_structure(step: Mapping[str, Any]) -> bool:
+    if any(
+        key not in _SUPPORTED_STEP_KEYS and _has_value(value)
+        for key, value in step.items()
+    ):
+        return True
+    content, _scene_value = _visible_step_content(step)
+    if content:
+        return False
+    has_speaker_state = any(
+        _visible_value(step.get(key)) for key in _SPEAKER_KEYS if key in step
+    )
+    return has_speaker_state and step.get("show_name") is not False
+
+
+def _has_value(value: Any) -> bool:
+    if value is None or value is False or value == "":
+        return False
+    if isinstance(value, (list, tuple, Mapping)):
+        return bool(value)
+    return True
 
 
 def _choice_texts(value: Any) -> tuple[str, ...]:

@@ -357,6 +357,155 @@ def test_story_control_fields_resource_paths_and_booleans_do_not_enter_content()
     )
 
 
+def test_story_display_and_live2d_controls_preserve_visible_text() -> None:
+    result = project_stories(
+        [
+            _story(
+                "100004",
+                {
+                    "1": {
+                        "name": _multilingual("Narrator"),
+                        "text": _multilingual("Visible line."),
+                        "show_name_en": "show-name-en-control",
+                        "no_l2d": "no-live2d-control",
+                    }
+                },
+            )
+        ]
+    )
+
+    assert result.blocked_story_ids == ()
+    assert [child.block.content for child in result.children] == [
+        "Narrator: Visible line."
+    ]
+    assert "show-name-en-control" not in result.children[0].block.content
+    assert "no-live2d-control" not in result.children[0].block.content
+    assert all(
+        diagnostic.reason_code != "unsupported_story_structure"
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_story_visible_child_precedes_separate_unsupported_display_state() -> None:
+    result = project_stories(
+        [
+            _story(
+                "100005",
+                {
+                    "1": {"text": _multilingual("Visible line.")},
+                    "2": {
+                        "name": _multilingual("Display-only speaker"),
+                        "show_name": True,
+                    },
+                },
+            )
+        ]
+    )
+
+    assert result.blocked_story_ids == ()
+    assert [child.block.content for child in result.children] == ["Visible line."]
+    assert all(
+        diagnostic.reason_code != "unsupported_story_structure"
+        for diagnostic in result.diagnostics
+    )
+
+
+def test_story_hidden_speaker_state_with_show_name_false_is_not_visible_text() -> None:
+    result = project_stories(
+        [
+            _story(
+                "8080",
+                {
+                    "1": {
+                        "step": [],
+                        "type": 0,
+                        "name": _multilingual("Hidden narrator"),
+                        "show_name": False,
+                        "text": _multilingual(""),
+                        "choice": [],
+                    }
+                },
+            )
+        ]
+    )
+
+    assert result.parents == ()
+    assert result.children == ()
+    assert result.blocked_story_ids == ()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {
+            "info": {
+                "title": "Story title",
+                "description": "Potential visible description",
+            }
+        },
+        {"name": ["Potential speaker"], "show_name": True},
+    ),
+    ids=("unknown-info-description", "visible-root-speaker"),
+)
+def test_story_root_metadata_context_blocks_potential_visibility(
+    payload: dict[str, object],
+) -> None:
+    result = project_stories([_story("8082", payload)])
+
+    assert result.parents == ()
+    assert result.children == ()
+    assert result.blocked_story_ids == ("8082",)
+    assert [item.reason_code for item in result.diagnostics] == [
+        "unsupported_story_structure"
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"info": {"title": "Story title"}},
+        {"name": "Story title"},
+        {"name": ["Hidden speaker"], "show_name": False},
+    ),
+    ids=("info-title", "root-name", "hidden-root-speaker"),
+)
+def test_story_supported_root_metadata_remains_control_only(
+    payload: dict[str, object],
+) -> None:
+    result = project_stories([_story("8083", payload)])
+
+    assert result.parents == ()
+    assert result.children == ()
+    assert result.blocked_story_ids == ()
+    assert [item.reason_code for item in result.diagnostics] == [
+        "control_only_story"
+    ]
+
+
+def test_story_unsupported_potentially_visible_structure_is_not_control_only() -> None:
+    result = project_stories(
+        [
+            _story(
+                "8081",
+                {
+                    "1": {
+                        "type": 99,
+                        "subtitle": _multilingual("Potentially visible caption"),
+                    }
+                },
+            )
+        ]
+    )
+
+    assert result.parents == ()
+    assert result.children == ()
+    assert result.blocked_story_ids == ("8081",)
+    assert all(
+        diagnostic.reason_code not in {"empty_story", "control_only_story"}
+        for diagnostic in result.diagnostics
+    )
+
+
 def test_story_missing_media_never_removes_text_child() -> None:
     result = project_stories(
         [
