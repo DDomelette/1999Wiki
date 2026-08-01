@@ -100,7 +100,7 @@ _MEDIA_CATEGORIES = (
 _ACTIVITY_COUNTERS = {
     "activation": 0,
     "active_pointer_changes": 0,
-    "allowed_read_only_git_calls": 1,
+    "allowed_read_only_git_calls": 9,
     "downloads": 0,
     "forbidden_subprocess_calls": 0,
     "local_media_byte_reads": 0,
@@ -109,7 +109,7 @@ _ACTIVITY_COUNTERS = {
     "mysql_writes": 0,
     "network": 0,
     "production_writes": 0,
-    "total_subprocess_calls": 1,
+    "total_subprocess_calls": 9,
     "vector_or_embedding_builds": 0,
     "writes_outside_exact_outputs": 0,
 }
@@ -480,6 +480,37 @@ def load_run_config(
     return config
 
 
+def _run_c8c_read_only_git(
+    repository_root: Path, argv: Sequence[str]
+) -> bytes:
+    try:
+        completed = subprocess.run(
+            ("git", *argv),
+            cwd=repository_root,
+            check=True,
+            capture_output=True,
+            text=False,
+            shell=False,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError("C8c accepted checkpoint Git identity is invalid") from error
+    return completed.stdout
+
+
+def _validate_c8c_checkpoint(config: Mapping[str, Any], repository_root: Path) -> str:
+    c8c_commit = str(config["accepted_checkpoints"]["c8c_commit"])
+    expected_head = str(config["expected_git_head"])
+    _run_c8c_read_only_git(
+        repository_root,
+        ("cat-file", "-e", f"{c8c_commit}^{{commit}}"),
+    )
+    _run_c8c_read_only_git(
+        repository_root,
+        ("merge-base", "--is-ancestor", c8c_commit, expected_head),
+    )
+    return c8c_commit
+
+
 def _validate_c8c_chain(
     config: Mapping[str, Any], verified: Mapping[str, tuple[Path, bytes]]
 ) -> None:
@@ -640,7 +671,9 @@ def _validate_c8c_chain(
         "protected_identity_manifest": config["expected_protected_identity_count"],
     }
     repository_root = Path(str(config["repository_root"])).resolve(strict=True)
+    c8c_commit = _validate_c8c_checkpoint(config, repository_root)
     witnessed_paths: list[str] = []
+    witnessed_path_set: set[str] = set()
     for index, identity in enumerate(manifest_inputs):
         relative = Path(str(identity["identity"]))
         digest = str(identity["sha256"])
@@ -655,13 +688,22 @@ def _validate_c8c_chain(
             or (row_count is not None and (type(row_count) is not int or row_count < 0))
         ):
             raise ValueError("C8c product input identity is invalid")
+        relative_posix = relative.as_posix()
+        if relative_posix in witnessed_path_set:
+            raise ValueError("C8c product input identity is duplicated")
         semantic_row_count = semantic_row_counts.get(identity["label"])
-        witness_path = _contained_file(
-            repository_root,
-            repository_root / relative,
-            f"C8c product input {index}",
-        )
-        witness_raw = witness_path.read_bytes()
+        if identity["label"] == "reviewed_file":
+            witness_raw = _run_c8c_read_only_git(
+                repository_root,
+                ("cat-file", "blob", f"{c8c_commit}:{relative_posix}"),
+            )
+        else:
+            witness_path = _contained_file(
+                repository_root,
+                repository_root / relative,
+                f"C8c product input {index}",
+            )
+            witness_raw = witness_path.read_bytes()
         if (
             len(witness_raw) != size
             or _sha256(witness_raw) != digest
@@ -675,9 +717,8 @@ def _validate_c8c_chain(
             )
         ):
             raise ValueError("C8c product input identity cross-check mismatch")
-        witnessed_paths.append(relative.as_posix())
-    if len(witnessed_paths) != len(set(witnessed_paths)):
-        raise ValueError("C8c product input identity is duplicated")
+        witnessed_paths.append(relative_posix)
+        witnessed_path_set.add(relative_posix)
 
     c8d_mapping = {
         2: "active_media",

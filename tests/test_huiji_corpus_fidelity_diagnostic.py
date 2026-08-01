@@ -28,6 +28,8 @@ TREE = "7d0adb73ec194f8f20675720935c61e3baa5724b"
 C8A_COMMIT = "012c7ca6b3abaa0445ccd00a8974ea4fefcbd333"
 C8B_COMMIT = "7366787401603e9a86d7277c99b3cc3f49e97508"
 C8C_COMMIT = "9c226de2e850ecabf8e672afaacc8a517e802e7d"
+DESCENDANT_HEAD = "df61f8bcc7316a951bf1dad6ad9c475a5ac91994"
+DESCENDANT_TREE = "3c4fdc97e6addd88999e237b47930425d998291a"
 C8B_RECEIPT_SHA256 = (
     "7dfc5cce2fda7b1b7ce97f76e59413a16c8df249abe1d1aa891b32892646fc20"
 )
@@ -77,7 +79,7 @@ MEDIA_COUNTS = {
 ACTIVITY_COUNTERS = {
     "activation": 0,
     "active_pointer_changes": 0,
-    "allowed_read_only_git_calls": 1,
+    "allowed_read_only_git_calls": 9,
     "downloads": 0,
     "forbidden_subprocess_calls": 0,
     "local_media_byte_reads": 0,
@@ -86,7 +88,7 @@ ACTIVITY_COUNTERS = {
     "mysql_writes": 0,
     "network": 0,
     "production_writes": 0,
-    "total_subprocess_calls": 1,
+    "total_subprocess_calls": 9,
     "vector_or_embedding_builds": 0,
     "writes_outside_exact_outputs": 0,
 }
@@ -544,6 +546,7 @@ def _run_config(
     *,
     accepted_taxonomy_manifest_row_count: int | None = None,
     protected_identity_manifest_row_count: int = 32,
+    descendant_reviewed_file: str | None = None,
 ) -> tuple[Path, str, Path, dict[str, object]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     repository = tmp_path / "repository"
@@ -1017,10 +1020,21 @@ def _run_config(
         "tests/test_huiji_corpus_fidelity.py",
         "docs/superpowers/specs/2026-07-29-rag-thread-c-legacy-media-decision.md",
     )
+    source_repository = SCRIPT.parents[1]
+
+    def git_blob(commit: str, relative_path: str) -> bytes:
+        return subprocess.run(
+            ("git", "show", f"{commit}:{relative_path}"),
+            cwd=source_repository,
+            check=True,
+            capture_output=True,
+            shell=False,
+        ).stdout
+
     reviewed_file_witnesses = tuple(
         _write_bytes(
             repository / relative_path,
-            f"pinned C8c reviewed fixture: {relative_path}\n".encode("utf-8"),
+            git_blob(C8C_COMMIT, relative_path),
         )
         for relative_path in reviewed_file_paths
     )
@@ -1118,14 +1132,45 @@ def _run_config(
     diagnostic_path = repository / SCRIPT_RELATIVE_PATH
     diagnostic_path.parent.mkdir(parents=True)
     diagnostic_path.write_bytes(SCRIPT_BYTES)
+    subprocess.run(
+        ("git", "init", "--quiet"),
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        shell=False,
+    )
+    source_git_objects = subprocess.run(
+        ("git", "rev-parse", "--git-path", "objects"),
+        cwd=source_repository,
+        check=True,
+        capture_output=True,
+        text=True,
+        shell=False,
+    ).stdout.strip()
+    alternates = repository / ".git/objects/info/alternates"
+    alternates.parent.mkdir(parents=True, exist_ok=True)
+    alternates.write_bytes(
+        Path(source_git_objects).resolve().as_posix().encode("utf-8") + b"\n"
+    )
+    expected_head = HEAD
+    expected_tree = TREE
+    if descendant_reviewed_file is not None:
+        if descendant_reviewed_file not in reviewed_file_paths:
+            raise AssertionError("descendant fixture path is not reviewed")
+        historical = git_blob(C8C_COMMIT, descendant_reviewed_file)
+        descendant = git_blob(DESCENDANT_HEAD, descendant_reviewed_file)
+        assert descendant != historical
+        (repository / descendant_reviewed_file).write_bytes(descendant)
+        expected_head = DESCENDANT_HEAD
+        expected_tree = DESCENDANT_TREE
     config: dict[str, object] = {
         "schema_version": "huiji.c8d-fidelity-run-config/v1",
         "run_id": RUN_ID,
         "repository_root": repository.as_posix(),
         "protected_state_root": protected_state_root.as_posix(),
         "output_root": output_root.as_posix(),
-        "expected_git_head": HEAD,
-        "expected_git_tree": TREE,
+        "expected_git_head": expected_head,
+        "expected_git_tree": expected_tree,
         "diagnostic": {
             "path": SCRIPT_RELATIVE_PATH,
             "sha256": SCRIPT_SHA256,
@@ -1452,6 +1497,127 @@ def test_load_validated_evidence_matches_candidate_json_boundary_and_id_order(
         "media_binding_tokens": ["binding:1"],
         "source_fields": {"json_path": "$.alpha"},
     }
+
+
+def test_c8c_reviewed_file_uses_accepted_checkpoint_blob_after_descendant_change(
+    tmp_path: Path,
+) -> None:
+    module = _load_diagnostic()
+    config_path, digest, output_root, config = _run_config(
+        tmp_path,
+        descendant_reviewed_file="src/huiji_rag/build/fidelity.py",
+    )
+    manifest = json.loads(
+        Path(config["inputs"]["c8c_product_manifest"]["path"]).read_bytes()
+    )
+    reviewed = next(
+        identity
+        for identity in manifest["inputs"]
+        if identity["identity"] == "src/huiji_rag/build/fidelity.py"
+    )
+    descendant_raw = (
+        Path(config["repository_root"]) / reviewed["identity"]
+    ).read_bytes()
+    assert _sha256(descendant_raw) != reviewed["sha256"]
+
+    loaded = module.load_run_config(
+        config_path,
+        expected_run_config_sha256=digest,
+        output_root=output_root,
+    )
+
+    assert loaded == config
+    _assert_no_output(output_root)
+
+
+def test_c8c_reviewed_file_rejects_forged_historical_hash(tmp_path: Path) -> None:
+    module = _load_diagnostic()
+    _config_path, _digest, _output_root, config = _run_config(tmp_path)
+    verified = {
+        label: (Path(identity["path"]), Path(identity["path"]).read_bytes())
+        for label, identity in config["inputs"].items()
+    }
+    manifest = json.loads(verified["c8c_product_manifest"][1])
+    reviewed = next(
+        identity
+        for identity in manifest["inputs"]
+        if identity["identity"] == "src/huiji_rag/build/fidelity.py"
+    )
+    reviewed["sha256"] = "0" * 64
+    manifest_raw = _canonical_bytes(manifest)
+    receipt = json.loads(verified["c8c_product_receipt"][1])
+    receipt["output_sha256"]["manifest.product-parity.v1.json"] = _sha256(
+        manifest_raw
+    )
+    receipt_raw = _canonical_bytes(receipt)
+    forged = copy.deepcopy(config)
+    forged["c8c_evidence_chain"]["manifest_sha256"] = _sha256(manifest_raw)
+    forged["c8c_evidence_chain"]["receipt_sha256"] = _sha256(receipt_raw)
+    forged_verified = dict(verified)
+    forged_verified["c8c_product_manifest"] = (
+        verified["c8c_product_manifest"][0],
+        manifest_raw,
+    )
+    forged_verified["c8c_product_receipt"] = (
+        verified["c8c_product_receipt"][0],
+        receipt_raw,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="C8c product input identity cross-check mismatch",
+    ):
+        module._validate_c8c_chain(forged, forged_verified)
+
+
+@pytest.mark.parametrize("checkpoint_kind", ("missing", "non-ancestor"))
+def test_c8c_reviewed_file_rejects_invalid_checkpoint(
+    tmp_path: Path,
+    checkpoint_kind: str,
+) -> None:
+    module = _load_diagnostic()
+    config_path, _digest, output_root, config = _run_config(tmp_path)
+    repository = Path(config["repository_root"])
+    if checkpoint_kind == "missing":
+        checkpoint = "f" * 40
+    else:
+        empty_tree = subprocess.run(
+            ("git", "hash-object", "-t", "tree", "-w", "--stdin"),
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            input=b"",
+            shell=False,
+        ).stdout.decode("ascii").strip()
+        commit_raw = (
+            f"tree {empty_tree}\n"
+            "author C8d Fixture <c8d@example.invalid> 0 +0000\n"
+            "committer C8d Fixture <c8d@example.invalid> 0 +0000\n"
+            "\nunrelated checkpoint\n"
+        ).encode("utf-8")
+        checkpoint = subprocess.run(
+            ("git", "hash-object", "-t", "commit", "-w", "--stdin"),
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            input=commit_raw,
+            shell=False,
+        ).stdout.decode("ascii").strip()
+    case = copy.deepcopy(config)
+    case["accepted_checkpoints"]["c8c_commit"] = checkpoint
+    case_raw = _canonical_bytes(case)
+    config_path.write_bytes(case_raw)
+
+    with pytest.raises(
+        ValueError,
+        match="C8c accepted checkpoint Git identity is invalid",
+    ):
+        module.load_run_config(
+            config_path,
+            expected_run_config_sha256=_sha256(case_raw),
+            output_root=output_root,
+        )
+    _assert_no_output(output_root)
 
 
 def test_cli_requires_hash_pinned_run_config_and_exact_identity_chain(
@@ -2999,8 +3165,12 @@ def test_diagnostic_fails_closed_on_hash_head_tree_path_or_output_collision(
         calls.append((tuple(argv), kwargs))
         return subprocess.CompletedProcess(argv, 0, f"{HEAD}\n{TREE}\n", "")
 
-    monkeypatch.setattr(module.subprocess, "run", git_run)
-    assert module.read_git_identity(Path(base_config["repository_root"])) == (HEAD, TREE)
+    with monkeypatch.context() as git_patch:
+        git_patch.setattr(module.subprocess, "run", git_run)
+        assert module.read_git_identity(Path(base_config["repository_root"])) == (
+            HEAD,
+            TREE,
+        )
     assert calls == [
         (
             ("git", "rev-parse", "HEAD", "HEAD^{tree}"),
@@ -3166,6 +3336,8 @@ def test_diagnostic_fails_closed_on_hash_head_tree_path_or_output_collision(
         prepare=colliding_output,
     )
 
+    second_root = tmp_path / "second-subprocess"
+    second_config_path, second_digest, second_output, _ = _run_config(second_root)
     second_subprocess_calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
 
     def second_subprocess(argv: object, **kwargs: object):
@@ -3189,10 +3361,17 @@ def test_diagnostic_fails_closed_on_hash_head_tree_path_or_output_collision(
         return original_load_validated_evidence(config)
 
     monkeypatch.setattr(module.subprocess, "run", second_subprocess)
+    monkeypatch.setattr(module, "_validate_c8c_chain", lambda *_args: None)
     monkeypatch.setattr(
         module, "load_validated_evidence", inject_subsequent_subprocess
     )
-    run_case("second-subprocess", lambda _c, _r: None)
+    with pytest.raises(subprocess.SubprocessError, match="subsequent subprocess"):
+        module.run_diagnostic(
+            second_config_path,
+            expected_run_config_sha256=second_digest,
+            output_root=second_output,
+        )
+    assert not second_output.exists()
     assert [call[0] for call in second_subprocess_calls] == [
         ("git", "rev-parse", "HEAD", "HEAD^{tree}"),
         ("python", "unexpected.py"),
