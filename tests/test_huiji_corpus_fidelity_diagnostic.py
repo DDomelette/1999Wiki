@@ -1250,6 +1250,165 @@ def _assert_no_output(output_root: Path) -> None:
     assert not output_root.exists() or not tuple(output_root.iterdir())
 
 
+def test_load_validated_evidence_matches_candidate_json_boundary_and_id_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.huiji_rag.build.projection import SemanticChild
+    from src.huiji_rag.models import ChildBlock, ParentBlock
+
+    module = _load_diagnostic()
+    _config_path, _digest, _output_root, config = _run_config(tmp_path)
+
+    parent_a = ParentBlock.from_json(
+        {
+            "parent_id": "character:1/alpha",
+            "entity_id": "1",
+            "entity_name": "Alpha",
+            "entity_aliases": ["A"],
+            "category": "character",
+            "section_kind": "profile",
+            "title": "Alpha",
+            "summary_text": "Alpha summary",
+            "source_refs": [{"kind": "data-page", "source_title": "Alpha"}],
+            "child_ids": ["character:1/alpha:0000"],
+            "content_hash": "a" * 64,
+        }
+    )
+    parent_b = ParentBlock.from_json(
+        {
+            "parent_id": "character:2/beta",
+            "entity_id": "2",
+            "entity_name": "Beta",
+            "entity_aliases": ["B"],
+            "category": "character",
+            "section_kind": "profile",
+            "title": "Beta",
+            "summary_text": "Beta summary",
+            "source_refs": [{"kind": "data-page", "source_title": "Beta"}],
+            "child_ids": ["character:2/beta:0000"],
+            "content_hash": "b" * 64,
+        }
+    )
+
+    def semantic_child(
+        *, child_id: str, parent_id: str, entity_id: str, token: str
+    ) -> SemanticChild:
+        block = ChildBlock.from_json(
+            {
+                "child_id": child_id,
+                "parent_id": parent_id,
+                "entity_id": entity_id,
+                "entity_name": entity_id,
+                "category": "character",
+                "section_kind": "profile",
+                "title": entity_id,
+                "text": f"{entity_id} text",
+                "search_text": f"{entity_id} search",
+                "chunk_index": 0,
+                "media_ids": [f"media:{entity_id}"],
+                "media_policy": "auto",
+                "source_refs": [{"kind": "data-page", "source_title": entity_id}],
+                "content_hash": entity_id * 64,
+            }
+        )
+        return SemanticChild(
+            block=block,
+            stable_source_token=token,
+            source_token_kind="json_path",
+            owner_entity_id=entity_id,
+            owner_page_id=f"page:{entity_id}",
+            ordinal=int(entity_id),
+            name_en=f"name-{entity_id}",
+            valuation=f"value-{entity_id}",
+            description=f"description-{entity_id}",
+            media_binding_tokens=(f"binding:{entity_id}",),
+            source_fields={"json_path": token},
+        )
+
+    child_a = semantic_child(
+        child_id="character:1/alpha:0000",
+        parent_id=parent_a.parent_id,
+        entity_id="1",
+        token="$.alpha",
+    )
+    child_b = semantic_child(
+        child_id="character:2/beta:0000",
+        parent_id=parent_b.parent_id,
+        entity_id="2",
+        token="$.beta",
+    )
+    projection = SimpleNamespace(
+        parents=(parent_b, parent_a),
+        children=(child_b, child_a),
+    )
+    _write_jsonl(
+        Path(config["inputs"]["candidate_parents"]["path"]),
+        [parent_a.to_json(), parent_b.to_json()],
+    )
+    _write_jsonl(
+        Path(config["inputs"]["candidate_children"]["path"]),
+        [child_a.to_json(), child_b.to_json()],
+    )
+
+    evidence = _test_evidence_fixture()
+    semantic_inputs = SimpleNamespace(
+        pages=lambda: (),
+        revisions=lambda: (),
+        iter_data_page_mappings=lambda: (),
+    )
+    monkeypatch.setattr(
+        module.CrawlerSemanticInputs, "from_root", lambda _root: semantic_inputs
+    )
+    monkeypatch.setattr(module, "build_page_revision_join", lambda *_args: object())
+    monkeypatch.setattr(
+        module, "project_crawler_semantics", lambda *_args: evidence.data_projection
+    )
+    monkeypatch.setattr(
+        module, "project_page_semantics", lambda *_args: evidence.page_projection
+    )
+    monkeypatch.setattr(
+        module, "project_topic_semantics", lambda *_args: evidence.topic_projection
+    )
+    monkeypatch.setattr(module, "compose_corpus_projection", lambda *_args: projection)
+
+    loaded = module.load_validated_evidence(config)
+
+    assert [row["parent_id"] for row in loaded.candidate_parent_rows] == [
+        parent_a.parent_id,
+        parent_b.parent_id,
+    ]
+    assert [row["child_id"] for row in loaded.candidate_child_rows] == [
+        child_a.block.child_id,
+        child_b.block.child_id,
+    ]
+    assert {
+        field: loaded.candidate_child_rows[0][field]
+        for field in (
+            "stable_source_token",
+            "source_token_kind",
+            "owner_entity_id",
+            "owner_page_id",
+            "ordinal",
+            "name_en",
+            "valuation",
+            "description",
+            "media_binding_tokens",
+            "source_fields",
+        )
+    } == {
+        "stable_source_token": "$.alpha",
+        "source_token_kind": "json_path",
+        "owner_entity_id": "1",
+        "owner_page_id": "page:1",
+        "ordinal": 1,
+        "name_en": "name-1",
+        "valuation": "value-1",
+        "description": "description-1",
+        "media_binding_tokens": ["binding:1"],
+        "source_fields": {"json_path": "$.alpha"},
+    }
+
+
 def test_cli_requires_hash_pinned_run_config_and_exact_identity_chain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2007,16 +2166,43 @@ def test_diagnostic_calls_full_fidelity_and_separates_blocker_classes(
         output_root=output_root,
     ) == protected_root_probe
     evidence = _test_evidence_fixture()
+    candidate_parent_rows = (
+        {**_candidate_parent(), "parent_id": _candidate_parent()["record_id"]},
+    )
+    candidate_child_rows = tuple(
+        sorted(
+            (
+                {**row, "child_id": row["record_id"]}
+                for row in (
+                    _candidate_child(0),
+                    _candidate_child(1),
+                    _candidate_non_story_child(),
+                )
+            ),
+            key=lambda row: str(row["child_id"]),
+        )
+    )
+    config["inputs"]["candidate_parents"] = _write_jsonl(
+        Path(config["inputs"]["candidate_parents"]["path"]),
+        list(candidate_parent_rows),
+    )
+    config["inputs"]["candidate_children"] = _write_jsonl(
+        Path(config["inputs"]["candidate_children"]["path"]),
+        list(candidate_child_rows),
+    )
+    config_raw = _canonical_bytes(config)
+    config_path.write_bytes(config_raw)
+    digest = _sha256(config_raw)
     projection = SimpleNamespace(
-        parents=(_candidate_parent(),),
-        children=(
-            _candidate_child(0),
-            _candidate_child(1),
-            _candidate_non_story_child(),
+        parents=tuple(
+            SimpleNamespace(to_json=lambda row=row: copy.deepcopy(row))
+            for row in candidate_parent_rows
+        ),
+        children=tuple(
+            SimpleNamespace(to_json=lambda row=row: copy.deepcopy(row))
+            for row in candidate_child_rows
         ),
     )
-    assert projection.parents == evidence.candidate_parent_rows
-    assert projection.children == evidence.candidate_child_rows
     compose_calls: list[tuple[object, object, object]] = []
     fidelity_calls: list[dict[str, object]] = []
 
@@ -2051,8 +2237,8 @@ def test_diagnostic_calls_full_fidelity_and_separates_blocker_classes(
     monkeypatch.setattr(module, "compose_corpus_projection", compose)
     loaded_evidence = module.load_validated_evidence(config)
     assert loaded_evidence.projection is projection
-    assert loaded_evidence.candidate_parent_rows == projection.parents
-    assert loaded_evidence.candidate_child_rows == projection.children
+    assert loaded_evidence.candidate_parent_rows == candidate_parent_rows
+    assert loaded_evidence.candidate_child_rows == candidate_child_rows
     assert compose_calls == [
         (evidence.data_projection, evidence.page_projection, evidence.topic_projection)
     ]

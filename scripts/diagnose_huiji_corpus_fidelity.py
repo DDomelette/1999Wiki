@@ -909,16 +909,32 @@ def load_validated_evidence(config: dict[str, object]) -> SimpleNamespace:
     candidate_parents = rows("candidate_parents")
     candidate_children = rows("candidate_children")
     projected_parent_rows = tuple(
-        parent.to_json() if hasattr(parent, "to_json") else dict(parent)
-        for parent in projection.parents
+        sorted(
+            (
+                _json_object(
+                    _canonical_json_bytes(
+                        parent.to_json(), trailing_newline=False
+                    ),
+                    "projected parent",
+                )
+                for parent in projection.parents
+            ),
+            key=lambda row: str(row["parent_id"]),
+        )
     )
     projected_child_rows = tuple(
-        child.block.to_json()
-        if hasattr(child, "block")
-        else child.to_json()
-        if hasattr(child, "to_json")
-        else dict(child)
-        for child in projection.children
+        sorted(
+            (
+                _json_object(
+                    _canonical_json_bytes(
+                        child.to_json(), trailing_newline=False
+                    ),
+                    "projected child",
+                )
+                for child in projection.children
+            ),
+            key=lambda row: str(row["child_id"]),
+        )
     )
     if projected_parent_rows != candidate_parents or projected_child_rows != candidate_children:
         raise ValueError("checked-out corpus projection does not match pinned candidate rows")
