@@ -37,6 +37,7 @@ _TOP_LEVEL_FIELDS = {
     "schema_version",
     "run_id",
     "repository_root",
+    "protected_state_root",
     "output_root",
     "expected_git_head",
     "expected_git_tree",
@@ -283,8 +284,14 @@ def _bm25_records(raw: bytes, label: str) -> tuple[dict[str, Any], ...]:
 
 
 def _validate_protected_state(
-    raw: bytes, repository_root: Path, *, expected_count: int
+    raw: bytes, protected_state_root: Path, *, expected_count: int
 ) -> tuple[dict[str, Any], ...]:
+    protected_root_value = Path(protected_state_root)
+    if protected_root_value.is_symlink():
+        raise ValueError("protected state root must not be a symlink")
+    protected_root = protected_root_value.resolve(strict=True)
+    if not protected_root.is_dir():
+        raise ValueError("protected state root is not a directory")
     protected = _json_object(raw, "protected state")
     _exact_fields(protected, {"schema_version", "records"}, "protected state")
     records = protected["records"]
@@ -315,7 +322,9 @@ def _validate_protected_state(
             or mtime_ns < 0
         ):
             raise ValueError("protected identity contract does not match")
-        path = _contained_file(repository_root, record["path"], f"protected record {index}")
+        path = _contained_file(
+            protected_root, record["path"], f"protected record {index}"
+        )
         if path in paths:
             raise ValueError("protected identity contract does not match")
         content = path.read_bytes()
@@ -369,6 +378,12 @@ def load_run_config(
     repository_root = repository_value.resolve(strict=True)
     if not repository_root.is_dir():
         raise ValueError("repository root is not a directory")
+    protected_root_value = Path(str(config["protected_state_root"]))
+    if protected_root_value.is_symlink():
+        raise ValueError("protected state root must not be a symlink")
+    protected_state_root = protected_root_value.resolve(strict=True)
+    if not protected_state_root.is_dir():
+        raise ValueError("protected state root is not a directory")
 
     diagnostic = config["diagnostic"]
     if not isinstance(diagnostic, dict):
@@ -400,8 +415,6 @@ def load_run_config(
     for field in ("task7_c8a_commit", "c8b_commit", "c8c_commit"):
         if not _COMMIT_RE.fullmatch(str(checkpoints[field])):
             raise ValueError(f"{field} is invalid")
-    if checkpoints["c8c_commit"] != config["expected_git_head"]:
-        raise ValueError("C8c checkpoint does not match expected HEAD")
     parsed_receipts: dict[str, dict[str, Any]] = {}
     for field in ("c8b_d_acceptance", "c8c_d_acceptance"):
         identity = checkpoints[field]
@@ -447,7 +460,7 @@ def load_run_config(
         raise ValueError("protected identity contract does not match")
     _validate_protected_state(
         verified["protected_identity_manifest"][1],
-        repository_root,
+        protected_state_root,
         expected_count=expected_protected_count,
     )
 
@@ -1126,6 +1139,9 @@ def run_diagnostic(
     if output.exists():
         raise FileExistsError("C8d output root violates create-new absent-only semantics")
     repository_root = Path(str(config["repository_root"])).resolve(strict=True)
+    protected_state_root = Path(str(config["protected_state_root"])).resolve(
+        strict=True
+    )
     head, tree = read_git_identity(repository_root)
     if head != config["expected_git_head"] or tree != config["expected_git_tree"]:
         raise RuntimeError("checked-out HEAD/tree does not match the frozen run config")
@@ -1156,7 +1172,7 @@ def run_diagnostic(
         )
         _validate_protected_state(
             protected_raw,
-            repository_root,
+            protected_state_root,
             expected_count=int(config["expected_protected_identity_count"]),
         )
     except (OSError, RuntimeError, ValueError) as error:

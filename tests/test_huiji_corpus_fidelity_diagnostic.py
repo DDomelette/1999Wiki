@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import builtins
 import copy
+import errno
 import hashlib
 import importlib
 import importlib.util
@@ -22,11 +23,11 @@ import pytest
 
 SCRIPT_RELATIVE_PATH = "scripts/diagnose_huiji_corpus_fidelity.py"
 SCRIPT = Path(__file__).resolve().parents[1] / SCRIPT_RELATIVE_PATH
-HEAD = "9c226de2e850ecabf8e672afaacc8a517e802e7d"
-TREE = "f4dcc15ef5cc7f811132580c3423c63a05a06d44"
+HEAD = "11f038a2c479f1383dfcac7b4bb7d9f4e6710e01"
+TREE = "7d0adb73ec194f8f20675720935c61e3baa5724b"
 C8A_COMMIT = "012c7ca6b3abaa0445ccd00a8974ea4fefcbd333"
 C8B_COMMIT = "7366787401603e9a86d7277c99b3cc3f49e97508"
-C8C_COMMIT = HEAD
+C8C_COMMIT = "9c226de2e850ecabf8e672afaacc8a517e802e7d"
 C8B_RECEIPT_SHA256 = (
     "7dfc5cce2fda7b1b7ce97f76e59413a16c8df249abe1d1aa891b32892646fc20"
 )
@@ -541,9 +542,11 @@ def _c8c_taxonomy(
 def _run_config(tmp_path: Path) -> tuple[Path, str, Path, dict[str, object]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     repository = tmp_path / "repository"
+    protected_state_root = tmp_path / "protected-state"
     evidence = repository / "frozen"
     output_root = tmp_path / RUN_ID
     repository.mkdir()
+    protected_state_root.mkdir()
 
     active_parent = _active_parent()
     active_child = _active_child()
@@ -797,7 +800,7 @@ def _run_config(tmp_path: Path) -> tuple[Path, str, Path, dict[str, object]]:
     )
     protected_rows = []
     for index in range(32):
-        protected_path = evidence / "protected-targets" / f"target-{index:02d}.txt"
+        protected_path = protected_state_root / f"target-{index:02d}.txt"
         protected_raw = f"protected target {index:02d}\n".encode()
         protected_path.parent.mkdir(parents=True, exist_ok=True)
         protected_path.write_bytes(protected_raw)
@@ -1105,6 +1108,7 @@ def _run_config(tmp_path: Path) -> tuple[Path, str, Path, dict[str, object]]:
         "schema_version": "huiji.c8d-fidelity-run-config/v1",
         "run_id": RUN_ID,
         "repository_root": repository.as_posix(),
+        "protected_state_root": protected_state_root.as_posix(),
         "output_root": output_root.as_posix(),
         "expected_git_head": HEAD,
         "expected_git_tree": TREE,
@@ -1237,6 +1241,32 @@ def test_cli_requires_hash_pinned_run_config_and_exact_identity_chain(
 ) -> None:
     module = _load_diagnostic()
     config_path, digest, output_root, config = _run_config(tmp_path)
+    assert set(config) == {
+        "schema_version",
+        "run_id",
+        "repository_root",
+        "protected_state_root",
+        "output_root",
+        "expected_git_head",
+        "expected_git_tree",
+        "diagnostic",
+        "accepted_checkpoints",
+        "expected_output_files",
+        "sample_limit_per_blocker_prefix",
+        "expected_protected_identity_count",
+        "expected_protected_drift_count",
+        "expected_legacy_media_category_counts",
+        "inputs",
+        "c8c_evidence_chain",
+    }
+    assert config["expected_git_head"] == HEAD
+    assert config["accepted_checkpoints"]["c8c_commit"] == C8C_COMMIT
+    assert C8C_COMMIT != HEAD
+    repository_root = Path(config["repository_root"]).resolve()
+    protected_state_root = Path(config["protected_state_root"]).resolve()
+    assert protected_state_root.is_dir()
+    assert not protected_state_root.is_symlink()
+    assert not protected_state_root.is_relative_to(repository_root)
     calls: list[tuple[Path, str, Path]] = []
 
     def capture(path: Path, *, expected_run_config_sha256: str, output_root: Path):
@@ -1412,6 +1442,13 @@ def test_cli_requires_hash_pinned_run_config_and_exact_identity_chain(
     with pytest.raises(ValueError, match="occurrence ledger"):
         module._validate_c8c_chain(product_chain_mismatch, verified)
 
+    # Let this node isolate the frozen checkpoint-equality defect instead of
+    # stopping first at the newly required top-level protected-root field.
+    monkeypatch.setattr(
+        module,
+        "_TOP_LEVEL_FIELDS",
+        {*module._TOP_LEVEL_FIELDS, "protected_state_root"},
+    )
     loaded = module.load_run_config(
         config_path, expected_run_config_sha256=digest, output_root=output_root
     )
@@ -1462,6 +1499,14 @@ def test_cli_requires_hash_pinned_run_config_and_exact_identity_chain(
     assert len(protected["records"]) == 32
     assert all(
         set(record) == {"label", "path", "sha256", "size", "mtime_ns"}
+        for record in protected["records"]
+    )
+    assert all(
+        Path(record["path"]).resolve().is_relative_to(protected_state_root)
+        for record in protected["records"]
+    )
+    assert all(
+        not Path(record["path"]).resolve().is_relative_to(repository_root)
         for record in protected["records"]
     )
     c8b_taxonomy = json.loads(
@@ -1890,6 +1935,23 @@ def test_diagnostic_calls_full_fidelity_and_separates_blocker_classes(
 ) -> None:
     module = _load_diagnostic()
     config_path, digest, output_root, config = _run_config(tmp_path)
+    # Isolate the frozen protected-record containment defect. The ordinary
+    # invocation below retains the truthful distinct C8c/C8d identities.
+    monkeypatch.setattr(
+        module,
+        "_TOP_LEVEL_FIELDS",
+        {*module._TOP_LEVEL_FIELDS, "protected_state_root"},
+    )
+    protected_root_probe = copy.deepcopy(config)
+    protected_root_probe["accepted_checkpoints"]["c8c_commit"] = HEAD
+    protected_root_probe_path = tmp_path / "protected-root-probe.c8d.json"
+    protected_root_probe_raw = _canonical_bytes(protected_root_probe)
+    protected_root_probe_path.write_bytes(protected_root_probe_raw)
+    assert module.load_run_config(
+        protected_root_probe_path,
+        expected_run_config_sha256=_sha256(protected_root_probe_raw),
+        output_root=output_root,
+    ) == protected_root_probe
     evidence = _test_evidence_fixture()
     projection = SimpleNamespace(
         parents=(_candidate_parent(),),
@@ -2544,6 +2606,88 @@ def test_diagnostic_fails_closed_on_hash_head_tree_path_or_output_collision(
                 resource_metadata,
             )
 
+    base_config_path, base_digest, _, base_config = _run_config(tmp_path / "base")
+    protected_root = Path(base_config["protected_state_root"])
+    protected_manifest_path = Path(
+        base_config["inputs"]["protected_identity_manifest"]["path"]
+    )
+    protected_manifest_raw = protected_manifest_path.read_bytes()
+    protected_manifest = json.loads(protected_manifest_raw)
+    assert module._validate_protected_state(
+        protected_manifest_raw,
+        protected_root,
+        expected_count=32,
+    ) == tuple(protected_manifest["records"])
+
+    outside_record_manifest = copy.deepcopy(protected_manifest)
+    outside_path = Path(base_config["repository_root"]) / SCRIPT_RELATIVE_PATH
+    outside_raw = outside_path.read_bytes()
+    outside_stat = outside_path.stat()
+    outside_record_manifest["records"][0] = {
+        **outside_record_manifest["records"][0],
+        "path": outside_path.as_posix(),
+        "sha256": _sha256(outside_raw),
+        "size": len(outside_raw),
+        "mtime_ns": outside_stat.st_mtime_ns,
+    }
+    with pytest.raises(ValueError):
+        module._validate_protected_state(
+            _canonical_bytes(outside_record_manifest),
+            protected_root,
+            expected_count=32,
+        )
+
+    def create_required_symlink(
+        link: Path, target: Path, *, target_is_directory: bool = False
+    ) -> bool:
+        try:
+            link.symlink_to(target, target_is_directory=target_is_directory)
+        except NotImplementedError:
+            return False
+        except OSError as error:
+            unavailable_errnos = {
+                errno.EACCES,
+                errno.EPERM,
+                errno.ENOSYS,
+                getattr(errno, "EOPNOTSUPP", errno.ENOSYS),
+            }
+            if (
+                error.errno in unavailable_errnos
+                or getattr(error, "winerror", None) == 1314
+            ):
+                return False
+            raise
+        return True
+
+    protected_root_link = tmp_path / "protected-state-root-link"
+    protected_root_symlink_available = create_required_symlink(
+        protected_root_link,
+        protected_root,
+        target_is_directory=True,
+    )
+    if protected_root_symlink_available:
+        with pytest.raises(ValueError):
+            module._validate_protected_state(
+                protected_manifest_raw,
+                protected_root_link,
+                expected_count=32,
+            )
+
+    protected_record_link = protected_root / "protected-record-link.txt"
+    protected_record_symlink_available = create_required_symlink(
+        protected_record_link,
+        Path(protected_manifest["records"][0]["path"]),
+    )
+    if protected_record_symlink_available:
+        symlink_record_manifest = copy.deepcopy(protected_manifest)
+        symlink_record_manifest["records"][0]["path"] = protected_record_link.as_posix()
+        with pytest.raises(ValueError):
+            module._validate_protected_state(
+                _canonical_bytes(symlink_record_manifest),
+                protected_root,
+                expected_count=32,
+            )
+
     for index, malformed_bm25 in enumerate(
         ([], {}, {"records": {}}, {"records": [], "unexpected": True})
     ):
@@ -2563,8 +2707,6 @@ def test_diagnostic_fails_closed_on_hash_head_tree_path_or_output_collision(
                 expected_run_config_sha256=_sha256(case_raw),
                 output_root=case_output,
             )
-
-    base_config_path, base_digest, _, base_config = _run_config(tmp_path / "base")
 
     calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
 
