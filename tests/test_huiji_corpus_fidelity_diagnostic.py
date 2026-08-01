@@ -1250,6 +1250,51 @@ def _assert_no_output(output_root: Path) -> None:
     assert not output_root.exists() or not tuple(output_root.iterdir())
 
 
+def test_blocker_prefix_counts_distinguishes_aggregates_from_instance_identities(
+) -> None:
+    module = _load_diagnostic()
+    blockers = (
+        "blocked_ambiguous_child:story:1dfff1dd76af:0000:"
+        "story_profile_requires_exact_source_migration_link",
+        "blocked_ambiguous_child:story:290dcce93c25:0001:"
+        "story_profile_requires_exact_source_migration_link",
+        "active_media_bm25_sequence_mismatch:15756",
+        "future_instance_blocker:story:88d21e466ae1:0002:reason:with:colons",
+        "legacy_media_missing_local_bytes:2",
+        "legacy_media_missing_resource_metadata:0",
+        "legacy_media_ambiguous_binding:4",
+        "legacy_media_conflicting_binding:5",
+        "unexplained_binding_loss:6",
+        "unexplained_parent_child_loss:7",
+    )
+
+    assert dict(module._blocker_prefix_counts(blockers)) == {
+        "active_media_bm25_sequence_mismatch": 1,
+        "blocked_ambiguous_child": 2,
+        "future_instance_blocker": 1,
+        "legacy_media_ambiguous_binding": 4,
+        "legacy_media_conflicting_binding": 5,
+        "legacy_media_missing_local_bytes": 2,
+        "legacy_media_missing_resource_metadata": 0,
+        "unexplained_binding_loss": 6,
+        "unexplained_parent_child_loss": 7,
+    }
+
+    malformed = (
+        "legacy_media_missing_local_bytes",
+        "legacy_media_missing_local_bytes:",
+        "legacy_media_missing_local_bytes:01",
+        "legacy_media_missing_local_bytes:-1",
+        "legacy_media_missing_local_bytes:1:extra",
+        ":story:1dfff1dd76af:0000:reason",
+        "invalid-prefix:story:1dfff1dd76af:0000:reason",
+        "Invalid_prefix:story:1dfff1dd76af:0000:reason",
+    )
+    for blocker in malformed:
+        with pytest.raises(ValueError):
+            module._blocker_prefix_counts((blocker,))
+
+
 def test_load_validated_evidence_matches_candidate_json_boundary_and_id_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

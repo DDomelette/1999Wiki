@@ -28,6 +28,18 @@ from src.huiji_rag.build.projection import (
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
 _RUN_ID_RE = re.compile(r"task8-c-[A-Za-z0-9_-]+\Z")
+_BLOCKER_PREFIX_RE = re.compile(r"[a-z][a-z0-9_]*\Z")
+_CANONICAL_NONNEGATIVE_DECIMAL_RE = re.compile(r"(?:0|[1-9][0-9]*)\Z")
+_AGGREGATE_BLOCKER_PREFIXES = frozenset(
+    {
+        "legacy_media_missing_local_bytes",
+        "legacy_media_missing_resource_metadata",
+        "legacy_media_ambiguous_binding",
+        "legacy_media_conflicting_binding",
+        "unexplained_binding_loss",
+        "unexplained_parent_child_loss",
+    }
+)
 _OUTPUT_NAMES = (
     "manifest.c8d-fidelity.v1.json",
     "receipt.c8d-fidelity.v1.json",
@@ -1013,11 +1025,16 @@ def _blocker_prefix_counts(blockers: Iterable[object]) -> Counter[str]:
     counts: Counter[str] = Counter()
     for value in blockers:
         prefix, separator, raw_count = str(value).partition(":")
-        if not prefix:
-            raise ValueError("fidelity blocker prefix is empty")
-        count = int(raw_count) if separator else 1
-        if count < 0:
-            raise ValueError("fidelity blocker count is negative")
+        if _BLOCKER_PREFIX_RE.fullmatch(prefix) is None:
+            raise ValueError("fidelity blocker prefix is invalid")
+        count = 1
+        if prefix in _AGGREGATE_BLOCKER_PREFIXES:
+            if (
+                not separator
+                or _CANONICAL_NONNEGATIVE_DECIMAL_RE.fullmatch(raw_count) is None
+            ):
+                raise ValueError("fidelity aggregate blocker count is invalid")
+            count = int(raw_count)
         counts[prefix] += count
     return counts
 
