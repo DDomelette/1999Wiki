@@ -623,6 +623,10 @@ def _validate_c8c_chain(
         != _C8C_MANIFEST_LABELS
     ):
         raise ValueError("C8c product input manifest is invalid")
+    semantic_row_counts = {
+        "accepted_taxonomy": len(rows),
+        "protected_identity_manifest": config["expected_protected_identity_count"],
+    }
     repository_root = Path(str(config["repository_root"])).resolve(strict=True)
     witnessed_paths: list[str] = []
     for index, identity in enumerate(manifest_inputs):
@@ -639,7 +643,7 @@ def _validate_c8c_chain(
             or (row_count is not None and (type(row_count) is not int or row_count < 0))
         ):
             raise ValueError("C8c product input identity is invalid")
-        is_accepted_taxonomy = identity["label"] == "accepted_taxonomy"
+        semantic_row_count = semantic_row_counts.get(identity["label"])
         witness_path = _contained_file(
             repository_root,
             repository_root / relative,
@@ -652,8 +656,8 @@ def _validate_c8c_chain(
             or (
                 row_count is not None
                 and (
-                    row_count != len(rows)
-                    if is_accepted_taxonomy
+                    row_count != semantic_row_count
+                    if semantic_row_count is not None
                     else witness_raw.count(b"\n") != row_count
                 )
             )
@@ -675,12 +679,13 @@ def _validate_c8c_chain(
     }
     for index, c8d_label in c8d_mapping.items():
         path, _raw = verified[c8d_label]
+        product_label = _C8C_MANIFEST_LABELS[index]
         expected = {
             "identity": path.relative_to(repository_root).as_posix(),
-            "label": _C8C_MANIFEST_LABELS[index],
+            "label": product_label,
             "row_count": (
-                len(rows)
-                if c8d_label == "c8c_taxonomy"
+                semantic_row_counts[product_label]
+                if product_label in semantic_row_counts
                 else config["inputs"][c8d_label].get("row_count")
             ),
             "sha256": config["inputs"][c8d_label]["sha256"],
