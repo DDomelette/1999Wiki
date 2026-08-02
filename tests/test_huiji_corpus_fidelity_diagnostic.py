@@ -547,14 +547,19 @@ def _run_config(
     accepted_taxonomy_manifest_row_count: int | None = None,
     protected_identity_manifest_row_count: int = 32,
     descendant_reviewed_file: str | None = None,
+    protected_inside_repository: bool = False,
 ) -> tuple[Path, str, Path, dict[str, object]]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     repository = tmp_path / "repository"
-    protected_state_root = tmp_path / "protected-state"
+    protected_state_root = (
+        repository / "eval/story_segment/dependencies/protected-state"
+        if protected_inside_repository
+        else tmp_path / "protected-state"
+    )
     evidence = repository / "frozen"
     output_root = tmp_path / RUN_ID
     repository.mkdir()
-    protected_state_root.mkdir()
+    protected_state_root.mkdir(parents=True)
 
     active_parent = _active_parent()
     active_child = _active_child()
@@ -1197,6 +1202,211 @@ def _run_config(
     return config_path, _sha256(config_raw), output_root, config
 
 
+def _commit_tree(repository: Path, tree: str, parent: str, message: str) -> str:
+    environment = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "C9c fixture",
+        "GIT_AUTHOR_EMAIL": "c9c@example.invalid",
+        "GIT_AUTHOR_DATE": "2026-08-02T00:00:00Z",
+        "GIT_COMMITTER_NAME": "C9c fixture",
+        "GIT_COMMITTER_EMAIL": "c9c@example.invalid",
+        "GIT_COMMITTER_DATE": "2026-08-02T00:00:00Z",
+    }
+    return subprocess.run(
+        ("git", "commit-tree", tree, "-p", parent, "-m", message),
+        cwd=repository,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        shell=False,
+    ).stdout.strip()
+
+
+def _c9_intake(
+    tmp_path: Path,
+) -> tuple[Path, Path, str, Path, dict[str, object], dict[str, object]]:
+    _config_path, _digest, _old_output, config = _run_config(
+        tmp_path, protected_inside_repository=True
+    )
+    project_root = Path(config["repository_root"])
+    c8d_commit = str(config["expected_git_head"])
+    checkpoint_tree = str(config["expected_git_tree"])
+    c9_commit = _commit_tree(
+        project_root, checkpoint_tree, c8d_commit, "C9 zero-diff checkpoint"
+    )
+    post_merge_commit = _commit_tree(
+        project_root, checkpoint_tree, c9_commit, "post-merge descendant"
+    )
+    config["expected_git_head"] = post_merge_commit
+    config["expected_git_tree"] = checkpoint_tree
+    subprocess.run(
+        ("git", "update-ref", "refs/heads/main", post_merge_commit),
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        shell=False,
+    )
+    subprocess.run(
+        ("git", "symbolic-ref", "HEAD", "refs/heads/main"),
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        shell=False,
+    )
+    dependency_root = project_root / "eval/story_segment/dependencies/intake-fixture"
+    dependency_root.mkdir(parents=True)
+    handoff_path = dependency_root / "audit-handoff.c9.v1.json"
+    handoff = {
+        "schema_version": "huiji.thread-c-c9-audit/v1",
+        "run_id": "task9-c-intake-fixture",
+        "status": "completed",
+        "c9_complete": True,
+        "merge_ready": True,
+        "disposition": "completed_pending_review",
+        "git_identity": {
+            "head": c9_commit,
+            "tree": checkpoint_tree,
+            "parent": c8d_commit,
+            "checkpoint_parent_tracked_diff_empty": True,
+        },
+        "commit_chain": {
+            "head_inclusive": c9_commit,
+        },
+        "c9_test_evidence": {},
+        "deterministic_closure": {"gate_closed": True},
+        "c8d_real6_evidence": {},
+        "remaining_blocker_classification": {
+            "unresolved_deterministic_closure_blocker": False,
+            "unresolved_candidate_cli_blocker": False,
+        },
+        "ownership_audit": {
+            "tracked_worktree_clean": True,
+            "index_clean": True,
+            "unmerged_clean": True,
+            "forbidden_ab_runtime_diff_empty": True,
+            "external_operation_performed": False,
+            "external_operation_counts": {
+                "candidate_build": 0,
+                "c8d": 0,
+                "download": 0,
+                "embedding_or_vector": 0,
+                "milvus": 0,
+                "minio": 0,
+                "mysql": 0,
+                "network": 0,
+                "production_write": 0,
+                "activation_or_pointer_change": 0,
+            },
+            "newly_tracked_forbidden_artifacts": {
+                "raw_snapshot": False,
+                "ignored_run": False,
+                "pytest_basetemp": False,
+                "supervisor_state": False,
+                "vector_artifact": False,
+                "downloaded_media": False,
+                "production_pointer": False,
+                "credentials": False,
+            },
+        },
+        "canonical_text_or_child_ids_changed": True,
+        "vector_rebuild_disposition": {"decision_owner": "D"},
+    }
+    handoff_raw = _canonical_bytes(handoff)
+    handoff_path.write_bytes(handoff_raw)
+
+    def relative_identity(identity: dict[str, object]) -> dict[str, object]:
+        result = {
+            "relative_path": Path(identity["path"])
+            .relative_to(project_root)
+            .as_posix(),
+            "sha256": identity["sha256"],
+            "size_bytes": identity["size_bytes"],
+        }
+        if "row_count" in identity:
+            result["row_count"] = identity["row_count"]
+        return result
+
+    accepted = config["accepted_checkpoints"]
+    intake: dict[str, object] = {
+        "schema_version": "rag.thread-c9-intake/v1",
+        "release_checkpoints": {
+            "task7_c8a_commit": accepted["task7_c8a_commit"],
+            "c8b_commit": accepted["c8b_commit"],
+            "c8c_commit": accepted["c8c_commit"],
+            "c8d_commit": c8d_commit,
+            "c9_commit": c9_commit,
+            "c9_tree": checkpoint_tree,
+        },
+        "c9_handoff": {
+            "relative_path": handoff_path.relative_to(project_root).as_posix(),
+            "sha256": _sha256(handoff_raw),
+            "size_bytes": len(handoff_raw),
+            "schema_version": "huiji.thread-c-c9-audit/v1",
+        },
+        "c8d_entrypoint": {
+            "relative_path": SCRIPT_RELATIVE_PATH,
+            "sha256": config["diagnostic"]["sha256"],
+            "size_bytes": (project_root / SCRIPT_RELATIVE_PATH).stat().st_size,
+            "schema_version": "huiji.corpus-fidelity-diagnostic/v1",
+        },
+        "protected_state_root": Path(config["protected_state_root"])
+        .relative_to(project_root)
+        .as_posix(),
+        "accepted_evidence": {
+            "c8b_d_acceptance": relative_identity(accepted["c8b_d_acceptance"]),
+            "c8c_d_acceptance": relative_identity(accepted["c8c_d_acceptance"]),
+        },
+        "expected_output_files": list(OUTPUT_NAMES),
+        "sample_limit_per_blocker_prefix": config[
+            "sample_limit_per_blocker_prefix"
+        ],
+        "expected_protected_identity_count": config[
+            "expected_protected_identity_count"
+        ],
+        "expected_protected_drift_count": config["expected_protected_drift_count"],
+        "expected_legacy_media_category_counts": config[
+            "expected_legacy_media_category_counts"
+        ],
+        "inputs": {
+            label: relative_identity(identity)
+            for label, identity in config["inputs"].items()
+        },
+        "c8c_evidence_chain": copy.deepcopy(config["c8c_evidence_chain"]),
+    }
+    intake_path = dependency_root / "c9-intake-receipt.v1.json"
+    intake_raw = _canonical_bytes(intake)
+    intake_path.write_bytes(intake_raw)
+    output_root = project_root / "eval/story_segment/dependencies/run-fixture/c8d"
+    output_root.parent.mkdir(parents=True)
+    return (
+        project_root,
+        intake_path,
+        _sha256(intake_raw),
+        output_root,
+        intake,
+        config,
+    )
+
+
+def _rewrite_handoff_and_intake(
+    project_root: Path,
+    intake_path: Path,
+    intake: dict[str, object],
+    mutate: Callable[[dict[str, object]], None],
+) -> str:
+    handoff_path = project_root / intake["c9_handoff"]["relative_path"]
+    handoff = json.loads(handoff_path.read_bytes())
+    mutate(handoff)
+    handoff_raw = _canonical_bytes(handoff)
+    handoff_path.write_bytes(handoff_raw)
+    intake["c9_handoff"]["sha256"] = _sha256(handoff_raw)
+    intake["c9_handoff"]["size_bytes"] = len(handoff_raw)
+    intake_raw = _canonical_bytes(intake)
+    intake_path.write_bytes(intake_raw)
+    return _sha256(intake_raw)
+
+
 def _test_evidence_fixture() -> SimpleNamespace:
     return SimpleNamespace(
         data_projection=SimpleNamespace(
@@ -1620,7 +1830,569 @@ def test_c8c_reviewed_file_rejects_invalid_checkpoint(
     _assert_no_output(output_root)
 
 
-def test_cli_requires_hash_pinned_run_config_and_exact_identity_chain(
+def test_public_cli_dispatches_hash_pinned_c9_intake_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_diagnostic()
+    project_root = tmp_path / "project"
+    dependency_root = project_root / "eval/story_segment/dependencies/intake-fixture"
+    dependency_root.mkdir(parents=True)
+    intake_path = dependency_root / "c9-intake-receipt.v1.json"
+    intake_path.write_bytes(b"{}\n")
+    digest = _sha256(intake_path.read_bytes())
+    output_root = project_root / "eval/story_segment/dependencies/run-fixture/c8d"
+    calls: list[tuple[Path, Path, str, Path]] = []
+
+    def capture(
+        *,
+        project_root: Path,
+        c9_intake_path: Path,
+        expected_c9_intake_sha256: str,
+        output_root: Path,
+    ) -> None:
+        calls.append(
+            (
+                Path(project_root),
+                Path(c9_intake_path),
+                expected_c9_intake_sha256,
+                Path(output_root),
+            )
+        )
+
+    monkeypatch.setattr(module, "run_c9_intake_diagnostic", capture, raising=False)
+    argv = [
+        "--project-root",
+        str(project_root),
+        "--c9-intake",
+        str(intake_path),
+        "--expected-c9-intake-sha256",
+        digest,
+        "--output-root",
+        str(output_root),
+        "--read-only",
+    ]
+
+    assert module.main(argv) == 0
+    assert calls == [(project_root, intake_path, digest, output_root)]
+
+
+def test_public_entrypoint_is_directly_reachable_with_intake_only_help() -> None:
+    completed = subprocess.run(
+        (os.sys.executable, "-B", str(SCRIPT), "--help"),
+        cwd=SCRIPT.parent.parent,
+        capture_output=True,
+        text=True,
+        shell=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "--project-root" in completed.stdout
+    assert "--c9-intake" in completed.stdout
+    assert "--expected-c9-intake-sha256" in completed.stdout
+    assert "--output-root" in completed.stdout
+    assert "--read-only" in completed.stdout
+    assert "--run-config" not in completed.stdout
+
+
+def test_public_cli_rejects_old_run_config_and_requires_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, digest, output_root, _intake, _config = _c9_intake(
+        tmp_path
+    )
+    calls: list[object] = []
+    monkeypatch.setattr(
+        module,
+        "run_c9_intake_diagnostic",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    approved = [
+        "--project-root",
+        str(project_root),
+        "--c9-intake",
+        str(intake_path),
+        "--expected-c9-intake-sha256",
+        digest,
+        "--output-root",
+        str(output_root),
+    ]
+    old_config_path = tmp_path / "run-config.c8d.json"
+    old_config_path.write_bytes(b"{}\n")
+    old_argv = [
+        "--run-config",
+        str(old_config_path),
+        "--expected-run-config-sha256",
+        _sha256(old_config_path.read_bytes()),
+        "--output-root",
+        str(output_root),
+    ]
+
+    for argv in (approved, old_argv):
+        with pytest.raises(SystemExit) as raised:
+            module.main(argv)
+        assert raised.value.code == 2
+        _assert_no_output(output_root)
+    assert calls == []
+
+
+def test_c9_intake_is_the_single_source_for_validated_post_merge_config(
+    tmp_path: Path,
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, digest, output_root, intake, old_config = _c9_intake(
+        tmp_path
+    )
+
+    loaded = module.load_c9_intake(
+        project_root=project_root,
+        path=intake_path,
+        expected_c9_intake_sha256=digest,
+        output_root=output_root,
+    )
+
+    config = loaded["config"]
+    assert config["repository_root"] == project_root.resolve().as_posix()
+    assert config["expected_git_head"] == old_config["expected_git_head"]
+    assert config["expected_git_tree"] == old_config["expected_git_tree"]
+    assert config["accepted_checkpoints"] == old_config["accepted_checkpoints"]
+    assert config["expected_output_files"] == list(OUTPUT_NAMES)
+    assert set(config["inputs"]) == set(old_config["inputs"])
+    assert loaded["authority"] == {
+        "path": intake_path.relative_to(project_root).as_posix(),
+        "sha256": digest,
+        "size_bytes": intake_path.stat().st_size,
+        "schema_version": "rag.thread-c9-intake/v1",
+    }
+    assert loaded["git_identity"] == {
+        "head": old_config["expected_git_head"],
+        "tree": old_config["expected_git_tree"],
+    }
+    assert intake["c9_handoff"]["schema_version"] == "huiji.thread-c-c9-audit/v1"
+    _assert_no_output(output_root)
+
+
+def test_c9_intake_runner_names_intake_and_actual_post_merge_git_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, digest, output_root, _intake, config = _c9_intake(
+        tmp_path
+    )
+    monkeypatch.setattr(
+        module, "load_validated_evidence", lambda _config: _test_evidence_fixture()
+    )
+    monkeypatch.setattr(
+        module, "build_fidelity_ledger", lambda **_kwargs: _fidelity_result()
+    )
+
+    module.run_c9_intake_diagnostic(
+        project_root=project_root,
+        c9_intake_path=intake_path,
+        expected_c9_intake_sha256=digest,
+        output_root=output_root,
+    )
+
+    assert tuple(sorted(path.name for path in output_root.iterdir())) == OUTPUT_NAMES
+    manifest = json.loads((output_root / OUTPUT_NAMES[0]).read_bytes())
+    receipt = json.loads((output_root / OUTPUT_NAMES[1]).read_bytes())
+    expected_authority = {
+        "path": intake_path.relative_to(project_root).as_posix(),
+        "sha256": digest,
+        "size_bytes": intake_path.stat().st_size,
+        "schema_version": "rag.thread-c9-intake/v1",
+    }
+    assert manifest["c9_intake"] == receipt["c9_intake"] == expected_authority
+    assert "run_config" not in manifest
+    assert manifest["git_identity"] == {
+        "head": config["expected_git_head"],
+        "tree": config["expected_git_tree"],
+    }
+    assert receipt["git_identity"] == manifest["git_identity"]
+    assert receipt["activity_counters"]["allowed_read_only_git_calls"] == 13
+    assert receipt["activity_counters"]["total_subprocess_calls"] == 13
+    assert all(
+        count == 0
+        for name, count in receipt["activity_counters"].items()
+        if name not in {"allowed_read_only_git_calls", "total_subprocess_calls"}
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "tampered-bytes",
+        "duplicate-key",
+        "extra-field",
+        "missing-field",
+        "path-escape",
+        "missing-input",
+        "entrypoint-hash",
+        "entrypoint-schema",
+        "handoff-hash",
+        "handoff-schema",
+        "input-hash",
+        "input-size",
+        "input-row-count",
+        "protected-count",
+        "canonical-outputs",
+    ),
+)
+def test_c9_intake_preflight_rejects_invalid_authority_without_output(
+    tmp_path: Path, case: str
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+    payload = copy.deepcopy(intake)
+    expected_digest = digest
+    if case == "tampered-bytes":
+        raw = intake_path.read_bytes() + b" "
+    elif case == "duplicate-key":
+        raw = (
+            b'{"schema_version":"duplicate",'
+            + intake_path.read_bytes().lstrip()[1:]
+        )
+        expected_digest = _sha256(raw)
+    else:
+        if case == "extra-field":
+            payload["unexpected"] = True
+        elif case == "missing-field":
+            payload.pop("c8c_evidence_chain")
+        elif case == "path-escape":
+            payload["inputs"]["active_parents"]["relative_path"] = "../escape.jsonl"
+        elif case == "missing-input":
+            payload["inputs"]["active_parents"]["relative_path"] = (
+                "missing/parents.jsonl"
+            )
+        elif case == "entrypoint-hash":
+            payload["c8d_entrypoint"]["sha256"] = "0" * 64
+        elif case == "entrypoint-schema":
+            payload["c8d_entrypoint"]["schema_version"] = "wrong"
+        elif case == "handoff-hash":
+            payload["c9_handoff"]["sha256"] = "0" * 64
+        elif case == "handoff-schema":
+            payload["c9_handoff"]["schema_version"] = "wrong"
+        elif case == "input-hash":
+            payload["inputs"]["active_parents"]["sha256"] = "0" * 64
+        elif case == "input-size":
+            payload["inputs"]["active_parents"]["size_bytes"] += 1
+        elif case == "input-row-count":
+            payload["inputs"]["active_parents"]["row_count"] += 1
+        elif case == "protected-count":
+            payload["expected_protected_identity_count"] += 1
+        elif case == "canonical-outputs":
+            payload["expected_output_files"] = list(reversed(OUTPUT_NAMES))
+        raw = _canonical_bytes(payload)
+        expected_digest = _sha256(raw)
+    intake_path.write_bytes(raw)
+
+    with pytest.raises((OSError, RuntimeError, ValueError)):
+        module.load_c9_intake(
+            project_root=project_root,
+            path=intake_path,
+            expected_c9_intake_sha256=expected_digest,
+            output_root=output_root,
+        )
+    _assert_no_output(output_root)
+
+
+def test_c9_intake_rejects_nonancestor_checkpoint_without_output(
+    tmp_path: Path,
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, _digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+    payload = copy.deepcopy(intake)
+    payload["release_checkpoints"]["c9_commit"] = DESCENDANT_HEAD
+    payload["release_checkpoints"]["c9_tree"] = DESCENDANT_TREE
+    handoff_path = project_root / payload["c9_handoff"]["relative_path"]
+    handoff = json.loads(handoff_path.read_bytes())
+    handoff["git_identity"]["head"] = DESCENDANT_HEAD
+    handoff["git_identity"]["tree"] = DESCENDANT_TREE
+    handoff["commit_chain"]["head_inclusive"] = DESCENDANT_HEAD
+    handoff_raw = _canonical_bytes(handoff)
+    handoff_path.write_bytes(handoff_raw)
+    payload["c9_handoff"]["sha256"] = _sha256(handoff_raw)
+    payload["c9_handoff"]["size_bytes"] = len(handoff_raw)
+    raw = _canonical_bytes(payload)
+    intake_path.write_bytes(raw)
+
+    with pytest.raises(ValueError, match="not an ancestor"):
+        module.load_c9_intake(
+            project_root=project_root,
+            path=intake_path,
+            expected_c9_intake_sha256=_sha256(raw),
+            output_root=output_root,
+        )
+    _assert_no_output(output_root)
+
+
+def test_c9_intake_rejects_intermediate_commit_between_c8d_and_c9(
+    tmp_path: Path,
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, _digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+    c8d_commit = intake["release_checkpoints"]["c8d_commit"]
+    tree = intake["release_checkpoints"]["c9_tree"]
+    intermediate = _commit_tree(project_root, tree, c8d_commit, "intermediate")
+    c9_commit = _commit_tree(project_root, tree, intermediate, "not direct C9")
+    runtime_head = _commit_tree(project_root, tree, c9_commit, "runtime descendant")
+    subprocess.run(
+        ("git", "update-ref", "refs/heads/main", runtime_head),
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        shell=False,
+    )
+    intake["release_checkpoints"]["c9_commit"] = c9_commit
+
+    def update_handoff(handoff: dict[str, object]) -> None:
+        handoff["git_identity"].update(
+            {"head": c9_commit, "tree": tree, "parent": c8d_commit}
+        )
+        handoff["commit_chain"]["head_inclusive"] = c9_commit
+
+    digest = _rewrite_handoff_and_intake(
+        project_root, intake_path, intake, update_handoff
+    )
+
+    with pytest.raises(ValueError, match="direct parent"):
+        module.load_c9_intake(
+            project_root=project_root,
+            path=intake_path,
+            expected_c9_intake_sha256=digest,
+            output_root=output_root,
+        )
+    _assert_no_output(output_root)
+
+
+def test_c9_intake_rejects_nonzero_checkpoint_tree_diff_without_output(
+    tmp_path: Path,
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, _digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+    c8d_commit = intake["release_checkpoints"]["c8d_commit"]
+    changed_tree = subprocess.run(
+        ("git", "rev-parse", f"{C8C_COMMIT}^{{tree}}"),
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        text=True,
+        shell=False,
+    ).stdout.strip()
+    assert changed_tree != intake["release_checkpoints"]["c9_tree"]
+    c9_commit = _commit_tree(project_root, changed_tree, c8d_commit, "changed C9")
+    runtime_head = _commit_tree(
+        project_root, changed_tree, c9_commit, "runtime descendant"
+    )
+    subprocess.run(
+        ("git", "update-ref", "refs/heads/main", runtime_head),
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+        shell=False,
+    )
+    intake["release_checkpoints"].update(
+        {"c9_commit": c9_commit, "c9_tree": changed_tree}
+    )
+
+    def update_handoff(handoff: dict[str, object]) -> None:
+        handoff["git_identity"].update(
+            {"head": c9_commit, "tree": changed_tree, "parent": c8d_commit}
+        )
+        handoff["commit_chain"]["head_inclusive"] = c9_commit
+
+    digest = _rewrite_handoff_and_intake(
+        project_root, intake_path, intake, update_handoff
+    )
+
+    with pytest.raises(ValueError, match="zero tracked diff"):
+        module.load_c9_intake(
+            project_root=project_root,
+            path=intake_path,
+            expected_c9_intake_sha256=digest,
+            output_root=output_root,
+        )
+    _assert_no_output(output_root)
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "head",
+        "tree",
+        "parent",
+        "checkpoint_parent_tracked_diff_empty",
+        "head_inclusive",
+    ),
+)
+def test_c9_intake_rejects_forged_handoff_git_identity_without_output(
+    tmp_path: Path, field: str
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, _digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+
+    def forge(handoff: dict[str, object]) -> None:
+        if field == "head_inclusive":
+            handoff["commit_chain"][field] = "0" * 40
+        elif field == "checkpoint_parent_tracked_diff_empty":
+            handoff["git_identity"][field] = False
+        else:
+            handoff["git_identity"][field] = "0" * 40
+
+    digest = _rewrite_handoff_and_intake(project_root, intake_path, intake, forge)
+
+    with pytest.raises(ValueError, match="handoff"):
+        module.load_c9_intake(
+            project_root=project_root,
+            path=intake_path,
+            expected_c9_intake_sha256=digest,
+            output_root=output_root,
+        )
+    _assert_no_output(output_root)
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "deterministic-gate",
+        "candidate-cli-blocker",
+        "deterministic-blocker",
+        "ownership-clean",
+        "forbidden-runtime-diff",
+        "external-performed",
+        "external-count",
+        "external-count-type",
+        "external-counts-missing",
+        "ownership-structure-type",
+        "newly-tracked-forbidden",
+        "newly-tracked-type",
+        "vector-owner",
+    ),
+)
+def test_c9_intake_rejects_false_or_malformed_handoff_safety_gate(
+    tmp_path: Path, case: str
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, _digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+
+    def break_gate(handoff: dict[str, object]) -> None:
+        if case == "deterministic-gate":
+            handoff["deterministic_closure"]["gate_closed"] = False
+        elif case == "candidate-cli-blocker":
+            handoff["remaining_blocker_classification"][
+                "unresolved_candidate_cli_blocker"
+            ] = True
+        elif case == "deterministic-blocker":
+            handoff["remaining_blocker_classification"][
+                "unresolved_deterministic_closure_blocker"
+            ] = True
+        elif case == "ownership-clean":
+            handoff["ownership_audit"]["tracked_worktree_clean"] = False
+        elif case == "forbidden-runtime-diff":
+            handoff["ownership_audit"]["forbidden_ab_runtime_diff_empty"] = False
+        elif case == "external-performed":
+            handoff["ownership_audit"]["external_operation_performed"] = True
+        elif case == "external-count":
+            handoff["ownership_audit"]["external_operation_counts"]["network"] = 1
+        elif case == "external-count-type":
+            handoff["ownership_audit"]["external_operation_counts"]["network"] = False
+        elif case == "external-counts-missing":
+            handoff["ownership_audit"].pop("external_operation_counts")
+        elif case == "ownership-structure-type":
+            handoff["ownership_audit"] = []
+        elif case == "newly-tracked-forbidden":
+            handoff["ownership_audit"]["newly_tracked_forbidden_artifacts"][
+                "raw_snapshot"
+            ] = True
+        elif case == "newly-tracked-type":
+            handoff["ownership_audit"]["newly_tracked_forbidden_artifacts"][
+                "raw_snapshot"
+            ] = 0
+        elif case == "vector-owner":
+            handoff["vector_rebuild_disposition"]["decision_owner"] = "C"
+
+    digest = _rewrite_handoff_and_intake(
+        project_root, intake_path, intake, break_gate
+    )
+
+    with pytest.raises(ValueError, match="handoff"):
+        module.load_c9_intake(
+            project_root=project_root,
+            path=intake_path,
+            expected_c9_intake_sha256=digest,
+            output_root=output_root,
+        )
+    _assert_no_output(output_root)
+
+
+@pytest.mark.parametrize("escape_kind", ("project", "output"))
+def test_c9_intake_rejects_project_or_output_confinement_without_output(
+    tmp_path: Path, escape_kind: str
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, digest, output_root, _intake, _config = _c9_intake(
+        tmp_path
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    supplied_project = outside if escape_kind == "project" else project_root
+    supplied_output = outside / "c8d" if escape_kind == "output" else output_root
+
+    with pytest.raises((OSError, ValueError)):
+        module.load_c9_intake(
+            project_root=supplied_project,
+            path=intake_path,
+            expected_c9_intake_sha256=digest,
+            output_root=supplied_output,
+        )
+    _assert_no_output(supplied_output)
+
+
+def test_c9_intake_rejects_symlinked_input_without_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, _digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+    target = project_root / intake["inputs"]["active_parents"]["relative_path"]
+    link = target.with_name("linked-parents.jsonl")
+    original_is_symlink = Path.is_symlink
+    monkeypatch.setattr(
+        Path,
+        "is_symlink",
+        lambda self: self == link or original_is_symlink(self),
+    )
+    payload = copy.deepcopy(intake)
+    payload["inputs"]["active_parents"]["relative_path"] = (
+        link.relative_to(project_root).as_posix()
+    )
+    raw = _canonical_bytes(payload)
+    intake_path.write_bytes(raw)
+
+    with pytest.raises(ValueError, match="symlink"):
+        module.load_c9_intake(
+            project_root=project_root,
+            path=intake_path,
+            expected_c9_intake_sha256=_sha256(raw),
+            output_root=output_root,
+        )
+    _assert_no_output(output_root)
+
+
+def test_internal_run_config_preserves_exact_identity_chain(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module = _load_diagnostic()
@@ -1651,61 +2423,6 @@ def test_cli_requires_hash_pinned_run_config_and_exact_identity_chain(
     assert protected_state_root.is_dir()
     assert not protected_state_root.is_symlink()
     assert not protected_state_root.is_relative_to(repository_root)
-    calls: list[tuple[Path, str, Path]] = []
-
-    def capture(path: Path, *, expected_run_config_sha256: str, output_root: Path):
-        calls.append((Path(path), expected_run_config_sha256, Path(output_root)))
-
-    monkeypatch.setattr(module, "run_diagnostic", capture)
-    argv = [
-        "--run-config",
-        str(config_path),
-        "--expected-run-config-sha256",
-        digest,
-        "--output-root",
-        str(output_root),
-    ]
-    assert module.main(argv) == 0
-    assert calls == [(config_path, digest, output_root)]
-
-    invalid_argv = (
-        [],
-        ["--run-config", str(config_path)],
-        [
-            "--run-config",
-            str(config_path),
-            "--expected-run-config-sha256",
-            digest,
-        ],
-        [
-            "--run-config",
-            str(config_path),
-            "--output-root",
-            str(output_root),
-        ],
-        [
-            "--run-config",
-            str(config_path),
-            "--expected-run-config-sha256",
-            "not-a-sha256",
-            "--output-root",
-            str(output_root),
-        ],
-        [
-            "--run-config",
-            str(config_path),
-            "--expected-run-config-sha256",
-            "0" * 64,
-            "--output-root",
-            str(output_root),
-        ],
-    )
-    for invalid in invalid_argv:
-        with pytest.raises((SystemExit, RuntimeError, ValueError)):
-            module.main(list(invalid))
-        _assert_no_output(output_root)
-    assert calls == [(config_path, digest, output_root)]
-
     verified = {
         label: (Path(identity["path"]), Path(identity["path"]).read_bytes())
         for label, identity in config["inputs"].items()

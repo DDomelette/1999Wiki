@@ -6,10 +6,14 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterable, Mapping, Sequence
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.huiji_rag.build.fidelity import build_fidelity_ledger
 from src.huiji_rag.build.media_v3 import LegacyMediaReconciliation
@@ -45,6 +49,80 @@ _OUTPUT_NAMES = (
     "receipt.c8d-fidelity.v1.json",
     "summary.c8d-fidelity.v1.json",
 )
+_DIAGNOSTIC_SCHEMA_VERSION = "huiji.corpus-fidelity-diagnostic/v1"
+_C9_INTAKE_SCHEMA_VERSION = "rag.thread-c9-intake/v1"
+_C9_HANDOFF_SCHEMA_VERSION = "huiji.thread-c-c9-audit/v1"
+_C9_INTAKE_FIELDS = {
+    "schema_version",
+    "release_checkpoints",
+    "c9_handoff",
+    "c8d_entrypoint",
+    "protected_state_root",
+    "accepted_evidence",
+    "expected_output_files",
+    "sample_limit_per_blocker_prefix",
+    "expected_protected_identity_count",
+    "expected_protected_drift_count",
+    "expected_legacy_media_category_counts",
+    "inputs",
+    "c8c_evidence_chain",
+}
+_RELEASE_CHECKPOINT_FIELDS = {
+    "task7_c8a_commit",
+    "c8b_commit",
+    "c8c_commit",
+    "c8d_commit",
+    "c9_commit",
+    "c9_tree",
+}
+_C9_HANDOFF_IDENTITY_FIELDS = {
+    "relative_path",
+    "sha256",
+    "size_bytes",
+    "schema_version",
+}
+_C8D_ENTRYPOINT_FIELDS = _C9_HANDOFF_IDENTITY_FIELDS
+_INTAKE_FILE_FIELDS = {"relative_path", "sha256", "size_bytes"}
+_INTAKE_FILE_FIELDS_WITH_ROWS = _INTAKE_FILE_FIELDS | {"row_count"}
+_C9_HANDOFF_FIELDS = {
+    "schema_version",
+    "run_id",
+    "status",
+    "c9_complete",
+    "merge_ready",
+    "disposition",
+    "git_identity",
+    "commit_chain",
+    "c9_test_evidence",
+    "deterministic_closure",
+    "c8d_real6_evidence",
+    "remaining_blocker_classification",
+    "ownership_audit",
+    "canonical_text_or_child_ids_changed",
+    "vector_rebuild_disposition",
+}
+_C9_EXTERNAL_OPERATION_COUNT_FIELDS = {
+    "candidate_build",
+    "c8d",
+    "download",
+    "embedding_or_vector",
+    "milvus",
+    "minio",
+    "mysql",
+    "network",
+    "production_write",
+    "activation_or_pointer_change",
+}
+_C9_FORBIDDEN_ARTIFACT_FIELDS = {
+    "raw_snapshot",
+    "ignored_run",
+    "pytest_basetemp",
+    "supervisor_state",
+    "vector_artifact",
+    "downloaded_media",
+    "production_pointer",
+    "credentials",
+}
 _TOP_LEVEL_FIELDS = {
     "schema_version",
     "run_id",
@@ -277,6 +355,66 @@ def _read_verified_identity(
     return path, raw
 
 
+def _project_relative_path(root: Path, value: object, label: str) -> Path:
+    relative = Path(str(value))
+    if (
+        not str(value)
+        or relative.is_absolute()
+        or relative.anchor
+        or ".." in relative.parts
+    ):
+        raise ValueError(f"{label} is not a safe project-relative path")
+    candidate = root.joinpath(*relative.parts)
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"{label} must not traverse a symlink")
+    resolved = candidate.resolve(strict=True)
+    if not resolved.is_relative_to(root):
+        raise ValueError(f"{label} escapes the project root")
+    normalized = relative.as_posix()
+    if normalized.startswith(".codex-supervisor/") or re.match(
+        r"eval/(?:task8-c-|task9-c-)", normalized
+    ):
+        raise ValueError(f"{label} points to forbidden historical C state")
+    return resolved
+
+
+def _intake_identity_to_run_config(
+    identity: object, project_root: Path, label: str
+) -> dict[str, object]:
+    if not isinstance(identity, dict):
+        raise ValueError(f"{label} identity is invalid")
+    expected_fields = (
+        _INTAKE_FILE_FIELDS_WITH_ROWS
+        if "row_count" in identity
+        else _INTAKE_FILE_FIELDS
+    )
+    _exact_fields(identity, expected_fields, label)
+    digest = str(identity.get("sha256") or "")
+    size = identity.get("size_bytes")
+    if not _SHA256_RE.fullmatch(digest) or type(size) is not int or size < 0:
+        raise ValueError(f"{label} identity is invalid")
+    path = _project_relative_path(
+        project_root, identity.get("relative_path"), label
+    )
+    raw = path.read_bytes()
+    if len(raw) != size or _sha256(raw) != digest:
+        raise ValueError(f"{label} identity does not match")
+    result: dict[str, object] = {
+        "path": path.as_posix(),
+        "sha256": digest,
+        "size_bytes": size,
+    }
+    if "row_count" in identity:
+        count = identity["row_count"]
+        if type(count) is not int or count < 0 or raw.count(b"\n") != count:
+            raise ValueError(f"{label} row count does not match")
+        result["row_count"] = count
+    return result
+
+
 def _read_jsonl(raw: bytes, label: str) -> tuple[dict[str, Any], ...]:
     rows: list[dict[str, Any]] = []
     for index, line in enumerate(raw.splitlines(), 1):
@@ -352,21 +490,13 @@ def _validate_protected_state(
     return tuple(validated)
 
 
-def load_run_config(
-    path: Path,
+def _validate_run_config_payload(
+    config: dict[str, Any],
     *,
-    expected_run_config_sha256: str,
     output_root: Path,
+    require_run_id_output_name: bool = True,
 ) -> dict[str, Any]:
-    """Load a hash-pinned, exact-schema run config without creating output."""
-    config_path = Path(path).resolve(strict=True)
-    expected_digest = str(expected_run_config_sha256).lower()
-    if not _SHA256_RE.fullmatch(expected_digest):
-        raise ValueError("expected run-config SHA-256 is invalid")
-    raw = config_path.read_bytes()
-    if _sha256(raw) != expected_digest:
-        raise ValueError("run-config SHA-256 does not match")
-    config = _json_object(raw, "run config")
+    """Validate the existing C8d execution contract from any trusted authority."""
     _exact_fields(config, _TOP_LEVEL_FIELDS, "run config")
     if config["schema_version"] != "huiji.c8d-fidelity-run-config/v1":
         raise ValueError("run-config schema is not approved")
@@ -374,7 +504,9 @@ def load_run_config(
     if not _RUN_ID_RE.fullmatch(run_id):
         raise ValueError("run_id is invalid")
     configured_output = Path(str(config["output_root"])).resolve()
-    if configured_output != Path(output_root).resolve() or configured_output.name != run_id:
+    if configured_output != Path(output_root).resolve() or (
+        require_run_id_output_name and configured_output.name != run_id
+    ):
         raise ValueError("output root does not match the pinned run identity")
     if tuple(config["expected_output_files"]) != _OUTPUT_NAMES:
         raise ValueError("expected output set is not canonical")
@@ -478,6 +610,341 @@ def load_run_config(
 
     _validate_c8c_chain(config, verified)
     return config
+
+
+def load_run_config(
+    path: Path,
+    *,
+    expected_run_config_sha256: str,
+    output_root: Path,
+) -> dict[str, Any]:
+    """Load a hash-pinned internal run config without creating output."""
+    config_path = Path(path).resolve(strict=True)
+    expected_digest = str(expected_run_config_sha256).lower()
+    if not _SHA256_RE.fullmatch(expected_digest):
+        raise ValueError("expected run-config SHA-256 is invalid")
+    raw = config_path.read_bytes()
+    if _sha256(raw) != expected_digest:
+        raise ValueError("run-config SHA-256 does not match")
+    return _validate_run_config_payload(
+        _json_object(raw, "run config"), output_root=output_root
+    )
+
+
+def _run_intake_git(repository_root: Path, argv: Sequence[str], label: str) -> str:
+    try:
+        completed = subprocess.run(
+            ("git", *argv),
+            cwd=repository_root,
+            check=True,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError(label) from error
+    return completed.stdout.strip()
+
+
+def _validate_intake_output_root(project_root: Path, output_root: Path) -> Path:
+    dependency_root = (
+        project_root / "eval" / "story_segment" / "dependencies"
+    ).resolve(strict=True)
+    supplied = Path(output_root)
+    if not supplied.is_absolute() or supplied.is_symlink() or supplied.exists():
+        raise ValueError("output root must be a new absent absolute path")
+    resolved = supplied.resolve()
+    if not resolved.is_relative_to(dependency_root):
+        raise ValueError("output root escapes the approved dependency area")
+    relative = resolved.relative_to(project_root)
+    current = project_root
+    for part in relative.parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("output root must not traverse a symlink")
+    parent = resolved.parent.resolve(strict=True)
+    if not parent.is_dir() or not parent.is_relative_to(dependency_root):
+        raise ValueError("output root parent is outside the dependency area")
+    return resolved
+
+
+def _validate_c9_handoff_safety(handoff: Mapping[str, object]) -> None:
+    deterministic = handoff.get("deterministic_closure")
+    blockers = handoff.get("remaining_blocker_classification")
+    ownership = handoff.get("ownership_audit")
+    vector = handoff.get("vector_rebuild_disposition")
+    if not all(
+        isinstance(value, dict)
+        for value in (deterministic, blockers, ownership, vector)
+    ):
+        raise ValueError("C9 handoff safety structures are invalid")
+    assert isinstance(deterministic, dict)
+    assert isinstance(blockers, dict)
+    assert isinstance(ownership, dict)
+    assert isinstance(vector, dict)
+    if deterministic.get("gate_closed") is not True:
+        raise ValueError("C9 handoff deterministic-closure gate is not closed")
+    if (
+        blockers.get("unresolved_candidate_cli_blocker") is not False
+        or blockers.get("unresolved_deterministic_closure_blocker") is not False
+    ):
+        raise ValueError("C9 handoff retains an unresolved closure blocker")
+    if any(
+        ownership.get(field) is not True
+        for field in (
+            "tracked_worktree_clean",
+            "index_clean",
+            "unmerged_clean",
+            "forbidden_ab_runtime_diff_empty",
+        )
+    ):
+        raise ValueError("C9 handoff ownership cleanliness gate is not closed")
+    if ownership.get("external_operation_performed") is not False:
+        raise ValueError("C9 handoff records an external operation")
+    external_counts = ownership.get("external_operation_counts")
+    if not isinstance(external_counts, dict):
+        raise ValueError("C9 handoff external-operation counts are invalid")
+    _exact_fields(
+        external_counts,
+        _C9_EXTERNAL_OPERATION_COUNT_FIELDS,
+        "C9 handoff external-operation counts",
+    )
+    if any(type(value) is not int or value != 0 for value in external_counts.values()):
+        raise ValueError("C9 handoff external-operation counts are not exact zeroes")
+    forbidden_artifacts = ownership.get("newly_tracked_forbidden_artifacts")
+    if not isinstance(forbidden_artifacts, dict):
+        raise ValueError("C9 handoff forbidden-artifact audit is invalid")
+    _exact_fields(
+        forbidden_artifacts,
+        _C9_FORBIDDEN_ARTIFACT_FIELDS,
+        "C9 handoff forbidden-artifact audit",
+    )
+    if any(value is not False for value in forbidden_artifacts.values()):
+        raise ValueError("C9 handoff records a newly tracked forbidden artifact")
+    if vector.get("decision_owner") != "D":
+        raise ValueError("C9 handoff vector-rebuild decision owner is not D")
+
+
+def load_c9_intake(
+    *,
+    project_root: Path,
+    path: Path,
+    expected_c9_intake_sha256: str,
+    output_root: Path,
+) -> dict[str, object]:
+    """Validate the sole post-merge C9 authority without creating output."""
+    project_value = Path(project_root)
+    if not project_value.is_absolute() or project_value.is_symlink():
+        raise ValueError("project root must be a nonsymlink absolute path")
+    root = project_value.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("project root is not a directory")
+    output = _validate_intake_output_root(root, Path(output_root))
+    intake_value = Path(path)
+    if not intake_value.is_absolute() or intake_value.is_symlink():
+        raise ValueError("C9 intake must be a nonsymlink absolute path")
+    intake_path = intake_value.resolve(strict=True)
+    dependency_root = (
+        root / "eval" / "story_segment" / "dependencies"
+    ).resolve(strict=True)
+    if not intake_path.is_file() or not intake_path.is_relative_to(dependency_root):
+        raise ValueError("C9 intake escapes the approved dependency area")
+    expected_digest = str(expected_c9_intake_sha256)
+    if not _SHA256_RE.fullmatch(expected_digest):
+        raise ValueError("expected C9-intake SHA-256 is invalid")
+    intake_raw = intake_path.read_bytes()
+    if _sha256(intake_raw) != expected_digest:
+        raise ValueError("C9 intake SHA-256 does not match")
+
+    intake = _json_object(intake_raw, "C9 intake")
+    _exact_fields(intake, _C9_INTAKE_FIELDS, "C9 intake")
+    if intake["schema_version"] != _C9_INTAKE_SCHEMA_VERSION:
+        raise ValueError("C9 intake schema is not approved")
+
+    checkpoints = intake["release_checkpoints"]
+    if not isinstance(checkpoints, dict):
+        raise ValueError("release checkpoints are invalid")
+    _exact_fields(checkpoints, _RELEASE_CHECKPOINT_FIELDS, "release checkpoints")
+    for field in _RELEASE_CHECKPOINT_FIELDS:
+        if not _COMMIT_RE.fullmatch(str(checkpoints[field])):
+            raise ValueError(f"{field} is invalid")
+
+    handoff_identity = intake["c9_handoff"]
+    if not isinstance(handoff_identity, dict):
+        raise ValueError("C9 handoff identity is invalid")
+    _exact_fields(handoff_identity, _C9_HANDOFF_IDENTITY_FIELDS, "C9 handoff")
+    if handoff_identity["schema_version"] != _C9_HANDOFF_SCHEMA_VERSION:
+        raise ValueError("C9 handoff schema is not approved")
+    handoff_path = _project_relative_path(
+        root, handoff_identity["relative_path"], "C9 handoff"
+    )
+    handoff_raw = handoff_path.read_bytes()
+    if (
+        type(handoff_identity["size_bytes"]) is not int
+        or len(handoff_raw) != handoff_identity["size_bytes"]
+        or _sha256(handoff_raw) != handoff_identity["sha256"]
+    ):
+        raise ValueError("C9 handoff identity does not match")
+    handoff = _json_object(handoff_raw, "C9 handoff")
+    _exact_fields(handoff, _C9_HANDOFF_FIELDS, "C9 handoff")
+    handoff_git = handoff.get("git_identity")
+    if not isinstance(handoff_git, dict):
+        raise ValueError("C9 handoff Git identity is invalid")
+    if not (
+        handoff.get("schema_version") == _C9_HANDOFF_SCHEMA_VERSION
+        and handoff.get("status") == "completed"
+        and handoff.get("c9_complete") is True
+        and handoff.get("merge_ready") is True
+        and handoff_git.get("head") == checkpoints["c9_commit"]
+        and handoff_git.get("tree") == checkpoints["c9_tree"]
+        and handoff_git.get("parent") == checkpoints["c8d_commit"]
+        and handoff_git.get("checkpoint_parent_tracked_diff_empty") is True
+    ):
+        raise ValueError("C9 handoff does not match the accepted checkpoint")
+    handoff_chain = handoff.get("commit_chain")
+    if (
+        not isinstance(handoff_chain, dict)
+        or handoff_chain.get("head_inclusive") != checkpoints["c9_commit"]
+    ):
+        raise ValueError("C9 handoff commit chain does not match the checkpoint")
+    _validate_c9_handoff_safety(handoff)
+
+    entrypoint = intake["c8d_entrypoint"]
+    if not isinstance(entrypoint, dict):
+        raise ValueError("C8d entrypoint identity is invalid")
+    _exact_fields(entrypoint, _C8D_ENTRYPOINT_FIELDS, "C8d entrypoint")
+    if (
+        entrypoint["relative_path"] != "scripts/diagnose_huiji_corpus_fidelity.py"
+        or entrypoint["schema_version"] != _DIAGNOSTIC_SCHEMA_VERSION
+    ):
+        raise ValueError("C8d entrypoint contract is not approved")
+    entrypoint_path = _project_relative_path(
+        root, entrypoint["relative_path"], "C8d entrypoint"
+    )
+    entrypoint_raw = entrypoint_path.read_bytes()
+    if (
+        type(entrypoint["size_bytes"]) is not int
+        or len(entrypoint_raw) != entrypoint["size_bytes"]
+        or _sha256(entrypoint_raw) != entrypoint["sha256"]
+    ):
+        raise ValueError("C8d entrypoint identity does not match")
+
+    if tuple(intake["expected_output_files"]) != _OUTPUT_NAMES:
+        raise ValueError("expected output set is not canonical")
+    accepted_evidence = intake["accepted_evidence"]
+    if not isinstance(accepted_evidence, dict):
+        raise ValueError("accepted evidence is invalid")
+    _exact_fields(
+        accepted_evidence,
+        {"c8b_d_acceptance", "c8c_d_acceptance"},
+        "accepted evidence",
+    )
+    converted_acceptance = {
+        label: _intake_identity_to_run_config(identity, root, label)
+        for label, identity in accepted_evidence.items()
+    }
+    inputs = intake["inputs"]
+    if not isinstance(inputs, dict) or set(inputs) != _REQUIRED_INPUTS:
+        raise ValueError("input set does not match the frozen C8d contract")
+    converted_inputs = {
+        label: _intake_identity_to_run_config(identity, root, label)
+        for label, identity in inputs.items()
+    }
+    protected_state_root = _project_relative_path(
+        root, intake["protected_state_root"], "protected state root"
+    )
+    if not protected_state_root.is_dir():
+        raise ValueError("protected state root is not a directory")
+
+    head, tree = read_git_identity(root)
+    c9_commit = str(checkpoints["c9_commit"])
+    c8d_commit = str(checkpoints["c8d_commit"])
+    resolved_checkpoint = _run_intake_git(
+        root,
+        (
+            "rev-parse",
+            f"{c9_commit}^{{commit}}",
+            f"{c9_commit}^{{tree}}",
+            f"{c8d_commit}^{{commit}}",
+            f"{c8d_commit}^{{tree}}",
+        ),
+        "C9 checkpoint Git identity is invalid",
+    ).splitlines()
+    if resolved_checkpoint[:2] != [c9_commit, checkpoints["c9_tree"]]:
+        raise ValueError("C9 checkpoint tree does not match")
+    _run_intake_git(
+        root,
+        ("merge-base", "--is-ancestor", c9_commit, head),
+        "C9 checkpoint is not an ancestor of post-merge HEAD",
+    )
+    checkpoint_parents = _run_intake_git(
+        root,
+        ("rev-list", "--parents", "-n", "1", c9_commit),
+        "C9 checkpoint parent identity is invalid",
+    ).split()
+    if checkpoint_parents != [c9_commit, c8d_commit]:
+        raise ValueError("C8d checkpoint is not the direct parent of C9")
+    if resolved_checkpoint[2:] != [c8d_commit, checkpoints["c9_tree"]]:
+        raise ValueError("C9 checkpoint does not have a zero tracked diff")
+    _run_intake_git(
+        root,
+        (
+            "merge-base",
+            "--is-ancestor",
+            c8d_commit,
+            c9_commit,
+        ),
+        "C8d checkpoint is not an ancestor of C9",
+    )
+
+    config: dict[str, Any] = {
+        "schema_version": "huiji.c8d-fidelity-run-config/v1",
+        "run_id": "task8-c-post-merge-" + expected_digest[:16],
+        "repository_root": root.as_posix(),
+        "protected_state_root": protected_state_root.as_posix(),
+        "output_root": output.as_posix(),
+        "expected_git_head": head,
+        "expected_git_tree": tree,
+        "diagnostic": {
+            "path": str(entrypoint["relative_path"]),
+            "sha256": str(entrypoint["sha256"]),
+        },
+        "accepted_checkpoints": {
+            "task7_c8a_commit": checkpoints["task7_c8a_commit"],
+            "c8b_commit": checkpoints["c8b_commit"],
+            "c8b_d_acceptance": converted_acceptance["c8b_d_acceptance"],
+            "c8c_commit": checkpoints["c8c_commit"],
+            "c8c_d_acceptance": converted_acceptance["c8c_d_acceptance"],
+        },
+        "expected_output_files": list(_OUTPUT_NAMES),
+        "sample_limit_per_blocker_prefix": intake[
+            "sample_limit_per_blocker_prefix"
+        ],
+        "expected_protected_identity_count": intake[
+            "expected_protected_identity_count"
+        ],
+        "expected_protected_drift_count": intake[
+            "expected_protected_drift_count"
+        ],
+        "expected_legacy_media_category_counts": intake[
+            "expected_legacy_media_category_counts"
+        ],
+        "inputs": converted_inputs,
+        "c8c_evidence_chain": dict(intake["c8c_evidence_chain"]),
+    }
+    _validate_run_config_payload(
+        config, output_root=output, require_run_id_output_name=False
+    )
+    return {
+        "config": config,
+        "authority": {
+            "path": intake_path.relative_to(root).as_posix(),
+            "sha256": expected_digest,
+            "size_bytes": len(intake_raw),
+            "schema_version": _C9_INTAKE_SCHEMA_VERSION,
+        },
+        "git_identity": {"head": head, "tree": tree},
+    }
 
 
 def _run_c8c_read_only_git(
@@ -1243,18 +1710,15 @@ def _write_create_new(path: Path, value: object) -> str:
     return _sha256(raw)
 
 
-def run_diagnostic(
-    config_path: Path,
+def _run_validated_diagnostic(
+    config: dict[str, Any],
     *,
-    expected_run_config_sha256: str,
     output_root: Path,
+    authority: Mapping[str, object],
+    git_identity: Mapping[str, str] | None = None,
+    activity_counters: Mapping[str, int] | None = None,
 ) -> dict[str, object]:
-    """Run the fully offline diagnostic and return its sanitized summary."""
-    config = load_run_config(
-        config_path,
-        expected_run_config_sha256=expected_run_config_sha256,
-        output_root=output_root,
-    )
+    """Run the fully preflighted offline diagnostic."""
     output = Path(output_root).resolve()
     if output.exists():
         raise FileExistsError("C8d output root violates create-new absent-only semantics")
@@ -1262,7 +1726,11 @@ def run_diagnostic(
     protected_state_root = Path(str(config["protected_state_root"])).resolve(
         strict=True
     )
-    head, tree = read_git_identity(repository_root)
+    if git_identity is None:
+        head, tree = read_git_identity(repository_root)
+    else:
+        head = str(git_identity["head"])
+        tree = str(git_identity["tree"])
     if head != config["expected_git_head"] or tree != config["expected_git_tree"]:
         raise RuntimeError("checked-out HEAD/tree does not match the frozen run config")
 
@@ -1300,7 +1768,6 @@ def run_diagnostic(
     summary = _summary(config, fidelity)
     summary_raw = _canonical_bytes(summary)
     summary_sha256 = _sha256(summary_raw)
-    config_raw = Path(config_path).resolve(strict=True).read_bytes()
     checkpoints = dict(config["accepted_checkpoints"])
     sanitized_checkpoints: dict[str, object] = {
         "task7_c8a_commit": checkpoints["task7_c8a_commit"],
@@ -1312,11 +1779,7 @@ def run_diagnostic(
     manifest = {
         "schema_version": "huiji.c8d-fidelity-manifest/v1",
         "run_id": config["run_id"],
-        "run_config": {
-            "path": Path(config_path).name,
-            "sha256": _sha256(config_raw),
-            "size_bytes": len(config_raw),
-        },
+        **dict(authority),
         "diagnostic": dict(config["diagnostic"]),
         "git_identity": {"head": head, "tree": tree},
         "accepted_checkpoints": sanitized_checkpoints,
@@ -1347,8 +1810,11 @@ def run_diagnostic(
             "identity_count_post": int(config["expected_protected_identity_count"]),
             "drift_count": 0,
         },
-        "activity_counters": dict(_ACTIVITY_COUNTERS),
+        "activity_counters": dict(activity_counters or _ACTIVITY_COUNTERS),
     }
+    if "c9_intake" in authority:
+        receipt["c9_intake"] = dict(authority["c9_intake"])
+        receipt["git_identity"] = {"head": head, "tree": tree}
     output.mkdir(parents=False, exist_ok=True)
     _write_create_new(output / _OUTPUT_NAMES[2], summary)
     _write_create_new(output / _OUTPUT_NAMES[0], manifest)
@@ -1356,20 +1822,74 @@ def run_diagnostic(
     return summary
 
 
+def run_diagnostic(
+    config_path: Path,
+    *,
+    expected_run_config_sha256: str,
+    output_root: Path,
+) -> dict[str, object]:
+    """Run from the retained internal hash-pinned test configuration."""
+    config = load_run_config(
+        config_path,
+        expected_run_config_sha256=expected_run_config_sha256,
+        output_root=output_root,
+    )
+    config_raw = Path(config_path).resolve(strict=True).read_bytes()
+    return _run_validated_diagnostic(
+        config,
+        output_root=output_root,
+        authority={
+            "run_config": {
+                "path": Path(config_path).name,
+                "sha256": _sha256(config_raw),
+                "size_bytes": len(config_raw),
+            }
+        },
+    )
+
+
+def run_c9_intake_diagnostic(
+    *,
+    project_root: Path,
+    c9_intake_path: Path,
+    expected_c9_intake_sha256: str,
+    output_root: Path,
+) -> dict[str, object]:
+    """Run C8d using only the approved post-merge C9-intake authority."""
+    loaded = load_c9_intake(
+        project_root=project_root,
+        path=c9_intake_path,
+        expected_c9_intake_sha256=expected_c9_intake_sha256,
+        output_root=output_root,
+    )
+    counters = dict(_ACTIVITY_COUNTERS)
+    counters["allowed_read_only_git_calls"] = 13
+    counters["total_subprocess_calls"] = 13
+    return _run_validated_diagnostic(
+        loaded["config"],
+        output_root=output_root,
+        authority={"c9_intake": loaded["authority"]},
+        git_identity=loaded["git_identity"],
+        activity_counters=counters,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run-config", type=Path, required=True)
-    parser.add_argument("--expected-run-config-sha256", required=True)
+    parser.add_argument("--project-root", type=Path, required=True)
+    parser.add_argument("--c9-intake", type=Path, required=True)
+    parser.add_argument("--expected-c9-intake-sha256", required=True)
     parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--read-only", action="store_true", required=True)
     args = parser.parse_args(argv)
-    if not _SHA256_RE.fullmatch(args.expected_run_config_sha256):
-        parser.error("--expected-run-config-sha256 must be 64 lowercase hex characters")
-    config_raw = args.run_config.resolve(strict=True).read_bytes()
-    if _sha256(config_raw) != args.expected_run_config_sha256:
-        raise ValueError("run-config SHA-256 does not match")
-    run_diagnostic(
-        args.run_config,
-        expected_run_config_sha256=args.expected_run_config_sha256,
+    if not _SHA256_RE.fullmatch(args.expected_c9_intake_sha256):
+        parser.error(
+            "--expected-c9-intake-sha256 must be 64 lowercase hex characters"
+        )
+    run_c9_intake_diagnostic(
+        project_root=args.project_root,
+        c9_intake_path=args.c9_intake,
+        expected_c9_intake_sha256=args.expected_c9_intake_sha256,
         output_root=args.output_root,
     )
     return 0
