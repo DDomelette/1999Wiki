@@ -384,6 +384,62 @@ def test_blocked_candidate_never_emits_embedding_handoff(tmp_path: Path) -> None
     verify_candidate_manifest(result.paths.build_root)
 
 
+def test_diagnostic_only_candidate_is_canonical_and_never_emits_handoff(
+    tmp_path: Path,
+) -> None:
+    request = replace(
+        _artifact_input("diagnostic-a"),
+        diagnostic_reasons=("referenced_resource_not_downloaded",),
+    )
+
+    result = write_candidate_artifacts(tmp_path / "processed", request)
+
+    assert result.state.value == "diagnostic_only"
+    assert result.blockers == ()
+    assert not result.paths.embedding_handoff_v1.exists()
+    report = json.loads(result.paths.build_report.read_text(encoding="utf-8"))
+    assert report["state"] == "diagnostic_only"
+    assert report["handoff_created"] is False
+    assert report["diagnostic_reasons"] == [
+        "referenced_resource_not_downloaded"
+    ]
+    assert report["next_gate"] == "approve_referenced_media_plan"
+    manifest = verify_candidate_manifest(
+        result.paths.build_root,
+        expected_manifest_sha256=result.build_manifest_sha256,
+    )
+    assert manifest["state"] == "diagnostic_only"
+    assert manifest["diagnostic_reasons"] == report["diagnostic_reasons"]
+
+
+def test_manifest_verifier_rejects_diagnostic_reason_drift(tmp_path: Path) -> None:
+    result = write_candidate_artifacts(
+        tmp_path / "processed",
+        replace(
+            _artifact_input("diagnostic-drift"),
+            diagnostic_reasons=("referenced_resource_not_downloaded",),
+        ),
+    )
+    manifest = json.loads(result.paths.build_manifest.read_text(encoding="utf-8"))
+    manifest["diagnostic_reasons"] = ["unknown_capacity"]
+    result.paths.build_manifest.write_bytes(canonical_json_bytes(manifest))
+
+    with pytest.raises(ValueError, match="diagnostic reasons differ"):
+        verify_candidate_manifest(result.paths.build_root)
+
+
+def test_manifest_verifier_rejects_unknown_state(tmp_path: Path) -> None:
+    result = write_candidate_artifacts(
+        tmp_path / "processed", _artifact_input("unknown-state")
+    )
+    manifest = json.loads(result.paths.build_manifest.read_text(encoding="utf-8"))
+    manifest["state"] = "unknown"
+    result.paths.build_manifest.write_bytes(canonical_json_bytes(manifest))
+
+    with pytest.raises(ValueError, match="state is unsupported"):
+        verify_candidate_manifest(result.paths.build_root)
+
+
 def test_voice_diagnostics_separate_shortfall_from_quarantine_and_conflicts(
     tmp_path: Path,
 ) -> None:

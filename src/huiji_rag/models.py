@@ -336,6 +336,20 @@ class ChildBlock:
     quality_flags: tuple[str, ...] = ()
     route_tags: tuple[str, ...] = ()
     omitted_action_label: str = ""
+    content: str = ""
+    heading_path: tuple[str, ...] = ()
+    entity_aliases: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.content and self.content != self.text:
+            raise ValueError("ChildBlock content must equal text")
+        object.__setattr__(self, "content", self.text)
+        object.__setattr__(
+            self,
+            "heading_path",
+            tuple(self.heading_path) or (self.section_kind or "root",),
+        )
+        object.__setattr__(self, "entity_aliases", tuple(self.entity_aliases))
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -363,6 +377,9 @@ class ChildBlock:
             quality_flags=_tuple_of_str(row.get("quality_flags", ())),
             route_tags=_tuple_of_str(row.get("route_tags", ())),
             omitted_action_label=str(row.get("omitted_action_label", "")),
+            content=str(row.get("content", row.get("text", ""))),
+            heading_path=_tuple_of_str(row.get("heading_path", ())),
+            entity_aliases=_tuple_of_str(row.get("entity_aliases", ())),
         )
 
 

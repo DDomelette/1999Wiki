@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections import Counter, OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -14,6 +14,9 @@ from src.huiji_rag.models import ChildBlock, ParentBlock, VoiceSourceRow
 from src.huiji_rag.text import clean_huiji_text, compact_lines
 
 from .contracts import canonical_json_bytes
+from .story_projection import is_story_source_title, project_stories
+from .topic_projection import TopicCatalog, TopicProjection, project_topics
+from .wikitext_projection import PageProjection, WikitextMediaIntent, project_wikitext_pages
 
 
 _CHAR_TITLE_RE = re.compile(r"Data:Char/[^/]+\.json\Z")
@@ -51,6 +54,60 @@ _LEGACY_SECTION = {
     "culture_dossier": "items",
 }
 _GENERIC_MARKERS = ("psychube", "equip", "item", "episode", "story")
+
+
+def project_page_semantics(*args: Any, **kwargs: Any) -> PageProjection:
+    """Run the independent bounded Wikitext Page projection stage."""
+    return project_wikitext_pages(*args, **kwargs)
+
+
+def project_topic_semantics(
+    *source_projections: Any,
+    catalog: TopicCatalog | None = None,
+) -> TopicProjection:
+    """Select Topic evidence from already projected Page/Data/Story children."""
+    source_children = [
+        child
+        for projection in source_projections
+        for child in tuple(getattr(projection, "children"))
+    ]
+    return project_topics(source_children, catalog=catalog)
+
+
+def project_wikitext_media_intents(
+    page_projection: PageProjection,
+    topic_projection: TopicProjection | None = None,
+) -> tuple["MediaBindingIntent", ...]:
+    """Adapt exact Page occurrences and preserve Topic source multiplicity."""
+    result = [
+        _wikitext_media_binding_intent(intent)
+        for intent in page_projection.media_intents
+    ]
+    if topic_projection is None:
+        return tuple(result)
+    by_source_child: dict[str, list[Any]] = {}
+    for child in topic_projection.children:
+        source_child_id = str(child.source_fields.get("source_child_id") or "")
+        if source_child_id:
+            by_source_child.setdefault(source_child_id, []).append(child)
+    for intent in page_projection.media_intents:
+        for topic_child in by_source_child.get(intent.child_id, ()):
+            topic_digest = hashlib.sha256(
+                topic_child.block.child_id.encode("utf-8")
+            ).hexdigest()[:12]
+            result.append(
+                _wikitext_media_binding_intent(
+                    intent,
+                    source_binding_token=(
+                        f"{intent.source_binding_token}:topic:{topic_digest}"
+                    ),
+                    owner_entity_id=topic_child.owner_entity_id,
+                    owner_page_id=topic_child.owner_page_id,
+                    parent_id=topic_child.block.parent_id,
+                    child_id=topic_child.block.child_id,
+                )
+            )
+    return tuple(result)
 
 
 @dataclass(frozen=True)
@@ -112,6 +169,25 @@ class MediaBindingIntent:
     sort_order: int = 0
     source_refs: tuple[dict[str, Any], ...] = ()
     missing_policy: str = "text_only"
+    resolver_mode: str = "legacy_stem"
+    exact_filename: str = ""
+    original_filename: str = ""
+    heading_path: tuple[str, ...] = ()
+    title_source: str = ""
+    caption: str = ""
+    alt: str = ""
+    link_target: str = ""
+    layout_options: tuple[str, ...] = ()
+    unknown_options: tuple[str, ...] = ()
+    adjacent_context_sha256: str = ""
+    source_kind: str = ""
+    occurrence: int = 0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_refs", tuple(dict(item) for item in self.source_refs))
+        object.__setattr__(self, "heading_path", tuple(self.heading_path))
+        object.__setattr__(self, "layout_options", tuple(self.layout_options))
+        object.__setattr__(self, "unknown_options", tuple(self.unknown_options))
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -131,7 +207,59 @@ class MediaBindingIntent:
             "sort_order": self.sort_order,
             "source_refs": [dict(item) for item in self.source_refs],
             "missing_policy": self.missing_policy,
+            "resolver_mode": self.resolver_mode,
+            "exact_filename": self.exact_filename,
+            "original_filename": self.original_filename,
+            "heading_path": list(self.heading_path),
+            "title_source": self.title_source,
+            "caption": self.caption,
+            "alt": self.alt,
+            "link_target": self.link_target,
+            "layout_options": list(self.layout_options),
+            "unknown_options": list(self.unknown_options),
+            "adjacent_context_sha256": self.adjacent_context_sha256,
+            "source_kind": self.source_kind,
+            "occurrence": self.occurrence,
         }
+
+
+def _wikitext_media_binding_intent(
+    intent: WikitextMediaIntent,
+    *,
+    source_binding_token: str | None = None,
+    owner_entity_id: str | None = None,
+    owner_page_id: str | None = None,
+    parent_id: str | None = None,
+    child_id: str | None = None,
+) -> MediaBindingIntent:
+    return MediaBindingIntent(
+        source_binding_token=source_binding_token or intent.source_binding_token,
+        owner_entity_id=owner_entity_id or intent.owner_entity_id,
+        owner_page_id=owner_page_id or intent.owner_page_id,
+        parent_id=parent_id or intent.parent_id,
+        child_id=child_id or intent.child_id,
+        section=intent.heading_path[-1],
+        media_role=intent.media_role,
+        resource_stem="",
+        title=intent.title,
+        source_refs=(dict(intent.source_ref),),
+        missing_policy="text_only",
+        resolver_mode="wikitext_exact",
+        exact_filename=intent.normalized_filename,
+        original_filename=intent.original_filename,
+        heading_path=intent.heading_path,
+        title_source=intent.title_source,
+        caption=intent.caption,
+        alt=intent.alt,
+        link_target=intent.link_target,
+        layout_options=intent.layout_options,
+        unknown_options=intent.unknown_options,
+        adjacent_context_sha256=str(
+            intent.source_ref.get("adjacent_context_sha256") or ""
+        ),
+        source_kind=intent.source_kind,
+        occurrence=intent.occurrence,
+    )
 
 
 @dataclass(frozen=True)
@@ -237,10 +365,505 @@ class _ProjectionAccumulator:
     record_links: list[SemanticRecordLink] = field(default_factory=list)
 
 
+def compose_corpus_projection(
+    data_projection: CorpusProjection,
+    page_projection: PageProjection,
+    topic_projection: TopicProjection | None = None,
+) -> CorpusProjection:
+    """Compose all source-backed semantic stages into one validated projection."""
+    selected_topics = topic_projection or project_topic_semantics(
+        data_projection, page_projection
+    )
+    parents = list(data_projection.parents)
+    children = list(data_projection.children)
+    exclusions = list(data_projection.exclusions)
+    record_links = list(data_projection.record_links)
+
+    page_children_by_id = {
+        item.child_id: item for item in page_projection.children
+    }
+    page_children_by_page: dict[str, list[Any]] = {}
+    for item in page_projection.children:
+        page_children_by_page.setdefault(item.owner_page_id, []).append(item)
+
+    for page in page_projection.pages:
+        page_children = page_children_by_page.get(page.entity_id, ())
+        parents.append(
+            ParentBlock(
+                parent_id=page.parent_id,
+                entity_id=page.entity_id,
+                entity_name=page.entity_name,
+                entity_aliases=page.entity_aliases,
+                category="page",
+                section_kind="page",
+                title=page.entity_name,
+                summary_text=page_children[0].content if page_children else "",
+                source_refs=page.source_refs,
+                child_ids=(),
+                content_hash=page.content_hash,
+                entity_type="page",
+                depth_level=1,
+                ancestor_ids=(page.entity_id,),
+            )
+        )
+        record_links.append(
+            _new_source_record_link("parent", page.parent_id, page.source_refs, "page")
+        )
+
+    for section in page_projection.sections:
+        section_children = [
+            page_children_by_id[child_id]
+            for child_id in section.child_ids
+            if child_id in page_children_by_id
+        ]
+        root = next(
+            page
+            for page in page_projection.pages
+            if page.parent_id == section.root_parent_id
+        )
+        parents.append(
+            ParentBlock(
+                parent_id=section.parent_id,
+                entity_id=root.entity_id,
+                entity_name=root.entity_name,
+                entity_aliases=root.entity_aliases,
+                category="page",
+                section_kind="section",
+                title=section.heading_path[-1],
+                summary_text=section_children[0].content if section_children else "",
+                source_refs=section.source_refs,
+                child_ids=section.child_ids,
+                content_hash=hashlib.sha256(
+                    "\n".join(item.content_hash for item in section_children).encode(
+                        "utf-8"
+                    )
+                ).hexdigest(),
+                entity_type="page",
+                depth_level=2,
+                ancestor_ids=(section.root_parent_id,),
+            )
+        )
+        record_links.append(
+            _new_source_record_link(
+                "parent", section.parent_id, section.source_refs, "section"
+            )
+        )
+
+    for ordinal, item in enumerate(page_projection.children):
+        block = ChildBlock.from_json(
+            item.to_json() | {"chunk_index": _page_chunk_index(item.child_id)}
+        )
+        children.append(
+            SemanticChild(
+                block=block,
+                stable_source_token=(
+                    f"{block.source_refs[0]['source_row_id']}:"
+                    f"chunk:{_page_chunk_suffix(item.child_id)}"
+                ),
+                source_token_kind="crawler_wikitext_span",
+                owner_entity_id=item.owner_entity_id,
+                owner_page_id=item.owner_page_id,
+                ordinal=ordinal,
+                source_fields={
+                    "source_kind": "crawler_wikitext",
+                    "root_parent_id": item.owner_page_id,
+                },
+            )
+        )
+        record_links.append(
+            _new_source_record_link(
+                "child", item.child_id, item.source_refs, item.section_kind
+            )
+        )
+
+    parents.extend(selected_topics.parents)
+    for parent in selected_topics.parents:
+        record_links.append(
+            _new_source_record_link(
+                "parent", parent.parent_id, parent.source_refs, "topic"
+            )
+        )
+    for ordinal, item in enumerate(selected_topics.children):
+        children.append(
+            SemanticChild(
+                block=item.block,
+                stable_source_token=str(
+                    item.source_fields.get("source_child_id") or item.block.child_id
+                ),
+                source_token_kind="topic_source_relation",
+                owner_entity_id=item.owner_entity_id,
+                owner_page_id=item.owner_page_id,
+                ordinal=ordinal,
+                source_fields=item.source_fields,
+            )
+        )
+        record_links.append(
+            _new_source_record_link(
+                "child", item.block.child_id, item.block.source_refs, "topic"
+            )
+        )
+
+    page_source_hashes = {
+        int(ref.get("pageid") or 0): str(ref.get("source_content_sha256") or "")
+        for item in page_projection.children
+        for ref in item.source_refs
+    }
+    for item in (*page_projection.diagnostics, *page_projection.exclusions):
+        source_content_sha256 = str(
+            getattr(item, "source_content_sha256", "")
+            or page_source_hashes.get(item.pageid, "")
+        )
+        details = dict(getattr(item, "details", {}))
+        source_identity = f"page:{item.pageid}"
+        char_start = int(getattr(item, "char_start", -1))
+        char_end = int(getattr(item, "char_end", -1))
+        revid = int(getattr(item, "revid", 0))
+        if (
+            revid > 0
+            and source_content_sha256
+            and char_start >= 0
+            and char_end >= char_start
+        ):
+            heading_path = tuple(getattr(item, "heading_path", ()))
+            source_identity = hashlib.sha256(
+                canonical_json_bytes(
+                    [
+                        "huiji.page-diagnostic-occurrence/v1",
+                        item.pageid,
+                        revid,
+                        source_content_sha256,
+                        char_start,
+                        char_end,
+                    ],
+                    trailing_newline=False,
+                )
+            ).hexdigest()
+            details.update(
+                {
+                    "pageid": item.pageid,
+                    "revid": revid,
+                    "char_start": char_start,
+                    "char_end": char_end,
+                    "heading_path": list(heading_path),
+                }
+            )
+        exclusions.append(
+            ProjectionExclusion(
+                reason_code=item.reason_code,
+                source_title=item.source_title,
+                source_identity=source_identity,
+                source_content_sha256=source_content_sha256,
+                entity_id=f"page:{item.pageid}",
+                details=details,
+            )
+        )
+    for item in selected_topics.diagnostics:
+        exclusions.append(
+            ProjectionExclusion(
+                reason_code=item.reason_code,
+                source_title="topic_catalog.v1.json",
+                source_identity=f"topic:{item.topic_id}",
+                source_content_sha256=selected_topics.catalog_fingerprint_sha256,
+                entity_id=item.topic_id,
+                json_path=f"$.topics.{item.topic_id}",
+                details=item.details,
+            )
+        )
+
+    projection = CorpusProjection(
+        parents=tuple(sorted(parents, key=lambda item: item.parent_id)),
+        children=tuple(sorted(children, key=lambda item: item.block.child_id)),
+        voice_sources=data_projection.voice_sources,
+        media_intents=tuple(
+            sorted(
+                (
+                    *data_projection.media_intents,
+                    *project_wikitext_media_intents(
+                        page_projection, selected_topics
+                    ),
+                ),
+                key=lambda item: item.source_binding_token,
+            )
+        ),
+        exclusions=tuple(
+            sorted(
+                exclusions,
+                key=lambda item: canonical_json_bytes(
+                    item.to_json(), trailing_newline=False
+                ),
+            )
+        ),
+        identity_fallbacks=data_projection.identity_fallbacks,
+        record_links=tuple(
+            sorted(
+                record_links,
+                key=lambda item: (item.record_kind, item.candidate_id, item.legacy_id),
+            )
+        ),
+    )
+    validate_corpus_projection(projection)
+    return projection
+
+
+def validate_corpus_projection(projection: CorpusProjection) -> None:
+    """Fail closed on global identity and ownership/source closure defects."""
+    parent_ids = [item.parent_id for item in projection.parents]
+    child_ids = [item.block.child_id for item in projection.children]
+    if len(parent_ids) != len(set(parent_ids)):
+        raise ValueError("crawler projection produced duplicate parent IDs")
+    if len(child_ids) != len(set(child_ids)):
+        raise ValueError("crawler projection produced duplicate child IDs")
+    if set(parent_ids) & set(child_ids):
+        raise ValueError("crawler projection parent and child identities overlap")
+    parent_id_set = set(parent_ids)
+    parent_by_id = {item.parent_id: item for item in projection.parents}
+    child_by_id = {item.block.child_id: item for item in projection.children}
+    stable_source_identities: set[tuple[str, str, str]] = set()
+    for child in projection.children:
+        if child.block.parent_id not in parent_id_set:
+            raise ValueError(
+                f"crawler projection child has unknown parent: {child.block.child_id}"
+            )
+        parent = parent_by_id[child.block.parent_id]
+        if child.block.child_id not in parent.child_ids:
+            raise ValueError(
+                "crawler projection child is missing from parent child_ids: "
+                f"{child.block.child_id}"
+            )
+        if not child.block.source_refs:
+            raise ValueError(
+                f"crawler projection child has no source refs: {child.block.child_id}"
+            )
+        stable_identity = (
+            child.owner_page_id,
+            child.source_token_kind,
+            child.stable_source_token,
+        )
+        if stable_identity in stable_source_identities:
+            raise ValueError("crawler projection produced duplicate source identities")
+        stable_source_identities.add(stable_identity)
+        _validate_source_refs(child.block.source_refs)
+    for parent in projection.parents:
+        if not parent.source_refs:
+            raise ValueError(
+                f"crawler projection parent has no source refs: {parent.parent_id}"
+            )
+        _validate_source_refs(parent.source_refs)
+        for child_id in parent.child_ids:
+            child = child_by_id.get(child_id)
+            if child is None or (
+                child.block.parent_id != parent.parent_id
+                and parent.parent_id not in child.block.ancestor_ids
+            ):
+                raise ValueError(
+                    f"crawler projection parent-child closure failed: {parent.parent_id}"
+                )
+    tokens = [item.source_binding_token for item in projection.media_intents]
+    if len(tokens) != len(set(tokens)):
+        raise ValueError("crawler projection produced duplicate media source identities")
+    for intent in projection.media_intents:
+        child = child_by_id.get(intent.child_id)
+        if (
+            child is None
+            or intent.parent_id != child.block.parent_id
+            or intent.owner_entity_id != child.owner_entity_id
+            or intent.owner_page_id != child.owner_page_id
+        ):
+            raise ValueError(
+                f"crawler projection media closure failed: {intent.source_binding_token}"
+            )
+        if not intent.source_refs:
+            raise ValueError(
+                f"crawler projection media has no source refs: {intent.source_binding_token}"
+            )
+        _validate_source_refs(intent.source_refs)
+    candidate_ids = set(parent_ids) | set(child_ids)
+    links = [(item.record_kind, item.legacy_id, item.candidate_id) for item in projection.record_links]
+    if len(links) != len(set(links)):
+        raise ValueError("crawler projection produced duplicate record-link identities")
+    if any(item.candidate_id not in candidate_ids for item in projection.record_links):
+        raise ValueError("crawler projection record link has unknown candidate identity")
+
+
+def _validate_source_refs(
+    source_refs: Sequence[Mapping[str, Any]],
+) -> None:
+    local_identities: set[tuple[str, str, str, str]] = set()
+    for source_ref in source_refs:
+        title = str(source_ref.get("source_title") or source_ref.get("title") or "")
+        content_sha256 = str(
+            source_ref.get("source_content_sha256")
+            or source_ref.get("content_sha256")
+            or ""
+        )
+        position = str(
+            source_ref.get("source_row_id") or source_ref.get("json_path") or ""
+        )
+        source_kind = str(
+            source_ref.get("source_kind") or source_ref.get("kind") or ""
+        )
+        if (
+            not source_kind
+            or not title
+            or not re.fullmatch(r"[0-9a-f]{64}", content_sha256)
+            or not position
+        ):
+            raise ValueError("crawler projection contains incomplete source ref")
+        identity = (source_kind, title, content_sha256, position)
+        if identity in local_identities:
+            raise ValueError("crawler projection contains duplicate source refs")
+        local_identities.add(identity)
+
+
+def _new_source_record_link(
+    record_kind: str,
+    candidate_id: str,
+    source_refs: Sequence[Mapping[str, Any]],
+    section: str,
+) -> SemanticRecordLink:
+    source_ref = dict(source_refs[0])
+    return SemanticRecordLink(
+        record_kind=record_kind,
+        legacy_id="",
+        candidate_id=candidate_id,
+        change_kind="new_source_record",
+        source_title=str(
+            source_ref.get("source_title") or source_ref.get("title") or ""
+        ),
+        source_content_sha256=str(
+            source_ref.get("source_content_sha256")
+            or source_ref.get("content_sha256")
+            or ""
+        ),
+        json_path=str(source_ref.get("json_path") or "$"),
+        legacy_section="",
+        candidate_section=section,
+    )
+
+
+def _story_migration_links(story_projection: Any) -> tuple[SemanticRecordLink, ...]:
+    """Describe the exact legacy Story profile represented by each source."""
+    children_by_parent: dict[str, list[Any]] = {}
+    for child in story_projection.children:
+        children_by_parent.setdefault(child.block.parent_id, []).append(child)
+
+    links: list[SemanticRecordLink] = []
+    for parent in story_projection.parents:
+        root_refs = [
+            dict(ref)
+            for ref in parent.source_refs
+            if str(ref.get("json_path") or "") == "$"
+            and re.fullmatch(
+                r"Data:Story/([^/]+)\.json",
+                str(ref.get("title") or ref.get("source_title") or ""),
+            )
+        ]
+        if len(root_refs) != 1:
+            raise ValueError(
+                f"Story migration requires one canonical root source: {parent.parent_id}"
+            )
+        root_ref = root_refs[0]
+        source_title = str(
+            root_ref.get("title") or root_ref.get("source_title") or ""
+        )
+        source_match = re.fullmatch(r"Data:Story/([^/]+)\.json", source_title)
+        story_id = "" if source_match is None else source_match.group(1)
+        source_sha256 = str(
+            root_ref.get("content_sha256")
+            or root_ref.get("source_content_sha256")
+            or ""
+        )
+        expected_parent_id = f"story:{story_id}/story"
+        if (
+            not story_id
+            or not re.fullmatch(r"[0-9a-f]{64}", source_sha256)
+            or parent.entity_id != story_id
+            or parent.parent_id != expected_parent_id
+            or parent.entity_type != "story"
+            or parent.category != "story"
+            or parent.section_kind != "story"
+        ):
+            raise ValueError(
+                f"Story migration source and Parent identity disagree: {parent.parent_id}"
+            )
+
+        legacy_entity_id = hashlib.sha1(source_title.encode("utf-8")).hexdigest()[:12]
+        legacy_parent_id = f"story:{legacy_entity_id}/profile"
+        legacy_child_id = f"story:{legacy_entity_id}:0000"
+        links.append(
+            SemanticRecordLink(
+                record_kind="parent",
+                legacy_id=legacy_parent_id,
+                candidate_id=parent.parent_id,
+                change_kind="corrected_semantics",
+                source_title=source_title,
+                source_content_sha256=source_sha256,
+                json_path="$",
+                legacy_section="profile",
+                candidate_section="story",
+            )
+        )
+
+        story_children = children_by_parent.get(parent.parent_id, ())
+        if (
+            not story_children
+            or tuple(child.block.child_id for child in story_children)
+            != parent.child_ids
+        ):
+            raise ValueError(
+                f"Story migration Parent/Child closure failed: {parent.parent_id}"
+            )
+        stable_tokens: set[str] = set()
+        for child in story_children:
+            child_ref = dict(child.block.source_refs[0])
+            child_title = str(
+                child_ref.get("title") or child_ref.get("source_title") or ""
+            )
+            child_sha256 = str(
+                child_ref.get("content_sha256")
+                or child_ref.get("source_content_sha256")
+                or ""
+            )
+            json_path = str(child_ref.get("json_path") or "")
+            if (
+                child_title != source_title
+                or child_sha256 != source_sha256
+                or not json_path.startswith("$.")
+                or child.stable_source_token in stable_tokens
+                or child.block.child_id
+                != f"{parent.parent_id}/{child.stable_source_token}"
+                or child.owner_entity_id != f"story:{story_id}"
+                or child.owner_page_id != f"story:{story_id}"
+            ):
+                raise ValueError(
+                    "Story migration Child evidence is incomplete: "
+                    f"{child.block.child_id}"
+                )
+            stable_tokens.add(child.stable_source_token)
+            links.append(
+                SemanticRecordLink(
+                    record_kind="child",
+                    legacy_id=legacy_child_id,
+                    candidate_id=child.block.child_id,
+                    change_kind="corrected_semantics",
+                    source_title=source_title,
+                    source_content_sha256=source_sha256,
+                    json_path=json_path,
+                    legacy_section="profile",
+                    candidate_section="story",
+                )
+            )
+    return tuple(links)
+
+
 def project_crawler_semantics(rows: Iterable[Mapping[str, Any]]) -> CorpusProjection:
     """Project supported records without consulting active artifacts or business stores."""
     selected: list[dict[str, Any]] = []
+    invalid_wrappers: list[Mapping[str, Any]] = []
     for candidate in rows:
+        if candidate.get("json_valid") is False:
+            invalid_wrappers.append(candidate)
+            continue
         title = str(candidate.get("title") or "")
         is_character_source = title == "Data:Char/map.json" or bool(
             _CHAR_TITLE_RE.fullmatch(title)
@@ -248,12 +871,28 @@ def project_crawler_semantics(rows: Iterable[Mapping[str, Any]]) -> CorpusProjec
         is_supported_generic = not title.startswith("Data:Char/") and any(
             marker in title.casefold() for marker in _GENERIC_MARKERS
         )
-        if is_character_source or is_supported_generic:
+        if is_character_source or is_supported_generic or is_story_source_title(title):
             selected.append(dict(candidate))
     source_rows = tuple(selected)
     aliases = _alias_map(source_rows)
     udimo = _udimo_owner_index(source_rows)
     result = _ProjectionAccumulator()
+    for row in invalid_wrappers:
+        result.exclusions.append(
+            _exclusion(
+                row,
+                "invalid_data_wrapper",
+                details={
+                    "json_error": str(row.get("json_error") or ""),
+                    "pageid": row.get("pageid"),
+                    "revid": row.get("revid"),
+                    "source_file": _safe_source_filename(
+                        row.get("__source_file") or "data_pages.jsonl"
+                    ),
+                    "source_line_number": row.get("__source_line_number"),
+                },
+            )
+        )
 
     for row in source_rows:
         title = str(row.get("title") or "")
@@ -281,9 +920,54 @@ def project_crawler_semantics(rows: Iterable[Mapping[str, Any]]) -> CorpusProjec
         title = str(row.get("title") or "")
         if title.startswith("Data:Char/"):
             continue
+        if title.casefold().startswith("data:story/"):
+            continue
         if not any(marker in title.casefold() for marker in _GENERIC_MARKERS):
             continue
         _project_generic(row, result)
+
+    story_projection = project_stories(source_rows)
+    result.parents.extend(story_projection.parents)
+    result.children.extend(
+        SemanticChild(
+            block=child.block,
+            stable_source_token=child.stable_source_token,
+            source_token_kind=child.source_token_kind,
+            owner_entity_id=child.owner_entity_id,
+            owner_page_id=child.owner_page_id,
+            source_fields=child.source_fields,
+        )
+        for child in story_projection.children
+    )
+    result.record_links.extend(_story_migration_links(story_projection))
+    rows_by_title = {
+        str(row.get("title") or ""): row
+        for row in source_rows
+    }
+    for diagnostic in story_projection.diagnostics:
+        source_row = rows_by_title.get(diagnostic.source_title)
+        if source_row is None:
+            continue
+        result.exclusions.append(
+            _exclusion(
+                source_row,
+                diagnostic.reason_code,
+                entity_id=diagnostic.story_id,
+                json_path="$",
+                details=diagnostic.details,
+            )
+        )
+    result.identity_fallbacks.extend(
+        IdentityFallback(
+            owner_page_id=f"story:{fallback.story_id}",
+            canonical_section="story",
+            json_path=fallback.json_path,
+            source_identity_sha256=fallback.source_identity_sha256,
+            stable_source_token=fallback.stable_source_token,
+            reason_code=fallback.reason_code,
+        )
+        for fallback in story_projection.identity_fallbacks
+    )
 
     _assert_unique_ids(result.parents, result.children)
     return CorpusProjection(
@@ -580,7 +1264,11 @@ def _project_character(
     )
     result.parents.append(root)
     result.parents.extend(section_parents[section] for section in _SECTION_ORDER if section in section_parents)
-    result.children.extend(ordered_children)
+    enriched_children = [
+        replace(child, block=replace(child.block, entity_aliases=aliases))
+        for child in ordered_children
+    ]
+    result.children.extend(enriched_children)
     result.record_links.append(
         _record_link(row, "parent", owner_page_id, owner_page_id, "entity", "entity")
     )
@@ -1007,6 +1695,9 @@ def _project_skills(
     for group_index, ((token_prefix, stable_id), entries) in enumerate(grouped.items()):
         ultimate = token_prefix == "ultimate"
         resource_icon_id = str(entries[0][1].get("icon") or stable_id)
+        binding_token = (
+            f"{token_prefix}:{owner_page_id}:{stable_id}:{resource_icon_id}"
+        )
         token, token_kind = _stable_source_token(
             f"{token_prefix}-{stable_id}",
             row,
@@ -1064,7 +1755,7 @@ def _project_skills(
             stable_source_token=token,
             source_token_kind=token_kind,
             owner_page_id=owner_page_id,
-            media_binding_tokens=(f"{token_prefix}:{stable_id}:{resource_icon_id}",),
+            media_binding_tokens=(binding_token,),
             source_fields={
                 "icon_id": resource_icon_id,
                 "skill_ids": source_ids,
@@ -1088,7 +1779,7 @@ def _project_skills(
         )
         result.media_intents.append(
             MediaBindingIntent(
-                source_binding_token=f"{token_prefix}:{stable_id}:{resource_icon_id}",
+                source_binding_token=binding_token,
                 owner_entity_id=f"character:{entity_id}",
                 owner_page_id=owner_page_id,
                 parent_id=parent_id,
@@ -1673,6 +2364,22 @@ def _as_nonnegative_int(value: object) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_source_filename(value: object) -> str:
+    return re.split(r"[\\/]", str(value or ""))[-1]
+
+
+def _page_chunk_index(child_id: str) -> int:
+    match = re.search(r"/chunk:(\d+)\Z", child_id)
+    return int(match.group(1)) if match else 0
+
+
+def _page_chunk_suffix(child_id: str) -> str:
+    match = re.search(r"/chunk:(\d+)\Z", child_id)
+    if match is None:
+        raise ValueError("Page child ID has no deterministic chunk index")
+    return match.group(1)
 
 
 def _assert_unique_ids(

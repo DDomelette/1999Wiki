@@ -1,0 +1,49 @@
+{
+  "schema_version": "huiji.topic-catalog/v1",
+  "topics": [
+    {
+      "topic_id": "reverse-1999",
+      "name": "重返未来：1999",
+      "aliases": [
+        "Reverse: 1999",
+        "重返未来1999"
+      ],
+      "exact_page_titles": [
+        "重返未来：1999"
+      ],
+      "exact_heading_titles": [
+        "世界观",
+        "重返未来：1999"
+      ],
+      "required_route_tags": [
+        "page"
+      ],
+      "definition_patterns": [
+        "^重返未来：?1999(?:是|指)"
+      ],
+      "structured_relations": []
+    },
+    {
+      "topic_id": "storm",
+      "name": "暴雨",
+      "aliases": [
+        "Storm",
+        "风暴"
+      ],
+      "exact_page_titles": [
+        "暴雨"
+      ],
+      "exact_heading_titles": [
+        "暴雨",
+        "暴雨机制"
+      ],
+      "required_route_tags": [
+        "page"
+      ],
+      "definition_patterns": [
+        "^暴雨(?:是|指|被称为)"
+      ],
+      "structured_relations": []
+    }
+  ]
+}

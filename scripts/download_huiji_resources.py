@@ -10,20 +10,29 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.huijiwiki.resource_downloader import DownloadConfig, DownloadResult, DownloadSummary, ResourceDownloader
+from src.huijiwiki.resource_downloader import (
+    ApprovalRequiredError,
+    DownloadConfig,
+    DownloadResult,
+    DownloadSummary,
+    ResourceDownloader,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Download res1999 HuijiWiki file resources from crawl_state.sqlite")
-    parser.add_argument("--out", type=Path, default=ROOT / "data" / "huiji" / "res1999")
-    parser.add_argument("--db", type=Path, default=None)
+    parser = argparse.ArgumentParser(
+        description="Download an explicitly approved HuijiWiki media allowlist"
+    )
+    parser.add_argument("--staging-root", type=Path, required=True)
+    parser.add_argument("--allowlist", type=Path, required=True)
+    parser.add_argument("--allowlist-sha256", required=True)
+    parser.add_argument("--source-inventory-sha256", required=True)
+    parser.add_argument("--approval", type=Path, required=True)
+    parser.add_argument("--staging-receipt", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=2)
-    parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--retries", type=int, default=2)
     parser.add_argument("--sleep", type=float, default=0.2)
-    parser.add_argument("--include-failed", action="store_true")
-    parser.add_argument("--mime-prefix", action="append", default=[])
     parser.add_argument("--log-every", type=int, default=100)
     return parser
 
@@ -57,28 +66,33 @@ def format_duration(seconds: int) -> str:
     return f"{minutes}m{sec:02d}s"
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    out = args.out
-    db_path = args.db or out / "crawl_state.sqlite"
-    if not db_path.exists():
-        print(f"Resource state database not found: {db_path}", file=sys.stderr)
-        return 1
-
-    config = DownloadConfig(
-        out=out,
-        db_path=db_path,
+def build_download_config(args: argparse.Namespace) -> DownloadConfig:
+    return DownloadConfig(
+        staging_root=args.staging_root,
+        allowlist_path=args.allowlist,
+        expected_allowlist_sha256=args.allowlist_sha256,
+        expected_source_inventory_sha256=args.source_inventory_sha256,
+        approval_path=args.approval,
+        staging_receipt_path=args.staging_receipt,
         workers=args.workers,
-        limit=args.limit,
         timeout=args.timeout,
         retries=args.retries,
         sleep=args.sleep,
-        include_failed=args.include_failed,
-        mime_prefixes=tuple(args.mime_prefix),
         log_every=args.log_every,
     )
-    started_at = time.time()
-    summary = ResourceDownloader(config).run(progress_fn=progress_printer(started_at, args.log_every))
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        config = build_download_config(args)
+        started_at = time.time()
+        summary = ResourceDownloader(config).run(
+            progress_fn=progress_printer(started_at, args.log_every)
+        )
+    except (ApprovalRequiredError, OSError, ValueError) as error:
+        print(f"Download refused: {error}", file=sys.stderr)
+        return 2
     print(json.dumps(summary.to_json(), ensure_ascii=False, indent=2, sort_keys=True))
     return 1 if summary.failed else 0
 

@@ -90,3 +90,56 @@ def test_generic_parent_uses_legacy_sentence_boundary_summary() -> None:
     summary = projection.parents[0].summary_text
     assert summary.endswith("。")
     assert len(summary) < 1000
+
+
+def test_every_child_has_nonempty_heading_path_and_explicit_entity_aliases() -> None:
+    projection = project_crawler_semantics(
+        [
+            _row("Data:Char/map.json", {"name": {"Alias Name": 8}}),
+            _row("Data:Char/8.json", {"id": 8, "name": "Canonical Name"}),
+            _row(
+                "Data:Item/1.json",
+                {"id": 1, "name": "Item Name", "desc": "Item description."},
+            ),
+        ]
+    )
+
+    assert projection.children
+    assert all(child.block.heading_path for child in projection.children)
+    assert all(
+        isinstance(child.block.entity_aliases, tuple)
+        for child in projection.children
+    )
+    character = next(
+        child for child in projection.children if child.block.entity_type == "character"
+    )
+    assert character.block.entity_aliases == ("Alias Name",)
+
+
+def test_legacy_character_enrichment_does_not_change_text_owner_section_or_route() -> None:
+    projection = project_crawler_semantics(
+        [_row("Data:Char/8.json", {"id": 8, "name": "Canonical Name"})]
+    )
+    child = projection.children[0]
+
+    assert child.block.text == (
+        "Canonical Name 角色资料\n稀有度: \n职业: \n伤害类型: "
+    )
+    assert child.block.content == child.block.text
+    assert child.owner_entity_id == "character:8"
+    assert child.owner_page_id == "char:8"
+    assert child.block.section_kind == "profile"
+    assert child.block.route_tags == ("intro", "profile_fact", "media")
+
+
+def test_schema_enrichment_is_separate_from_semantic_fidelity_change() -> None:
+    projection = project_crawler_semantics(
+        [_row("Data:Item/1.json", {"id": 1, "name": "Item", "desc": "Description."})]
+    )
+    child = projection.children[0]
+    enriched = child.to_json()
+
+    assert enriched["content"] == child.block.text
+    assert enriched["heading_path"] == ("profile",)
+    assert enriched["entity_aliases"] == ()
+    assert child.block.content_hash == hashlib.sha256(child.block.text.encode()).hexdigest()

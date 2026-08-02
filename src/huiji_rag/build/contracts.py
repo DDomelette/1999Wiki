@@ -21,6 +21,25 @@ MEDIA_V3_MANIFEST_SCHEMA_VERSION = "evb.media-artifact-manifest/v3"
 CORPUS_BUILD_SCHEMA_VERSION = "huiji.corpus-build/v2"
 PARENT_BLOCK_SCHEMA_VERSION = "huiji.parent-blocks/v2"
 CHILD_BLOCK_SCHEMA_VERSION = "huiji.child-blocks/v2"
+REFERENCED_MEDIA_PLAN_SCHEMA_VERSION = "huiji.referenced-media-plan/v1"
+REFERENCED_MEDIA_ALLOWLIST_ENTRY_SCHEMA_VERSION = (
+    "huiji.referenced-media-allowlist-entry/v1"
+)
+MEDIA_CAPACITY_REPORT_SCHEMA_VERSION = "huiji.media-capacity-report/v1"
+MEDIA_DOWNLOAD_APPROVAL_SCHEMA_VERSION = "huiji.media-download-approval/v1"
+MEDIA_DOWNLOAD_RECEIPT_SCHEMA_VERSION = "huiji.media-download-receipt/v1"
+GIB = 1024**3
+P0_MEDIA_NEW_BYTES_MAX = 268435456
+P1_MEDIA_CUMULATIVE_NEW_BYTES_MAX = 2147483648
+MIN_FREE_AFTER_COMMIT_BYTES = 12884901888
+LOCAL_CAPACITY_MARGIN_MINIMUM_BYTES = 2 * GIB
+CLOUD_CAPACITY_MARGIN_MINIMUM_BYTES = GIB
+CAPACITY_MARGIN_NUMERATOR = 1
+CAPACITY_MARGIN_DENOMINATOR = 5
+CAPACITY_MARGIN_RATIO = (
+    f"{CAPACITY_MARGIN_NUMERATOR / CAPACITY_MARGIN_DENOMINATOR:.2f}"
+)
+DIAGNOSTIC_ONLY_NEXT_GATE = "approve_referenced_media_plan"
 
 MEDIA_V3_FIELD_ORDER = (
     "artifact_schema_version",
@@ -120,6 +139,60 @@ class CorpusSourceInventory:
 
 
 @dataclass(frozen=True)
+class CorpusCapacityPlanningEvidence:
+    phase: str
+    workers: int
+    free_local_bytes: int | None
+    known_cloud_free_or_quota_bytes: int | None
+    other_storage_growth_bytes: int | None
+    candidate_artifact_estimate_bytes: int
+    selection_policy_sha256: str
+    media_budget_baseline_inventory_sha256: str
+    actual_free_after_commit_bytes: int | None = None
+    overflow_storage_overhead_bytes: int = 0
+    overflow_candidate_index_growth_bytes: int = 0
+
+    def __post_init__(self) -> None:
+        if self.phase not in {"p0", "p1"}:
+            raise ValueError("capacity planning phase must be p0 or p1")
+        if (
+            not isinstance(self.workers, int)
+            or isinstance(self.workers, bool)
+            or self.workers < 1
+        ):
+            raise ValueError("capacity planning workers must be positive")
+        for field_name in (
+            "free_local_bytes",
+            "known_cloud_free_or_quota_bytes",
+            "other_storage_growth_bytes",
+            "actual_free_after_commit_bytes",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 0
+            ):
+                raise ValueError(f"capacity planning {field_name} must be non-negative")
+        for field_name in (
+            "candidate_artifact_estimate_bytes",
+            "overflow_storage_overhead_bytes",
+            "overflow_candidate_index_growth_bytes",
+        ):
+            value = getattr(self, field_name)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError(f"capacity planning {field_name} must be non-negative")
+        _require_hash(
+            self.selection_policy_sha256,
+            re.compile(r"[0-9a-f]{64}\Z"),
+            "capacity selection policy",
+        )
+        _require_hash(
+            self.media_budget_baseline_inventory_sha256,
+            re.compile(r"[0-9a-f]{64}\Z"),
+            "capacity baseline inventory",
+        )
+
+
+@dataclass(frozen=True)
 class CorpusBuildRequest:
     build_version: str
     raw_root: Path
@@ -127,6 +200,9 @@ class CorpusBuildRequest:
     run_dir: Path
     fidelity_baseline_path: Path
     expected_fidelity_baseline_sha256: str
+    recovery_manifest_path: Path | None = None
+    recovery_audit_receipt_path: Path | None = None
+    recovery_apply_receipt_path: Path | None = None
     wiki_compatibility_receipt_path: Path | None = None
     expected_wiki_compatibility_receipt_sha256: str = ""
     configured_build_version: str = ""
@@ -141,6 +217,7 @@ class CorpusBuildRequest:
     embedding_provider: str = ""
     embedding_model: str = ""
     forbidden_collection_names: tuple[str, ...] = ()
+    capacity_planning: CorpusCapacityPlanningEvidence | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -307,6 +384,14 @@ def canonical_jsonl_bytes(rows: Iterable[Mapping[str, Any]]) -> bytes:
                 json.dumps(validated, ensure_ascii=False, separators=(",", ":")) + "\n"
             ).encode("utf-8")
         )
+    return b"".join(encoded)
+
+
+def canonical_mapping_jsonl_bytes(rows: Iterable[Mapping[str, Any]]) -> bytes:
+    """Encode arbitrary contract rows as canonical UTF-8 JSONL."""
+    encoded: list[bytes] = []
+    for row in rows:
+        encoded.append(canonical_json_bytes(dict(row)))
     return b"".join(encoded)
 
 
