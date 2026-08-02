@@ -36,6 +36,10 @@ eval/*
 !eval/thresholds_core.json
 !eval/rag_full_chain_thresholds.v1.json
 !eval/rag_full_chain_boundary_seeds.v1.jsonl
+!eval/story_segment_eval.v1.jsonl
+!eval/story_segment_thresholds.v1.json
+!eval/story_baseline_atom_equivalence.v1.jsonl
+!eval/story_segment_baseline_receipt.v1.json
 
 # The frontend public tree has been pruned to production-referenced shell assets.
 # Keep those files in Git so a clean checkout can build a complete frontend image.
