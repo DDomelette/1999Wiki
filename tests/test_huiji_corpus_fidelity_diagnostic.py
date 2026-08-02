@@ -238,6 +238,15 @@ def _raw_identity(path: Path) -> dict[str, object]:
     return _identity(path, raw)
 
 
+def _verified_identity_group(
+    config: dict[str, object], group: str
+) -> dict[str, tuple[Path, bytes]]:
+    return {
+        label: (Path(identity["path"]), Path(identity["path"]).read_bytes())
+        for label, identity in config[group].items()
+    }
+
+
 def _hashed(value: str) -> str:
     return _sha256(value.encode("utf-8"))
 
@@ -1133,6 +1142,27 @@ def _run_config(
             "c8c_product_receipt": product_receipt_ref,
         }
     )
+    relocated_c8c_root = (
+        repository / "eval/story_segment/dependencies/c8c-relocated-fixture"
+    )
+    c8c_relocated_evidence = {
+        "accepted_baseline": _write_bytes(
+            relocated_c8c_root / "accepted-baseline.json",
+            Path(accepted_baseline_witness["path"]).read_bytes(),
+        ),
+        "product_parity_d_acceptance": _write_bytes(
+            relocated_c8c_root / "product-parity-d-acceptance.json",
+            Path(c8c_review_witnesses[0]["path"]).read_bytes(),
+        ),
+        "product_parity_d_green_authorization": _write_bytes(
+            relocated_c8c_root / "product-parity-d-green.json",
+            Path(c8c_review_witnesses[1]["path"]).read_bytes(),
+        ),
+        "product_parity_diagnostic": _write_bytes(
+            relocated_c8c_root / "diagnostic.product-parity.py",
+            product_diagnostic_path.read_bytes(),
+        ),
+    }
 
     diagnostic_path = repository / SCRIPT_RELATIVE_PATH
     diagnostic_path.parent.mkdir(parents=True)
@@ -1195,6 +1225,7 @@ def _run_config(
                 "product_occurrence_ledger_sha256"
             ],
         },
+        "c8c_relocated_evidence": c8c_relocated_evidence,
     }
     config_path = tmp_path / "run-config.c8d.json"
     config_raw = _canonical_bytes(config)
@@ -1373,6 +1404,10 @@ def _c9_intake(
             for label, identity in config["inputs"].items()
         },
         "c8c_evidence_chain": copy.deepcopy(config["c8c_evidence_chain"]),
+        "c8c_relocated_evidence": {
+            label: relative_identity(identity)
+            for label, identity in config["c8c_relocated_evidence"].items()
+        },
     }
     intake_path = dependency_root / "c9-intake-receipt.v1.json"
     intake_raw = _canonical_bytes(intake)
@@ -1405,6 +1440,100 @@ def _rewrite_handoff_and_intake(
     intake_raw = _canonical_bytes(intake)
     intake_path.write_bytes(intake_raw)
     return _sha256(intake_raw)
+
+
+def _relocate_c9_intake_evidence(
+    project_root: Path,
+    intake_path: Path,
+    intake: dict[str, object],
+) -> tuple[str, frozenset[Path]]:
+    manifest_identity = intake["inputs"]["c8c_product_manifest"]
+    original_manifest_path = (
+        project_root / manifest_identity["relative_path"]
+    ).resolve()
+    product_manifest = json.loads(original_manifest_path.read_bytes())
+    product_diagnostic_path = original_manifest_path.with_name(
+        "diagnostic.product-parity.py"
+    )
+    relocation_root = intake_path.parent / "relocated-witnesses"
+    relocation_root.mkdir()
+    copied_by_source: dict[Path, dict[str, object]] = {}
+
+    def relocate(
+        identity: dict[str, object], destination_name: str
+    ) -> dict[str, object]:
+        source = (project_root / identity["relative_path"]).resolve()
+        existing = copied_by_source.get(source)
+        if existing is not None:
+            return {
+                **existing,
+                **(
+                    {"row_count": identity["row_count"]}
+                    if "row_count" in identity
+                    else {}
+                ),
+            }
+        raw = source.read_bytes()
+        destination = relocation_root / destination_name
+        destination.write_bytes(raw)
+        relocated: dict[str, object] = {
+            "relative_path": destination.relative_to(project_root).as_posix(),
+            "sha256": _sha256(raw),
+            "size_bytes": len(raw),
+        }
+        if "row_count" in identity:
+            relocated["row_count"] = identity["row_count"]
+        copied_by_source[source] = relocated
+        return dict(relocated)
+
+    for group_name in ("accepted_evidence", "inputs"):
+        identities = intake[group_name]
+        for label, identity in tuple(identities.items()):
+            identities[label] = relocate(identity, f"{group_name}-{label}.json")
+
+    historical_entries = product_manifest["inputs"][:11]
+    historical_paths = frozenset(
+        (project_root / entry["identity"]).resolve()
+        for entry in historical_entries
+    )
+
+    def relocated_manifest_witness(
+        index: int, field_name: str
+    ) -> dict[str, object]:
+        entry = historical_entries[index]
+        identity = {
+            "relative_path": entry["identity"],
+            "sha256": entry["sha256"],
+            "size_bytes": entry["size"],
+        }
+        if entry["row_count"] is not None:
+            identity["row_count"] = entry["row_count"]
+        return relocate(identity, f"c8c-{field_name}.json")
+
+    diagnostic_raw = product_diagnostic_path.read_bytes()
+    relocated_diagnostic = relocation_root / "diagnostic.product-parity.py"
+    relocated_diagnostic.write_bytes(diagnostic_raw)
+    intake["c8c_relocated_evidence"] = {
+        "accepted_baseline": relocated_manifest_witness(
+            5, "accepted-baseline"
+        ),
+        "product_parity_d_acceptance": relocated_manifest_witness(
+            0, "d-acceptance"
+        ),
+        "product_parity_d_green_authorization": relocated_manifest_witness(
+            1, "d-green-authorization"
+        ),
+        "product_parity_diagnostic": {
+            "relative_path": relocated_diagnostic.relative_to(
+                project_root
+            ).as_posix(),
+            "sha256": _sha256(diagnostic_raw),
+            "size_bytes": len(diagnostic_raw),
+        },
+    }
+    intake_raw = _canonical_bytes(intake)
+    intake_path.write_bytes(intake_raw)
+    return _sha256(intake_raw), historical_paths
 
 
 def _test_evidence_fixture() -> SimpleNamespace:
@@ -1747,6 +1876,7 @@ def test_c8c_reviewed_file_rejects_forged_historical_hash(tmp_path: Path) -> Non
         label: (Path(identity["path"]), Path(identity["path"]).read_bytes())
         for label, identity in config["inputs"].items()
     }
+    relocated = _verified_identity_group(config, "c8c_relocated_evidence")
     manifest = json.loads(verified["c8c_product_manifest"][1])
     reviewed = next(
         identity
@@ -1777,7 +1907,7 @@ def test_c8c_reviewed_file_rejects_forged_historical_hash(tmp_path: Path) -> Non
         ValueError,
         match="C8c product input identity cross-check mismatch",
     ):
-        module._validate_c8c_chain(forged, forged_verified)
+        module._validate_c8c_chain(forged, forged_verified, relocated)
 
 
 @pytest.mark.parametrize("checkpoint_kind", ("missing", "non-ancestor"))
@@ -1969,6 +2099,221 @@ def test_c9_intake_is_the_single_source_for_validated_post_merge_config(
         "tree": old_config["expected_git_tree"],
     }
     assert intake["c9_handoff"]["schema_version"] == "huiji.thread-c-c9-audit/v1"
+    _assert_no_output(output_root)
+
+
+def test_c9_intake_validates_relocated_c8c_witnesses_without_historical_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, _digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+    digest, historical_paths = _relocate_c9_intake_evidence(
+        project_root, intake_path, intake
+    )
+    original_read_bytes = Path.read_bytes
+
+    def reject_historical_read(path: Path) -> bytes:
+        if path.resolve() in historical_paths:
+            raise AssertionError(
+                "historical C8c witness read attempted: "
+                + path.relative_to(project_root).as_posix()
+            )
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", reject_historical_read)
+
+    loaded = module.load_c9_intake(
+        project_root=project_root,
+        path=intake_path,
+        expected_c9_intake_sha256=digest,
+        output_root=output_root,
+    )
+
+    config = loaded["config"]
+    assert set(config["c8c_relocated_evidence"]) == {
+        "accepted_baseline",
+        "product_parity_d_acceptance",
+        "product_parity_d_green_authorization",
+        "product_parity_diagnostic",
+    }
+    manifest = json.loads(
+        Path(config["inputs"]["c8c_product_manifest"]["path"]).read_bytes()
+    )
+    execution_identities = (
+        config["c8c_relocated_evidence"]["product_parity_d_acceptance"],
+        config["c8c_relocated_evidence"][
+            "product_parity_d_green_authorization"
+        ],
+        config["inputs"]["active_media"],
+        config["inputs"]["c8c_taxonomy"],
+        config["inputs"]["candidate_media_v3"],
+        config["c8c_relocated_evidence"]["accepted_baseline"],
+        config["inputs"]["protected_identity_manifest"],
+        config["inputs"]["crawler_pages"],
+        config["inputs"]["crawler_wikitext"],
+        config["inputs"]["crawler_data_pages"],
+        config["inputs"]["crawler_resources_manifest"],
+    )
+    dependency_prefix = "eval/story_segment/dependencies/"
+    for historical, execution in zip(
+        manifest["inputs"][:11], execution_identities, strict=True
+    ):
+        execution_path = Path(execution["path"])
+        assert execution_path.relative_to(project_root).as_posix().startswith(
+            dependency_prefix
+        )
+        assert execution_path != project_root / historical["identity"]
+        assert execution["sha256"] == historical["sha256"]
+        assert execution["size_bytes"] == historical["size"]
+    assert config["c8c_relocated_evidence"]["product_parity_diagnostic"][
+        "sha256"
+    ] == manifest["diagnostic_script_sha256"]
+    for field in ("c8b_d_acceptance", "c8c_d_acceptance"):
+        acceptance_path = Path(config["accepted_checkpoints"][field]["path"])
+        assert acceptance_path.relative_to(project_root).as_posix().startswith(
+            dependency_prefix
+        )
+    _assert_no_output(output_root)
+
+
+@pytest.mark.parametrize(
+    ("field", "mutation"),
+    tuple(
+        (field, mutation)
+        for field in (
+            "accepted_baseline",
+            "product_parity_d_acceptance",
+            "product_parity_d_green_authorization",
+        )
+        for mutation in ("missing", "tampered", "mislabelled")
+    ),
+)
+def test_c9_intake_rejects_invalid_relocated_c8c_evidence_without_output(
+    tmp_path: Path, field: str, mutation: str
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, _digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+    _relocate_c9_intake_evidence(project_root, intake_path, intake)
+    evidence = intake["c8c_relocated_evidence"]
+    if mutation == "missing":
+        evidence.pop(field)
+    elif mutation == "tampered":
+        evidence_path = project_root / evidence[field]["relative_path"]
+        evidence_path.write_bytes(evidence_path.read_bytes() + b"tampered")
+    else:
+        replacements = {
+            "accepted_baseline": "product_parity_d_acceptance",
+            "product_parity_d_acceptance": (
+                "product_parity_d_green_authorization"
+            ),
+            "product_parity_d_green_authorization": "accepted_baseline",
+        }
+        evidence[field] = copy.deepcopy(evidence[replacements[field]])
+    intake_raw = _canonical_bytes(intake)
+    intake_path.write_bytes(intake_raw)
+
+    with pytest.raises((OSError, ValueError)):
+        module.load_c9_intake(
+            project_root=project_root,
+            path=intake_path,
+            expected_c9_intake_sha256=_sha256(intake_raw),
+            output_root=output_root,
+        )
+    _assert_no_output(output_root)
+
+
+@pytest.mark.parametrize(
+    "mutation", ("sha256", "size", "row_count", "path_traversal")
+)
+def test_c9_intake_rejects_forged_historical_c8c_manifest_witness(
+    tmp_path: Path, mutation: str
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, _digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+    _relocate_c9_intake_evidence(project_root, intake_path, intake)
+    manifest_identity = intake["inputs"]["c8c_product_manifest"]
+    manifest_path = project_root / manifest_identity["relative_path"]
+    manifest = json.loads(manifest_path.read_bytes())
+    historical = manifest["inputs"][0]
+    if mutation == "sha256":
+        historical["sha256"] = "0" * 64
+    elif mutation == "size":
+        historical["size"] += 1
+    elif mutation == "row_count":
+        historical["row_count"] = 2
+    else:
+        historical["identity"] = "../historical-escape.json"
+    manifest_raw = _canonical_bytes(manifest)
+    manifest_path.write_bytes(manifest_raw)
+    manifest_identity.update(
+        {"sha256": _sha256(manifest_raw), "size_bytes": len(manifest_raw)}
+    )
+    intake["c8c_evidence_chain"]["manifest_sha256"] = _sha256(manifest_raw)
+
+    receipt_identity = intake["inputs"]["c8c_product_receipt"]
+    receipt_path = project_root / receipt_identity["relative_path"]
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["output_sha256"]["manifest.product-parity.v1.json"] = _sha256(
+        manifest_raw
+    )
+    receipt_raw = _canonical_bytes(receipt)
+    receipt_path.write_bytes(receipt_raw)
+    receipt_identity.update(
+        {"sha256": _sha256(receipt_raw), "size_bytes": len(receipt_raw)}
+    )
+    intake["c8c_evidence_chain"]["receipt_sha256"] = _sha256(receipt_raw)
+    intake_raw = _canonical_bytes(intake)
+    intake_path.write_bytes(intake_raw)
+
+    with pytest.raises(ValueError, match="C8c product input"):
+        module.load_c9_intake(
+            project_root=project_root,
+            path=intake_path,
+            expected_c9_intake_sha256=_sha256(intake_raw),
+            output_root=output_root,
+        )
+    _assert_no_output(output_root)
+
+
+@pytest.mark.parametrize(
+    "historical_root",
+    (
+        ".codex-supervisor/workers/C",
+        "eval/task8-c-relocation-fixture",
+        "eval/task9-c-relocation-fixture",
+    ),
+)
+def test_c9_intake_rejects_relocated_evidence_in_historical_c_state(
+    tmp_path: Path, historical_root: str
+) -> None:
+    module = _load_diagnostic()
+    project_root, intake_path, _digest, output_root, intake, _config = _c9_intake(
+        tmp_path
+    )
+    identity = intake["c8c_relocated_evidence"][
+        "product_parity_d_acceptance"
+    ]
+    source = project_root / identity["relative_path"]
+    historical = project_root / historical_root / "relocated-receipt.json"
+    historical.parent.mkdir(parents=True, exist_ok=True)
+    historical.write_bytes(source.read_bytes())
+    identity["relative_path"] = historical.relative_to(project_root).as_posix()
+    intake_raw = _canonical_bytes(intake)
+    intake_path.write_bytes(intake_raw)
+
+    with pytest.raises(ValueError):
+        module.load_c9_intake(
+            project_root=project_root,
+            path=intake_path,
+            expected_c9_intake_sha256=_sha256(intake_raw),
+            output_root=output_root,
+        )
     _assert_no_output(output_root)
 
 
@@ -2414,6 +2759,7 @@ def test_internal_run_config_preserves_exact_identity_chain(
         "expected_legacy_media_category_counts",
         "inputs",
         "c8c_evidence_chain",
+        "c8c_relocated_evidence",
     }
     assert config["expected_git_head"] == HEAD
     assert config["accepted_checkpoints"]["c8c_commit"] == C8C_COMMIT
@@ -2427,6 +2773,7 @@ def test_internal_run_config_preserves_exact_identity_chain(
         label: (Path(identity["path"]), Path(identity["path"]).read_bytes())
         for label, identity in config["inputs"].items()
     }
+    relocated = _verified_identity_group(config, "c8c_relocated_evidence")
     taxonomy = json.loads(verified["c8c_taxonomy"][1])
     product_manifest = json.loads(verified["c8c_product_manifest"][1])
     accepted_taxonomy_witness = next(
@@ -2535,7 +2882,7 @@ def test_internal_run_config_preserves_exact_identity_chain(
             for candidate_id in row["candidate_binding_ids"]
         )
 
-    module._validate_c8c_chain(config, verified)
+    module._validate_c8c_chain(config, verified, relocated)
 
     field_drift_taxonomy = copy.deepcopy(taxonomy)
     field_drift_taxonomy["coverage_checks"][
@@ -2549,14 +2896,14 @@ def test_internal_run_config_preserves_exact_identity_chain(
         _canonical_bytes(field_drift_taxonomy),
     )
     with pytest.raises(ValueError):
-        module._validate_c8c_chain(config, field_drift_verified)
+        module._validate_c8c_chain(config, field_drift_verified, relocated)
 
     product_chain_mismatch = copy.deepcopy(config)
     product_chain_mismatch["c8c_evidence_chain"][
         "occurrence_ledger_sha256"
     ] = "0" * 64
     with pytest.raises(ValueError, match="occurrence ledger"):
-        module._validate_c8c_chain(product_chain_mismatch, verified)
+        module._validate_c8c_chain(product_chain_mismatch, verified, relocated)
 
     # Let this node isolate the frozen checkpoint-equality defect instead of
     # stopping first at the newly required top-level protected-root field.
@@ -2930,8 +3277,8 @@ def test_internal_run_config_preserves_exact_identity_chain(
         "eval/huiji_corpus_fidelity/20260720T073917Z/"
         "corpus-preservation-baseline.v2.json"
     )
-    accepted_baseline_path = (
-        Path(loaded["repository_root"]) / accepted_baseline_entry["identity"]
+    accepted_baseline_path = Path(
+        loaded["c8c_relocated_evidence"]["accepted_baseline"]["path"]
     )
     bm25_identities = tuple(
         loaded["inputs"][label]
@@ -2957,6 +3304,12 @@ def test_internal_run_config_preserves_exact_identity_chain(
         "huiji.corpus-preservation-baseline/v2"
     )
     assert accepted_baseline_payload["status"] == "pass"
+    assert accepted_baseline_path.relative_to(repository_root).as_posix().startswith(
+        "eval/story_segment/dependencies/"
+    )
+    assert accepted_baseline_path != (
+        repository_root / accepted_baseline_entry["identity"]
+    )
     assert [entry["identity"] for entry in product_manifest["inputs"]] == [
         ".codex-supervisor/workers/C/d-review-c8c-real-interface-accepted.json",
         ".codex-supervisor/workers/C/d-review-c8c-final-43-green.json",
@@ -2993,8 +3346,34 @@ def test_internal_run_config_preserves_exact_identity_chain(
         "tests/test_huiji_corpus_fidelity.py",
         "docs/superpowers/specs/2026-07-29-rag-thread-c-legacy-media-decision.md",
     ]
-    for entry in product_manifest["inputs"]:
-        witness_raw = (Path(loaded["repository_root"]) / entry["identity"]).read_bytes()
+    relocated = loaded["c8c_relocated_evidence"]
+    non_reviewed_paths = (
+        Path(relocated["product_parity_d_acceptance"]["path"]),
+        Path(relocated["product_parity_d_green_authorization"]["path"]),
+        Path(loaded["inputs"]["active_media"]["path"]),
+        Path(loaded["inputs"]["c8c_taxonomy"]["path"]),
+        Path(loaded["inputs"]["candidate_media_v3"]["path"]),
+        Path(relocated["accepted_baseline"]["path"]),
+        Path(loaded["inputs"]["protected_identity_manifest"]["path"]),
+        Path(loaded["inputs"]["crawler_pages"]["path"]),
+        Path(loaded["inputs"]["crawler_wikitext"]["path"]),
+        Path(loaded["inputs"]["crawler_data_pages"]["path"]),
+        Path(loaded["inputs"]["crawler_resources_manifest"]["path"]),
+    )
+    for entry, witness_path in zip(
+        product_manifest["inputs"][:11], non_reviewed_paths, strict=True
+    ):
+        witness_raw = witness_path.read_bytes()
+        assert _sha256(witness_raw) == entry["sha256"]
+        assert len(witness_raw) == entry["size"]
+    for entry in product_manifest["inputs"][11:]:
+        witness_raw = subprocess.run(
+            ("git", "show", f"{C8C_COMMIT}:{entry['identity']}"),
+            cwd=SCRIPT.parents[1],
+            check=True,
+            capture_output=True,
+            shell=False,
+        ).stdout
         assert _sha256(witness_raw) == entry["sha256"]
         assert len(witness_raw) == entry["size"]
     assert len(product_manifest["inputs"]) == len(
@@ -3050,8 +3429,8 @@ def test_internal_run_config_preserves_exact_identity_chain(
         product_receipt["output_sha256"]["manifest.product-parity.v1.json"]
         == _sha256(product_manifest_path.read_bytes())
     )
-    product_diagnostic_path = product_manifest_path.with_name(
-        "diagnostic.product-parity.py"
+    product_diagnostic_path = Path(
+        loaded["c8c_relocated_evidence"]["product_parity_diagnostic"]["path"]
     )
     assert (
         product_manifest["diagnostic_script_sha256"]
@@ -3446,15 +3825,15 @@ def test_diagnostic_blocks_network_external_writers_and_media_bytes(
             for identity in config["inputs"].values()
         ),
         *(
+            Path(identity["path"]).resolve()
+            for identity in config["c8c_relocated_evidence"].values()
+        ),
+        *(
             Path(config["accepted_checkpoints"][name]["path"]).resolve()
             for name in ("c8b_d_acceptance", "c8c_d_acceptance")
         ),
         *exact_outputs,
     }
-    product_manifest_path = Path(
-        config["inputs"]["c8c_product_manifest"]["path"]
-    ).resolve()
-    allowed_reads.add(product_manifest_path.with_name("diagnostic.product-parity.py"))
     allowed_reads.add(
         Path(config["inputs"]["c8b_taxonomy"]["path"])
         .with_name("manifest.c8b3.v1.json")

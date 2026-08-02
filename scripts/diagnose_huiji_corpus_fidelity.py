@@ -66,6 +66,7 @@ _C9_INTAKE_FIELDS = {
     "expected_legacy_media_category_counts",
     "inputs",
     "c8c_evidence_chain",
+    "c8c_relocated_evidence",
 }
 _RELEASE_CHECKPOINT_FIELDS = {
     "task7_c8a_commit",
@@ -123,6 +124,12 @@ _C9_FORBIDDEN_ARTIFACT_FIELDS = {
     "production_pointer",
     "credentials",
 }
+_C8C_RELOCATED_EVIDENCE_FIELDS = {
+    "accepted_baseline",
+    "product_parity_d_acceptance",
+    "product_parity_d_green_authorization",
+    "product_parity_diagnostic",
+}
 _TOP_LEVEL_FIELDS = {
     "schema_version",
     "run_id",
@@ -140,6 +147,7 @@ _TOP_LEVEL_FIELDS = {
     "expected_legacy_media_category_counts",
     "inputs",
     "c8c_evidence_chain",
+    "c8c_relocated_evidence",
 }
 _INPUT_FIELDS = {"path", "sha256", "size_bytes"}
 _INPUT_FIELDS_WITH_ROWS = _INPUT_FIELDS | {"row_count"}
@@ -415,6 +423,18 @@ def _intake_identity_to_run_config(
     return result
 
 
+def _intake_dependency_identity_to_run_config(
+    identity: object, project_root: Path, label: str
+) -> dict[str, object]:
+    result = _intake_identity_to_run_config(identity, project_root, label)
+    dependency_root = (
+        project_root / "eval" / "story_segment" / "dependencies"
+    ).resolve(strict=True)
+    if not Path(str(result["path"])).is_relative_to(dependency_root):
+        raise ValueError(f"{label} is outside the D-owned dependency area")
+    return result
+
+
 def _read_jsonl(raw: bytes, label: str) -> tuple[dict[str, Any], ...]:
     rows: list[dict[str, Any]] = []
     for index, line in enumerate(raw.splitlines(), 1):
@@ -584,6 +604,22 @@ def _validate_run_config_payload(
     ):
         raise ValueError("C8c acceptance receipt does not match the checkpoint chain")
 
+    relocated_identities = config["c8c_relocated_evidence"]
+    if not isinstance(relocated_identities, dict):
+        raise ValueError("C8c relocated evidence is invalid")
+    _exact_fields(
+        relocated_identities,
+        _C8C_RELOCATED_EVIDENCE_FIELDS,
+        "C8c relocated evidence",
+    )
+    relocated_evidence: dict[str, tuple[Path, bytes]] = {}
+    for label, identity in relocated_identities.items():
+        if not isinstance(identity, dict):
+            raise ValueError(f"{label} identity is invalid")
+        relocated_evidence[label] = _read_verified_identity(
+            identity, repository_root, label
+        )
+
     inputs = config["inputs"]
     if not isinstance(inputs, dict) or set(inputs) != _REQUIRED_INPUTS:
         raise ValueError("input set does not match the frozen C8d contract")
@@ -608,7 +644,7 @@ def _validate_run_config_payload(
         expected_count=expected_protected_count,
     )
 
-    _validate_c8c_chain(config, verified)
+    _validate_c8c_chain(config, verified, relocated_evidence)
     return config
 
 
@@ -850,6 +886,18 @@ def load_c9_intake(
         label: _intake_identity_to_run_config(identity, root, label)
         for label, identity in inputs.items()
     }
+    relocated_evidence = intake["c8c_relocated_evidence"]
+    if not isinstance(relocated_evidence, dict):
+        raise ValueError("C8c relocated evidence is invalid")
+    _exact_fields(
+        relocated_evidence,
+        _C8C_RELOCATED_EVIDENCE_FIELDS,
+        "C8c relocated evidence",
+    )
+    converted_relocated_evidence = {
+        label: _intake_dependency_identity_to_run_config(identity, root, label)
+        for label, identity in relocated_evidence.items()
+    }
     protected_state_root = _project_relative_path(
         root, intake["protected_state_root"], "protected state root"
     )
@@ -931,6 +979,7 @@ def load_c9_intake(
         ],
         "inputs": converted_inputs,
         "c8c_evidence_chain": dict(intake["c8c_evidence_chain"]),
+        "c8c_relocated_evidence": converted_relocated_evidence,
     }
     _validate_run_config_payload(
         config, output_root=output, require_run_id_output_name=False
@@ -979,7 +1028,9 @@ def _validate_c8c_checkpoint(config: Mapping[str, Any], repository_root: Path) -
 
 
 def _validate_c8c_chain(
-    config: Mapping[str, Any], verified: Mapping[str, tuple[Path, bytes]]
+    config: Mapping[str, Any],
+    verified: Mapping[str, tuple[Path, bytes]],
+    relocated_evidence: Mapping[str, tuple[Path, bytes]],
 ) -> None:
     chain = config["c8c_evidence_chain"]
     if not isinstance(chain, dict):
@@ -1007,13 +1058,8 @@ def _validate_c8c_chain(
         raise ValueError("C8c product summary schema is invalid")
     if receipt.get("schema_version") != "huiji.c8c-product-parity-receipt/v1":
         raise ValueError("C8c product receipt schema is invalid")
-    manifest_path = verified["c8c_product_manifest"][0]
-    diagnostic_path = manifest_path.with_name("diagnostic.product-parity.py")
-    if diagnostic_path.is_symlink() or not diagnostic_path.resolve(strict=True).is_relative_to(
-        Path(str(config["repository_root"])).resolve(strict=True)
-    ):
-        raise ValueError("C8c product diagnostic path is invalid")
-    if manifest.get("diagnostic_script_sha256") != _sha256(diagnostic_path.read_bytes()):
+    product_diagnostic_raw = relocated_evidence["product_parity_diagnostic"][1]
+    if manifest.get("diagnostic_script_sha256") != _sha256(product_diagnostic_raw):
         raise ValueError("C8c product diagnostic hash mismatch")
     if not (
         manifest.get("run_id") == summary.get("run_id") == receipt.get("run_id")
@@ -1139,6 +1185,19 @@ def _validate_c8c_chain(
     }
     repository_root = Path(str(config["repository_root"])).resolve(strict=True)
     c8c_commit = _validate_c8c_checkpoint(config, repository_root)
+    non_reviewed_witnesses = {
+        0: relocated_evidence["product_parity_d_acceptance"],
+        1: relocated_evidence["product_parity_d_green_authorization"],
+        2: verified["active_media"],
+        3: verified["c8c_taxonomy"],
+        4: verified["candidate_media_v3"],
+        5: relocated_evidence["accepted_baseline"],
+        6: verified["protected_identity_manifest"],
+        7: verified["crawler_pages"],
+        8: verified["crawler_wikitext"],
+        9: verified["crawler_data_pages"],
+        10: verified["crawler_resources_manifest"],
+    }
     witnessed_paths: list[str] = []
     witnessed_path_set: set[str] = set()
     for index, identity in enumerate(manifest_inputs):
@@ -1165,12 +1224,7 @@ def _validate_c8c_chain(
                 ("cat-file", "blob", f"{c8c_commit}:{relative_posix}"),
             )
         else:
-            witness_path = _contained_file(
-                repository_root,
-                repository_root / relative,
-                f"C8c product input {index}",
-            )
-            witness_raw = witness_path.read_bytes()
+            witness_raw = non_reviewed_witnesses[index][1]
         if (
             len(witness_raw) != size
             or _sha256(witness_raw) != digest
@@ -1187,34 +1241,8 @@ def _validate_c8c_chain(
         witnessed_paths.append(relative_posix)
         witnessed_path_set.add(relative_posix)
 
-    c8d_mapping = {
-        2: "active_media",
-        3: "c8c_taxonomy",
-        4: "candidate_media_v3",
-        6: "protected_identity_manifest",
-        7: "crawler_pages",
-        8: "crawler_wikitext",
-        9: "crawler_data_pages",
-        10: "crawler_resources_manifest",
-    }
-    for index, c8d_label in c8d_mapping.items():
-        path, _raw = verified[c8d_label]
-        product_label = _C8C_MANIFEST_LABELS[index]
-        expected = {
-            "identity": path.relative_to(repository_root).as_posix(),
-            "label": product_label,
-            "row_count": (
-                semantic_row_counts[product_label]
-                if product_label in semantic_row_counts
-                else config["inputs"][c8d_label].get("row_count")
-            ),
-            "sha256": config["inputs"][c8d_label]["sha256"],
-            "size": config["inputs"][c8d_label]["size_bytes"],
-        }
-        if manifest_inputs[index] != expected:
-            raise ValueError("C8c product input identity cross-check mismatch")
     baseline = _json_object(
-        (repository_root / witnessed_paths[5]).read_bytes(), "accepted C8c baseline"
+        relocated_evidence["accepted_baseline"][1], "accepted C8c baseline"
     )
     if not (
         witnessed_paths[5]
