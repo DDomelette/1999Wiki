@@ -1,8 +1,9 @@
 {
-  "schema_version": "codex-supervisor/v1",
+  "schema_version": "codex-supervisor/v2",
   "runtime_root": ".codex-supervisor",
   "python_environment": "1999wiki",
   "model": "gpt-5.6-sol",
+  "reasoning_effort": "medium",
   "sandbox": "workspace-write",
   "fast_mode": false,
   "multi_agent": false,
@@ -18,6 +19,11 @@
     "C": {
       "branch": "codex/rag-c-projection",
       "worktree": "../1999Wiki.worktrees/rag-c-projection"
+    },
+    "E": {
+      "branch": "codex/rag-e-story-segment",
+      "worktree": "../1999Wiki.worktrees/rag-e-story-segment",
+      "reasoning_effort": "high"
     }
   }
 }

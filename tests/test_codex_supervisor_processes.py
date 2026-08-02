@@ -88,6 +88,38 @@ def test_process_identity_rejects_command_drift() -> None:
         validate_process_identity(identity, observed)
 
 
+def test_process_and_runner_contracts_accept_e_without_aliasing_c(
+    tmp_path: Path,
+) -> None:
+    identity = ProcessIdentity.from_json(
+        {
+            "pid": 42,
+            "create_time": 100.0,
+            "executable": "codex.exe",
+            "cwd": str(tmp_path / "rag-e-story-segment"),
+            "argv": ["codex.exe", "exec"],
+            "worker": "E",
+            "role": "codex",
+        }
+    )
+    assert identity.worker == "E"
+    assert "rag-e-story-segment" in identity.cwd
+    assert "rag-c-projection" not in identity.cwd
+
+    request = RunnerRequest.from_json(
+        {
+            "worker": "E",
+            "project_root": str(Path.cwd()),
+            "runtime_root": str(tmp_path / "runtime"),
+            "worktree": str(tmp_path / "rag-e-story-segment"),
+            "argv": [sys.executable, str(FAKE_CODEX)],
+            "required_python_environment": None,
+        }
+    )
+    assert request.worker == "E"
+    assert request.worktree.name == "rag-e-story-segment"
+
+
 def test_detached_runner_uses_no_stdin_and_windows_detach_flags() -> None:
     flags = windows_detach_flags()
     assert flags & subprocess.CREATE_NEW_PROCESS_GROUP

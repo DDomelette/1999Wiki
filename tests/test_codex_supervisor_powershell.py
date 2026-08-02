@@ -17,7 +17,8 @@ def test_control_scripts_are_scoped_and_safe(filename: str) -> None:
     lowered = content.lower()
     assert '$ErrorActionPreference = "Stop"' in content
     assert "$PSScriptRoot" in content
-    assert '[ValidateSet("A", "B", "C")]' in content
+    assert "ValidateSet" not in content
+    assert "worker-validate" in content
     assert "taskkill" not in lowered
     assert "danger-full-access" not in lowered
     assert "bypass-approvals" not in lowered
@@ -60,6 +61,10 @@ def test_observer_scripts_are_reopenable_and_safe(filename: str) -> None:
     assert "$PSScriptRoot" in content
     assert "stop-worker" not in lowered
     assert "taskkill" not in lowered
+    if filename == "Watch-Worker.ps1":
+        assert "worker-validate" in content
+    else:
+        assert "worker-list" in content
 
 
 def test_open_windows_script_uses_visible_powershell_processes() -> None:
@@ -68,8 +73,8 @@ def test_open_windows_script_uses_visible_powershell_processes() -> None:
     )
     assert "Start-Process" in content
     assert "-WindowStyle Normal" in content
-    for worker in ("A", "B", "C"):
-        assert f'"{worker}"' in content
+    assert "worker-list" in content
+    assert '@("A", "B", "C")' not in content
 
 
 def test_watch_window_explains_close_is_observer_only() -> None:
@@ -125,3 +130,13 @@ def test_python_resolver_targets_named_conda_environment() -> None:
     assert '"1999wiki"' in content
     assert "conda.exe" in content
     assert "CODEX_SUPERVISOR_PYTHON" in content
+
+
+def test_task_receipt_writer_delegates_to_canonical_python_module() -> None:
+    content = (SCRIPT_ROOT / "Write-TaskReceipt.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "src.codex_supervisor.task_receipts" in content
+    assert "--base-commit" in content
+    assert "--allowed-file" in content
+    assert "Resolve-SupervisorPython" in content

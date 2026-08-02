@@ -180,10 +180,42 @@ def test_dashboard_uses_fixed_worker_order_and_missing_marker(
     lines = [line for line in stdout.splitlines() if line.strip()]
     assert lines[0].startswith("Worker")
     assert "Branch" in lines[0]
-    assert [line.split()[0] for line in lines[1:4]] == ["A", "B", "C"]
+    assert [line.split()[0] for line in lines[1:5]] == ["A", "B", "C", "E"]
     assert "not_started" in lines[1]
     assert "blocked" in lines[2]
     assert "not_started" in lines[3]
+    assert "not_started" in lines[4]
+
+
+def test_public_worker_list_and_validation_are_machine_readable() -> None:
+    exit_code, stdout, _ = invoke_cli(["worker-list", "--json"])
+    assert exit_code == 0
+    assert json.loads(stdout)["workers"] == ["A", "B", "C", "E"]
+
+    exit_code, stdout, _ = invoke_cli(
+        ["worker-validate", "--worker", "E", "--json"]
+    )
+    assert exit_code == 0
+    payload = json.loads(stdout)
+    assert payload["worker"] == "E"
+    assert payload["branch"] == "codex/rag-e-story-segment"
+    assert payload["reasoning_effort"] == "high"
+
+
+def test_running_without_pid_is_not_reported_as_trusted_alive(
+    tmp_path: Path,
+) -> None:
+    project = _project_fixture(tmp_path)
+    store = AtomicStateStore(project / ".codex-supervisor")
+    store.write(WorkerState.initial("E").with_status("running"))
+    exit_code, stdout, _ = invoke_cli(
+        ["status", "--worker", "E"], project_root=project
+    )
+    assert exit_code == 0
+    payload = json.loads(stdout)
+    assert payload["status"] == "running"
+    assert payload["trusted_running"] is False
+    assert payload["process_liveness"] == "untrusted_missing_pid"
 
 
 def test_watch_once_prints_state_and_event_history(tmp_path: Path) -> None:

@@ -4,10 +4,11 @@ import json
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal, Mapping, TypeAlias
+from typing import Any, Literal, Mapping, TypeAlias, cast
 
 
-WorkerName: TypeAlias = Literal["A", "B", "C"]
+SUPPORTED_WORKERS: tuple[str, ...] = ("A", "B", "C", "E")
+WorkerName: TypeAlias = Literal["A", "B", "C", "E"]
 
 
 class WorkerPhase(StrEnum):
@@ -80,6 +81,7 @@ class WorkerConfig:
     branch: str
     worktree: Path
     model: str
+    reasoning_effort: str
     sandbox: str
     fast_mode: bool
     multi_agent: bool
@@ -116,9 +118,7 @@ class WorkerState:
 
     @classmethod
     def initial(cls, worker: WorkerName) -> WorkerState:
-        if worker not in ("A", "B", "C"):
-            raise ValueError(f"unsupported worker name: {worker}")
-        return cls(worker=worker)
+        return cls(worker=validate_worker_name(worker))
 
     def with_status(self, status: str | WorkerStatus) -> WorkerState:
         value = status.value if isinstance(status, WorkerStatus) else str(status)
@@ -184,32 +184,43 @@ def load_supervisor_config(project_root: Path) -> SupervisorConfig:
     root = project_root.resolve()
     path = root / "config" / "codex-supervisor.workers.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != "codex-supervisor/v1":
+    if payload.get("schema_version") != "codex-supervisor/v2":
         raise ValueError("unsupported supervisor config schema")
 
     model = str(payload["model"])
+    default_reasoning_effort = _reasoning_effort(
+        payload.get("reasoning_effort", "medium")
+    )
     sandbox = str(payload["sandbox"])
     fast_mode = bool(payload["fast_mode"])
     multi_agent = bool(payload["multi_agent"])
     workers: dict[WorkerName, WorkerConfig] = {}
     for raw_name, raw_worker in payload["workers"].items():
-        if raw_name not in ("A", "B", "C"):
-            raise ValueError(f"unsupported worker name: {raw_name}")
-        name: WorkerName = raw_name
+        name = validate_worker_name(raw_name)
         worktree = (root / str(raw_worker["worktree"])).resolve()
         workers[name] = WorkerConfig(
             name=name,
             branch=str(raw_worker["branch"]),
             worktree=worktree,
             model=model,
+            reasoning_effort=_reasoning_effort(
+                raw_worker.get("reasoning_effort", default_reasoning_effort)
+            ),
             sandbox=sandbox,
             fast_mode=fast_mode,
             multi_agent=multi_agent,
             allow_subagents=False,
         )
 
-    if set(workers) != {"A", "B", "C"}:
-        raise ValueError("supervisor config must define workers A, B, and C")
+    if tuple(sorted(workers)) != tuple(sorted(SUPPORTED_WORKERS)):
+        raise ValueError(
+            "supervisor config must define exactly "
+            + ", ".join(SUPPORTED_WORKERS)
+        )
+    if len({item.branch for item in workers.values()}) != len(workers):
+        raise ValueError("supervised worker branches must be distinct")
+    if len({item.worktree for item in workers.values()}) != len(workers):
+        raise ValueError("supervised worker worktrees must be distinct")
     if fast_mode or multi_agent:
         raise ValueError("supervised workers require standard speed and two layers")
     return SupervisorConfig(
@@ -229,6 +240,8 @@ def build_codex_base_args(
         "exec",
         "-m",
         config.model,
+        "-c",
+        f'model_reasoning_effort="{config.reasoning_effort}"',
         "--disable",
         "fast_mode",
         "--disable",
@@ -244,6 +257,36 @@ def build_codex_base_args(
     if config.allow_subagents:
         raise ValueError("supervised workers may not create subagents")
     return args
+
+
+def validate_worker_name(value: object) -> WorkerName:
+    name = str(value)
+    if name not in SUPPORTED_WORKERS:
+        raise ValueError(f"unsupported worker name: {name}")
+    return cast(WorkerName, name)
+
+
+def argparse_worker_name(value: str) -> WorkerName:
+    try:
+        return validate_worker_name(value)
+    except ValueError as error:
+        import argparse
+
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def supported_workers_json() -> dict[str, object]:
+    return {
+        "schema_version": "codex-supervisor-workers/v1",
+        "workers": list(SUPPORTED_WORKERS),
+    }
+
+
+def _reasoning_effort(value: object) -> str:
+    effort = str(value)
+    if effort not in {"low", "medium", "high", "xhigh", "max", "ultra"}:
+        raise ValueError(f"unsupported reasoning effort: {effort}")
+    return effort
 
 
 def _optional_str(value: Any) -> str | None:

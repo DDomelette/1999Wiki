@@ -10,15 +10,21 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
 
+import psutil
+
 from src.codex_supervisor.contracts import (
+    SUPPORTED_WORKERS,
     SupervisorConfig,
     WorkerConfig,
     WorkerName,
+    argparse_worker_name,
     build_codex_base_args,
     load_supervisor_config,
+    supported_workers_json,
 )
 from src.codex_supervisor.processes import (
     ProcessIdentity,
+    inspect_owned_process,
     stop_owned_worker,
 )
 from src.codex_supervisor.runner import (
@@ -54,6 +60,8 @@ def build_resume_args(
         "resume",
         "-m",
         config.model,
+        "-c",
+        f'model_reasoning_effort="{config.reasoning_effort}"',
         "--disable",
         "fast_mode",
         "--disable",
@@ -86,6 +94,28 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
     config = load_supervisor_config(root)
     store = AtomicStateStore(config.runtime_root)
     worker: WorkerName | None = getattr(args, "worker", None)
+    if args.command == "worker-list":
+        payload = supported_workers_json()
+        payload["config_schema_version"] = config.schema_version
+        _print_json(payload)
+        return 0
+    if args.command == "worker-validate":
+        assert worker is not None
+        worker_config = config.workers[worker]
+        _print_json(
+            {
+                "worker": worker,
+                "branch": worker_config.branch,
+                "worktree": str(worker_config.worktree),
+                "model": worker_config.model,
+                "reasoning_effort": worker_config.reasoning_effort,
+                "sandbox": worker_config.sandbox,
+                "fast_mode": worker_config.fast_mode,
+                "multi_agent": worker_config.multi_agent,
+                "allow_subagents": worker_config.allow_subagents,
+            }
+        )
+        return 0
     if args.command == "start":
         assert worker is not None
         prompt = _read_approved_task(
@@ -171,11 +201,11 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         return 0
     if args.command == "status":
         assert worker is not None
-        _print_json(store.read(worker).to_public_json())
+        _print_json(_public_state(store, worker))
         return 0
     if args.command == "inspect":
         assert worker is not None
-        state = store.read(worker).to_public_json()
+        state = _public_state(store, worker)
         session_path = store.session_path(worker)
         session = (
             json.loads(session_path.read_text(encoding="utf-8"))
@@ -213,20 +243,27 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex-supervisor")
     commands = parser.add_subparsers(dest="command", required=True)
+    worker_list = commands.add_parser("worker-list")
+    worker_list.add_argument("--json", action="store_true")
+    worker_validate = commands.add_parser("worker-validate")
+    worker_validate.add_argument(
+        "--worker", required=True, type=argparse_worker_name
+    )
+    worker_validate.add_argument("--json", action="store_true")
     for command in ("start", "resume"):
         child = commands.add_parser(command)
         child.add_argument(
-            "--worker", required=True, choices=("A", "B", "C")
+            "--worker", required=True, type=argparse_worker_name
         )
         child.add_argument("--task-file", required=True)
     for command in ("stop", "status", "inspect", "accept"):
         child = commands.add_parser(command)
         child.add_argument(
-            "--worker", required=True, choices=("A", "B", "C")
+            "--worker", required=True, type=argparse_worker_name
         )
     watch = commands.add_parser("watch")
     watch.add_argument(
-        "--worker", required=True, choices=("A", "B", "C")
+        "--worker", required=True, type=argparse_worker_name
     )
     watch.add_argument("--tail", type=int, default=50)
     watch.add_argument("--once", action="store_true")
@@ -367,7 +404,7 @@ def _watch_worker(
     first = True
     while True:
         try:
-            state = store.read(worker).to_public_json()
+            state = _public_state(store, worker)
         except FileNotFoundError:
             state = {"worker": worker, "status": "not_started"}
         if first:
@@ -404,9 +441,9 @@ def _dashboard(
             "Worker Branch                 Phase           Status"
             "                    Tests             Tokens  Cached"
         )
-        for worker in ("A", "B", "C"):
+        for worker in SUPPORTED_WORKERS:
             try:
-                state = store.read(worker).to_public_json()
+                state = _public_state(store, worker)
             except FileNotFoundError:
                 state = {
                     "worker": worker,
@@ -439,3 +476,38 @@ def _dashboard(
 
 def _print_json(value: object) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def _public_state(
+    store: AtomicStateStore, worker: WorkerName
+) -> dict[str, object]:
+    state = store.read(worker)
+    public = state.to_public_json()
+    public["trusted_running"] = False
+    if state.status != "running":
+        public["process_liveness"] = "not_running"
+        return public
+    if state.pid is None or state.process_create_time is None:
+        public["process_liveness"] = "untrusted_missing_pid"
+        return public
+    session_path = store.session_path(worker)
+    if not session_path.is_file():
+        public["process_liveness"] = "untrusted_missing_session"
+        return public
+    try:
+        session = json.loads(session_path.read_text(encoding="utf-8"))
+        identity = ProcessIdentity.from_json(session["codex"])
+        if identity.worker != worker or identity.pid != state.pid:
+            raise RuntimeError("state/session worker or PID mismatch")
+        if abs(identity.create_time - state.process_create_time) > 0.01:
+            raise RuntimeError("state/session create time mismatch")
+        inspect_owned_process(identity)
+    except psutil.NoSuchProcess:
+        public["process_liveness"] = "untrusted_process_missing"
+        return public
+    except (KeyError, TypeError, ValueError, RuntimeError, json.JSONDecodeError):
+        public["process_liveness"] = "untrusted_identity_mismatch"
+        return public
+    public["trusted_running"] = True
+    public["process_liveness"] = "alive_identity_verified"
+    return public

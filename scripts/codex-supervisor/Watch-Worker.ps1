@@ -1,6 +1,5 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("A", "B", "C")]
     [string]$Worker,
     [switch]$Once
 )
@@ -16,5 +15,7 @@ if ($Once) {
 }
 . (Join-Path $PSScriptRoot "Resolve-SupervisorPython.ps1")
 $Python = Resolve-SupervisorPython
+& $Python $Supervisor worker-validate --worker $Worker --json | Out-Null
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $Python @Arguments
 exit $LASTEXITCODE

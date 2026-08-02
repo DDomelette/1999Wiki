@@ -12,5 +12,7 @@ if (-not $Once) {
 }
 . (Join-Path $PSScriptRoot "Resolve-SupervisorPython.ps1")
 $Python = Resolve-SupervisorPython
+& $Python $Supervisor worker-list --json | Out-Null
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $Python @Arguments
 exit $LASTEXITCODE

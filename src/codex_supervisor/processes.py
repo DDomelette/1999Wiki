@@ -8,7 +8,7 @@ from typing import Any, Literal, Mapping
 
 import psutil
 
-from src.codex_supervisor.contracts import WorkerName
+from src.codex_supervisor.contracts import WorkerName, validate_worker_name
 
 
 @dataclass(frozen=True)
@@ -49,8 +49,7 @@ class ProcessIdentity:
     def from_json(cls, value: Mapping[str, Any]) -> ProcessIdentity:
         worker = str(value["worker"])
         role = str(value["role"])
-        if worker not in ("A", "B", "C"):
-            raise ValueError(f"unsupported worker name: {worker}")
+        validated_worker = validate_worker_name(worker)
         if role not in ("runner", "codex"):
             raise ValueError(f"unsupported process role: {role}")
         return cls(
@@ -59,7 +58,7 @@ class ProcessIdentity:
             executable=str(value["executable"]),
             cwd=str(value["cwd"]),
             argv=tuple(str(item) for item in value["argv"]),
-            worker=worker,  # type: ignore[arg-type]
+            worker=validated_worker,
             role=role,  # type: ignore[arg-type]
         )
 

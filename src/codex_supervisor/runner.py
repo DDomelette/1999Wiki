@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -12,7 +13,11 @@ from typing import Any, Mapping
 
 import psutil
 
-from src.codex_supervisor.contracts import WorkerName, WorkerState
+from src.codex_supervisor.contracts import (
+    WorkerName,
+    WorkerState,
+    validate_worker_name,
+)
 from src.codex_supervisor.events import apply_event
 from src.codex_supervisor.processes import (
     ProcessIdentity,
@@ -45,10 +50,9 @@ class RunnerRequest:
     @classmethod
     def from_json(cls, value: Mapping[str, Any]) -> RunnerRequest:
         worker = str(value["worker"])
-        if worker not in ("A", "B", "C"):
-            raise ValueError(f"unsupported worker name: {worker}")
+        validated_worker = validate_worker_name(worker)
         return cls(
-            worker=worker,  # type: ignore[arg-type]
+            worker=validated_worker,
             project_root=Path(str(value["project_root"])).resolve(),
             runtime_root=Path(str(value["runtime_root"])).resolve(),
             worktree=Path(str(value["worktree"])).resolve(),
@@ -140,6 +144,15 @@ def run_worker(request: RunnerRequest) -> int:
                 worker=request.worker,
                 role="codex",
             )
+            state = replace(
+                state,
+                pid=child_identity.pid,
+                process_create_time=child_identity.create_time,
+                command_fingerprint=_command_fingerprint(
+                    child_identity.argv
+                ),
+            )
+            store.write(state)
             _write_session(
                 store,
                 request.worker,
@@ -251,6 +264,13 @@ def _worker_environment(required: str | None) -> dict[str, str]:
     environment["CONDA_PREFIX"] = str(prefix)
     environment["CONDA_DEFAULT_ENV"] = required
     return environment
+
+
+def _command_fingerprint(argv: tuple[str, ...]) -> str:
+    raw = json.dumps(
+        list(argv), ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _capture_with_retry(
