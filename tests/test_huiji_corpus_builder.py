@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import sqlite3
 from dataclasses import replace
@@ -14,6 +15,7 @@ from src.huiji_rag.build.contracts import (
     CorpusBuildRequest,
     CorpusCapacityPlanningEvidence,
     canonical_json_bytes,
+    validate_media_v3_row,
 )
 from src.huiji_rag.build.orchestrator import HuijiCorpusBuilder
 from src.huiji_rag.build.media_download_plan import MEDIA_SELECTION_POLICY_SHA256
@@ -22,7 +24,8 @@ from src.huiji_rag.build.projection import (
     project_crawler_semantics,
     validate_corpus_projection,
 )
-from src.huiji_rag.minio_strict import ObjectInventory
+from src.huiji_rag.media import build_media_object_key
+from src.huiji_rag.minio_strict import InventoryObject, ObjectInventory
 import src.huiji_rag.build.orchestrator as orchestrator_module
 
 
@@ -52,9 +55,53 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     )
 
 
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _source_ref_identity(source_ref: dict[str, Any]) -> tuple[str, str, str, str]:
+    canonical_fields = {
+        "source_kind",
+        "source_title",
+        "source_row_id",
+        "source_content_sha256",
+    }
+    legacy_data_fields = {"kind", "title", "json_path", "content_sha256", "revid"}
+    if canonical_fields <= source_ref.keys():
+        identity = (
+            source_ref["source_kind"],
+            source_ref["source_title"],
+            source_ref["source_row_id"],
+            source_ref["source_content_sha256"],
+        )
+    else:
+        assert legacy_data_fields <= source_ref.keys()
+        assert isinstance(source_ref["revid"], int) and source_ref["revid"] > 0
+        identity = (
+            source_ref["kind"],
+            source_ref["title"],
+            source_ref["json_path"],
+            source_ref["content_sha256"],
+        )
+    assert all(isinstance(value, str) and value for value in identity[:3])
+    assert re.fullmatch(r"[0-9a-f]{64}", identity[3])
+    return identity
+
+
 def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     project = tmp_path / "project"
     raw = project / "data/huiji/res1999"
+    media_filename = "Deterministic Fixture.png"
+    media_bytes = b"tiny synthetic deterministic media"
+    media_sha1 = hashlib.sha1(media_bytes).hexdigest()
+    media_sha256 = hashlib.sha256(media_bytes).hexdigest()
+    media_relpath = Path("assets/files") / media_sha1 / media_filename
+    media_path = raw / media_relpath
+    media_path.parent.mkdir(parents=True, exist_ok=True)
+    media_path.write_bytes(media_bytes)
+    media_object_key = build_media_object_key(
+        "reverse1999", "image", media_sha1, media_filename
+    )
     content = json.dumps(
         {"id": 41, "name": "Sample Item", "description": "Source backed text."},
         ensure_ascii=False,
@@ -68,7 +115,14 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "content": content,
         "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
     }
-    page_content = "== Overview ==\nSource-backed page text."
+    page_content = (
+        "== First ==\n"
+        "First source-backed page text.\n"
+        f"[[File:{media_filename}|First fixture caption]]\n"
+        "== Second ==\n"
+        "Second source-backed page text.\n"
+        f"[[File:{media_filename}|Second fixture caption]]"
+    )
     page_content_sha256 = hashlib.sha256(page_content.encode("utf-8")).hexdigest()
     _write_jsonl(
         raw / "pages.jsonl",
@@ -99,7 +153,36 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         ],
     )
     _write_jsonl(raw / "data_pages.jsonl", [data_row])
-    _write_jsonl(raw / "resources_manifest.jsonl", [])
+    _write_jsonl(
+        raw / "resources_manifest.jsonl",
+        [
+            {
+                "site": "res1999",
+                "source": "huiji_file_namespace",
+                "title": f"文件:{media_filename}",
+                "name": media_filename,
+                "filename": media_filename,
+                "url": (
+                    "https://huiji-public.huijistatic.com/res1999/uploads/"
+                    "fixture/Deterministic_Fixture.png"
+                ),
+                "descriptionurl": (
+                    "https://res1999.huijiwiki.com/wiki/"
+                    "File:Deterministic_Fixture.png"
+                ),
+                "mime": "image/png",
+                "size": len(media_bytes),
+                "width": 1,
+                "height": 1,
+                "sha1": media_sha1,
+                "sha256": media_sha256,
+                "content_sha256": media_sha256,
+                "local_relpath": media_relpath.as_posix(),
+                "object_key": media_object_key,
+                "download_status": "downloaded",
+            }
+        ],
+    )
     with sqlite3.connect(raw / "crawl_state.sqlite") as connection:
         connection.execute("CREATE TABLE crawl_runs (id INTEGER PRIMARY KEY)")
 
@@ -223,7 +306,16 @@ def _fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     inventory_payload = ObjectInventory.create(
             "reverse1999-assets",
             "reverse1999",
-            (),
+            (
+                InventoryObject(
+                    object_key=media_object_key,
+                    version_id=None,
+                    etag="fixture-etag",
+                    sha1=media_sha1,
+                    sha256=media_sha256,
+                    size=len(media_bytes),
+                ),
+            ),
             captured_at_utc="2026-07-21T00:00:00Z",
             bucket_policy_summary="absent",
         ).to_json()
@@ -297,7 +389,7 @@ def _wrap(
 def test_full_builder_runs_fixed_stages_and_two_roots_have_equal_semantic_hashes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _project, request = _fixture(tmp_path, monkeypatch)
+    project, request = _fixture(tmp_path, monkeypatch)
     events: list[str] = []
     _wrap(monkeypatch, orchestrator_module, "capture_corpus_source_inventory", events, "source")
     _wrap(monkeypatch, orchestrator_module, "validate_recovery_gate", events, "recovery")
@@ -349,6 +441,136 @@ def test_full_builder_runs_fixed_stages_and_two_roots_have_equal_semantic_hashes
         "semantic_artifact_sha256"
     ]
     assert first.build_root != second.build_root
+
+    first_root = Path(first.build_root)
+    second_root = Path(second.build_root)
+    first_parents = _read_jsonl(first_root / "parent_blocks.jsonl")
+    second_parents = _read_jsonl(second_root / "parent_blocks.jsonl")
+    first_children = _read_jsonl(first_root / "child_blocks.jsonl")
+    second_children = _read_jsonl(second_root / "child_blocks.jsonl")
+    first_exclusions = _read_jsonl(first_root / "excluded_entities.jsonl")
+    second_exclusions = _read_jsonl(second_root / "excluded_entities.jsonl")
+    first_media = _read_jsonl(first_root / "runtime/media_assets.v3.jsonl")
+    second_media = _read_jsonl(second_root / "runtime/media_assets.v3.jsonl")
+
+    for media_rows in (first_media, second_media):
+        assert len(media_rows) >= 2
+        resource_counts: dict[str, int] = {}
+        for row in media_rows:
+            resource_id = row["resource_id"]
+            resource_counts[resource_id] = resource_counts.get(resource_id, 0) + 1
+        assert any(count >= 2 for count in resource_counts.values())
+        assert len({row["binding_id"] for row in media_rows}) == len(media_rows)
+
+    assert [row["parent_id"] for row in first_parents] == [
+        row["parent_id"] for row in second_parents
+    ]
+    assert [row["child_id"] for row in first_children] == [
+        row["child_id"] for row in second_children
+    ]
+    first_exclusion_evidence = [
+        (row["source_identity"], canonical_json_bytes(row, trailing_newline=False))
+        for row in first_exclusions
+    ]
+    second_exclusion_evidence = [
+        (row["source_identity"], canonical_json_bytes(row, trailing_newline=False))
+        for row in second_exclusions
+    ]
+    assert first_exclusion_evidence == second_exclusion_evidence
+
+    first_media_identities = [
+        (row["resource_id"], row["binding_id"]) for row in first_media
+    ]
+    second_media_identities = [
+        (row["resource_id"], row["binding_id"]) for row in second_media
+    ]
+    assert first_media_identities == second_media_identities
+    for row in (*first_media, *second_media):
+        assert validate_media_v3_row(dict(row)) == row
+
+    for parents, children, media_rows in (
+        (first_parents, first_children, first_media),
+        (second_parents, second_children, second_media),
+    ):
+        parent_by_id = {row["parent_id"]: row for row in parents}
+        child_by_id = {row["child_id"]: row for row in children}
+        assert len(parent_by_id) == len(parents)
+        assert len(child_by_id) == len(children)
+        for child in children:
+            assert child["parent_id"] in parent_by_id
+            assert child["child_id"] in parent_by_id[child["parent_id"]]["child_ids"]
+        for media_row in media_rows:
+            child = child_by_id[media_row["child_id"]]
+            assert media_row["parent_id"] in parent_by_id
+            assert media_row["parent_id"] == child["parent_id"]
+            assert media_row["owner_entity_id"] == child["owner_entity_id"]
+            assert media_row["owner_page_id"] == child["owner_page_id"]
+
+    def source_ref_sequence(
+        parents: list[dict[str, Any]], children: list[dict[str, Any]]
+    ) -> list[tuple[str, str, tuple[tuple[str, str, str, str], ...]]]:
+        assert all(row["source_refs"] for row in (*parents, *children))
+        return [
+            (
+                record_kind,
+                row[identity_field],
+                tuple(
+                    _source_ref_identity(source_ref)
+                    for source_ref in row["source_refs"]
+                ),
+            )
+            for record_kind, identity_field, rows in (
+                ("parent", "parent_id", parents),
+                ("child", "child_id", children),
+            )
+            for row in rows
+        ]
+
+    assert source_ref_sequence(first_parents, first_children) == source_ref_sequence(
+        second_parents, second_children
+    )
+
+    first_run = project / "eval/runs/run-a"
+    second_run = project / "eval/runs/run-b"
+    planning_artifacts = (
+        "referenced_media_plan.v1.json",
+        "referenced_media_allowlist.v1.jsonl",
+        "media_capacity_report.v1.json",
+    )
+    for filename in planning_artifacts:
+        assert (first_run / filename).read_bytes() == (
+            second_run / filename
+        ).read_bytes()
+    first_allowlist = _read_jsonl(
+        first_run / "referenced_media_allowlist.v1.jsonl"
+    )
+    second_allowlist = _read_jsonl(
+        second_run / "referenced_media_allowlist.v1.jsonl"
+    )
+    assert len(first_allowlist) == len(second_allowlist) == 1
+    for allowlist, media_rows in (
+        (first_allowlist, first_media),
+        (second_allowlist, second_media),
+    ):
+        assert allowlist[0]["resource_id"] == media_rows[0]["resource_id"]
+        selected_binding_ids = allowlist[0]["binding_ids"]
+        assert len(selected_binding_ids) >= 2
+        assert selected_binding_ids == sorted(selected_binding_ids)
+        assert [
+            row["binding_id"] for row in allowlist[0]["bindings"]
+        ] == selected_binding_ids
+        emitted_binding_ids = [row["binding_id"] for row in media_rows]
+        assert all(binding_id in emitted_binding_ids for binding_id in selected_binding_ids)
+    first_plan = json.loads(
+        (first_run / "referenced_media_plan.v1.json").read_text(encoding="utf-8")
+    )
+    second_plan = json.loads(
+        (second_run / "referenced_media_plan.v1.json").read_text(encoding="utf-8")
+    )
+    assert re.fullmatch(r"[0-9a-f]{64}", first_plan["projection_fingerprint"])
+    assert first_plan["projection_fingerprint"] == second_plan["projection_fingerprint"]
+    assert first_plan["resource_count"] == second_plan["resource_count"] == 1
+    assert first_plan["binding_count"] == second_plan["binding_count"] == 2
 
 
 def test_builder_composes_page_rows_and_source_backed_new_record_links(
