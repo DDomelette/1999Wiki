@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from uuid import UUID
+
 import pytest
+from fastapi.testclient import TestClient
 
 from backend.schemas import AskResponse, normalize_route, sanitize_transport_value
 from src.rag.chain import RAGChain
+from src.rag.conversation import ConversationMemoryStore
 from src.rag.direct_conversation import (
     answer_direct_question,
     build_direct_response_packet,
     classify_direct_question,
 )
 from src.rag.serializers import response_packet_to_public_dict
+
+
+CONVERSATION_ID = "00000000-0000-4000-8000-000000000204"
 
 
 @pytest.mark.parametrize(
@@ -187,3 +196,106 @@ def test_transport_sanitizer_keeps_direct_answer_timing() -> None:
     })
 
     assert sanitized == {"stage_ms": {"answer.direct": 1.25}}
+
+
+def _parse_sse(text: str) -> list[tuple[str, dict]]:
+    events: list[tuple[str, dict]] = []
+    for block in text.split("\n\n"):
+        if not block.strip():
+            continue
+        event = "message"
+        data: dict = {}
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                event = line[7:]
+            elif line.startswith("data: "):
+                data = json.loads(line[6:])
+        events.append((event, data))
+    return events
+
+
+@pytest.fixture
+def direct_api_client(monkeypatch):
+    from backend import main as main_mod
+
+    previous_state = main_mod._state
+    chain = RAGChain.__new__(RAGChain)
+    chain._execution_service = _ExplodingExecutionService()
+    store = ConversationMemoryStore()
+    main_mod._state = {
+        "vs": None,
+        "retriever": None,
+        "chain": chain,
+        "memory": store,
+        "loaded": True,
+        "provenance_checked": True,
+        "provenance": None,
+    }
+    monkeypatch.setattr(main_mod, "_ensure_loaded", lambda: None)
+    try:
+        with TestClient(main_mod.app) as client:
+            yield client, store
+    finally:
+        main_mod._state = previous_state
+
+
+def test_direct_question_sequence_is_distinct_and_not_committed(direct_api_client) -> None:
+    client, store = direct_api_client
+    answers: list[str] = []
+
+    for question in ("午饭吃了吗", "你能回答什么", "你是什么", "我怎么使用"):
+        response = client.post("/ask", json={
+            "question": question,
+            "conversation_id": CONVERSATION_ID,
+        })
+        assert response.status_code == 200
+        payload = response.json()
+        answers.append(payload["answer"])
+        assert "知识库中暂时没有找到足够资料" not in payload["answer"]
+        assert payload["grounding_mode"] == "none"
+        assert payload["sources"] == []
+        assert payload["failure_actions"] == []
+        assert payload["omitted_actions"] == []
+        assert payload["route"]["route_reason"] == "direct_assistant_response"
+        assert "answer.direct" in payload["timing"]["stage_ms"]
+
+    assert len(set(answers)) == 4
+
+    async def assert_memory_is_empty() -> None:
+        lease = await store.acquire(UUID(CONVERSATION_ID))
+        try:
+            assert lease.status == "new"
+            assert lease.projection.turns == ()
+        finally:
+            await store.release(lease)
+
+    asyncio.run(assert_memory_is_empty())
+
+
+def test_direct_sse_matches_sync_semantics_without_recovery_actions(
+    direct_api_client,
+) -> None:
+    client, _store = direct_api_client
+    with client.stream(
+        "POST",
+        "/ask/stream",
+        json={
+            "question": "午饭吃了吗",
+            "conversation_id": CONVERSATION_ID,
+        },
+    ) as response:
+        assert response.status_code == 200
+        events = _parse_sse(response.read().decode("utf-8"))
+
+    sources = next(data for event, data in events if event == "sources")
+    done = next(data for event, data in events if event == "done")
+    tokens = [data["token"] for event, data in events if event == "token"]
+
+    assert "".join(tokens) == done["answer"]
+    assert sources["grounding_mode"] == done["grounding_mode"] == "none"
+    assert sources["failure_actions"] == done["failure_actions"] == []
+    assert sources["omitted_actions"] == done["omitted_actions"] == []
+    assert done["route"]["intent"] == "smalltalk"
+    assert done["route"]["requested_intents"] == ["smalltalk"]
+    assert done["route"]["route_reason"] == "direct_assistant_response"
+    assert "answer.direct" in done["timing"]["stage_ms"]
