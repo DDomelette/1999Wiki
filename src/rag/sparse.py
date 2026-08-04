@@ -42,6 +42,13 @@ _NEW_SCHEMA_RECORD_KINDS = {
     "huiji.media-binding-bm25/v4": "media_binding",
 }
 _LEGACY_ANALYZER_PAYLOAD = {"schema_version": "legacy-regex/v1"}
+_ANALYZER_PROBES = (
+    "槲寄生的基础资料",
+    "十四行诗的技能是什么",
+    "Data:Story/304502",
+    "Skill-30410111",
+    "Banner_今夜星光灿烂.png",
+)
 
 
 def canonical_child_corpus_sha256(rows: Iterable[Mapping[str, object]]) -> str:
@@ -80,6 +87,20 @@ class TextAnalyzer(Protocol):
     identity: object
 
     def analyze(self, text: str) -> list[str]: ...
+
+
+def analyzer_probe_sha256(analyzer: TextAnalyzer) -> str:
+    token_arrays = [analyzer.analyze(probe) for probe in _ANALYZER_PROBES]
+    payload = (
+        json.dumps(
+            token_arrays,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 @dataclass(frozen=True)

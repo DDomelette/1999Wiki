@@ -13,7 +13,11 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from src.huiji_rag.io import CorpusCandidatePaths, corpus_candidate_paths
 from src.rag.chinese_analyzer import AnalyzerIdentity, ChineseBM25Analyzer
-from src.rag.sparse import LocalBM25SparseIndex, canonical_child_corpus_sha256
+from src.rag.sparse import (
+    LocalBM25SparseIndex,
+    analyzer_probe_sha256 as _analyzer_probe_sha256,
+    canonical_child_corpus_sha256,
+)
 
 from .contracts import (
     CHILD_BLOCK_SCHEMA_VERSION,
@@ -37,13 +41,6 @@ from .projection import CorpusProjection
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _SELF_MANIFEST_PATH = "build_manifest.json"
-_BM25_PROBES = (
-    "槲寄生的基础资料",
-    "十四行诗的技能是什么",
-    "Data:Story/304502",
-    "Skill-30410111",
-    "Banner_今夜星光灿烂.png",
-)
 
 
 def _default_bm25_analyzer_identity() -> AnalyzerIdentity:
@@ -761,11 +758,6 @@ def _validated_bm25_snapshot(
         bm25_payload=MappingProxyType({"k1": index.k1, "b": index.b}),
         analyzer_probe_sha256=_analyzer_probe_sha256(analyzer),
     )
-
-
-def _analyzer_probe_sha256(analyzer: ChineseBM25Analyzer) -> str:
-    token_arrays = [analyzer.analyze(probe) for probe in _BM25_PROBES]
-    return _sha256(canonical_json_bytes(token_arrays))
 
 
 def _voice_diagnostics(
