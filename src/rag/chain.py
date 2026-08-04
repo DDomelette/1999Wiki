@@ -21,6 +21,7 @@ from src.rag.conversation import (
     history_messages,
 )
 from src.rag.entity_lexicon import EntityLexicon
+from src.rag.direct_conversation import build_direct_response_packet
 from src.rag.execution import (
     AskExecutionInput,
     RAGExecutionService,
@@ -141,6 +142,18 @@ class RAGChain:
         memory_turns_used: int = 0,
         trace: Any = None,
     ):
+        direct_packet = build_direct_response_packet(
+            question,
+            category=category,
+            route_options=route_options,
+            action_payload=action_payload,
+            memory_status=memory_status,
+            memory_turns_used=memory_turns_used,
+            trace=trace,
+        )
+        if direct_packet is not None:
+            return direct_packet
+
         request = AskExecutionInput(
             question=question,
             category=category,

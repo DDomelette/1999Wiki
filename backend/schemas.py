@@ -88,6 +88,7 @@ class RouteInfo(BaseModel):
         "retrieval_failed",
         "explicit_recovery_action",
         "authorized_empty_fallback",
+        "direct_assistant_response",
     ] = ""
     retrieval_debug: Optional[RetrievalDebug] = None
 
@@ -362,12 +363,13 @@ _ALLOWED_STAGE_NAMES = frozenset({
     "media.attach",
     "source_map.build",
     "answer.llm",
+    "answer.direct",
     "citation.validate",
     "citation.repair",
     "response.serialize",
 })
 _DROP = object()
-_SAFE_ROUTE_INTENTS = frozenset(VALID_INTENTS)
+_SAFE_ROUTE_INTENTS = frozenset((*VALID_INTENTS, "smalltalk"))
 _ACRONYM_KEY_BOUNDARY_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
 _CAMEL_KEY_BOUNDARY_RE = re.compile(r"([a-z0-9])([A-Z])")
 _KEY_DELIMITER_RE = re.compile(r"[^A-Za-z0-9]+")
