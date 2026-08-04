@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import pytest
 
+from backend.schemas import AskResponse, normalize_route, sanitize_transport_value
 from src.rag.chain import RAGChain
 from src.rag.direct_conversation import (
     answer_direct_question,
     build_direct_response_packet,
     classify_direct_question,
 )
+from src.rag.serializers import response_packet_to_public_dict
 
 
 @pytest.mark.parametrize(
@@ -150,3 +152,38 @@ def test_rag_chain_execute_preserves_normal_question_path() -> None:
 
     assert result == "normal-result"
     assert service.requests[0].question == "介绍一下玛蒂尔达"
+
+
+def test_direct_packet_validates_as_public_response() -> None:
+    packet = build_direct_response_packet("我怎么使用")
+
+    assert packet is not None
+    response = AskResponse.model_validate(response_packet_to_public_dict(packet))
+    assert response.route is not None
+    assert response.route.route_reason == "direct_assistant_response"
+    assert response.failure_actions == []
+
+
+def test_route_normalization_preserves_direct_smalltalk_metadata() -> None:
+    packet = build_direct_response_packet("午饭吃了吗")
+
+    assert packet is not None
+    public = response_packet_to_public_dict(packet)
+    route = normalize_route(public["route"])
+
+    assert route is not None
+    assert route["intent"] == "smalltalk"
+    assert route["requested_intents"] == ["smalltalk"]
+    assert route["semantic_intents"] == ["smalltalk"]
+    assert route["route_reason"] == "direct_assistant_response"
+
+
+def test_transport_sanitizer_keeps_direct_answer_timing() -> None:
+    sanitized = sanitize_transport_value({
+        "stage_ms": {
+            "answer.direct": 1.25,
+            "unknown.stage": 2.5,
+        },
+    })
+
+    assert sanitized == {"stage_ms": {"answer.direct": 1.25}}
