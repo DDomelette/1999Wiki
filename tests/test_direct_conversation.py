@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.rag.chain import RAGChain
 from src.rag.direct_conversation import (
     answer_direct_question,
     build_direct_response_packet,
@@ -114,3 +115,38 @@ def test_direct_packet_normalizes_invalid_memory_diagnostics() -> None:
 
 def test_non_direct_question_returns_no_packet() -> None:
     assert build_direct_response_packet("介绍一下玛蒂尔达") is None
+
+
+class _ExplodingExecutionService:
+    def execute(self, *args, **kwargs):
+        raise AssertionError("normal RAG execution must not run")
+
+
+def test_rag_chain_execute_bypasses_normal_pipeline_for_direct_question() -> None:
+    chain = RAGChain.__new__(RAGChain)
+    chain._execution_service = _ExplodingExecutionService()
+
+    packet = chain.execute("我怎么使用", memory_status="new")
+
+    assert "直接输入" in packet.answer
+    assert packet.turn_outcome == "not_committable"
+
+
+class _RecordingExecutionService:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def execute(self, request, conversation, trace):
+        self.requests.append(request)
+        return "normal-result"
+
+
+def test_rag_chain_execute_preserves_normal_question_path() -> None:
+    service = _RecordingExecutionService()
+    chain = RAGChain.__new__(RAGChain)
+    chain._execution_service = service
+
+    result = chain.execute("介绍一下玛蒂尔达")
+
+    assert result == "normal-result"
+    assert service.requests[0].question == "介绍一下玛蒂尔达"
