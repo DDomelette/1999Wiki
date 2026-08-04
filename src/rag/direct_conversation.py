@@ -48,6 +48,12 @@ _USAGE_QUESTIONS = frozenset({
     "如何提问",
     "怎么提问",
 })
+_AMBIGUOUS_USAGE_QUESTIONS = frozenset({
+    "怎么使用",
+    "如何使用",
+    "怎么用",
+    "使用方法",
+})
 
 _GREETING_QUESTIONS = frozenset({"你好", "嗨", "哈喽", "hello", "早上好", "早安", "晚安"})
 _PRESENCE_QUESTIONS = frozenset({"在吗", "你在吗"})
@@ -64,14 +70,21 @@ def _is_mode_help(compact: str) -> bool:
     return len(compact) <= 24 and ("自由补充" in compact or "扩大检索" in compact)
 
 
-def classify_direct_question(question: str) -> DirectQuestionKind | None:
+def classify_direct_question(
+    question: str,
+    *,
+    has_conversation_context: bool = False,
+) -> DirectQuestionKind | None:
     compact = _compact(question)
     if not compact:
         return None
+    usage_help = compact in _USAGE_QUESTIONS and not (
+        has_conversation_context and compact in _AMBIGUOUS_USAGE_QUESTIONS
+    )
     if (
         compact in _IDENTITY_QUESTIONS
         or compact in _CAPABILITY_QUESTIONS
-        or compact in _USAGE_QUESTIONS
+        or usage_help
         or _is_mode_help(compact)
     ):
         return "assistant_meta"
@@ -182,12 +195,16 @@ def build_direct_response_packet(
     category: str | None = None,
     route_options: Mapping[str, bool] | None = None,
     action_payload: Mapping[str, object] | None = None,
+    conversation: object | None = None,
     memory_status: str = "disabled",
     memory_turns_used: int = 0,
     trace: RequestTrace | NullTrace | None = None,
 ) -> ResponsePacket | None:
     del category, action_payload
-    kind = classify_direct_question(question)
+    kind = classify_direct_question(
+        question,
+        has_conversation_context=bool(getattr(conversation, "turns", ())),
+    )
     if kind is None:
         return None
 
@@ -257,7 +274,6 @@ def build_direct_response_packet(
             },
             turn_outcome="not_committable",
         )
-    active_trace.mark_model_first_token()
     active_trace.mark_validated_ready()
     return packet
 
