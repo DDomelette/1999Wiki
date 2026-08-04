@@ -2,7 +2,18 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Literal, TypeAlias
+
+from .contracts import (
+    CitationValidation,
+    FrozenRetrievalPacket,
+    ResponsePacket,
+    RouteAuthorization,
+    RouteDecision,
+)
+from .tracing import NullTrace, RequestTrace
 
 DirectQuestionKind: TypeAlias = Literal["assistant_meta", "smalltalk"]
 
@@ -122,8 +133,138 @@ def answer_direct_question(kind: DirectQuestionKind, question: str) -> str:
     return "你好。可以直接问我《重返未来：1999》的角色、技能、剧情或其他资料。"
 
 
+@dataclass(frozen=True)
+class DirectQueryPlan:
+    original_query: str
+    normalized_query: str
+    intent: str
+    entity: None = None
+    aliases: tuple[str, ...] = ()
+    section_hints: tuple[str, ...] = ()
+    scatter_terms: tuple[str, ...] = ()
+    confidence: float = 1.0
+    media_intent: str = "none"
+    entity_type: None = None
+    entity_id: None = None
+    resolution_mode: str = "unresolved"
+    dense_query: str = ""
+    sparse_query: str = ""
+    media_query: str = ""
+    packet_policy: str = "direct"
+    target_levels: tuple[str, ...] = ()
+    secondary_intents: tuple[str, ...] = ()
+    route: str = "llm_general"
+    route_options: Mapping[str, bool] = field(default_factory=dict)
+    planning_status: str = "direct"
+    planning_warning: str = ""
+    planning_error: str = ""
+    target_parent_id: None = None
+    context_rewrite_mode: str = "none"
+
+
+_MEMORY_STATUSES = frozenset({"disabled", "new", "hit", "expired"})
+
+
+def _normalized_memory_status(value: object) -> str:
+    return str(value) if value in _MEMORY_STATUSES else "disabled"
+
+
+def _normalized_turn_count(value: object) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def build_direct_response_packet(
+    question: str,
+    *,
+    category: str | None = None,
+    route_options: Mapping[str, bool] | None = None,
+    action_payload: Mapping[str, object] | None = None,
+    memory_status: str = "disabled",
+    memory_turns_used: int = 0,
+    trace: RequestTrace | NullTrace | None = None,
+) -> ResponsePacket | None:
+    del category, action_payload
+    kind = classify_direct_question(question)
+    if kind is None:
+        return None
+
+    active_trace = trace or NullTrace()
+    intent = "meta_question" if kind == "assistant_meta" else "smalltalk"
+    with active_trace.span("answer.direct", status=kind):
+        answer = answer_direct_question(kind, question)
+        plan = DirectQueryPlan(
+            original_query=question,
+            normalized_query=str(question or "").strip(),
+            intent=intent,
+            route_options=dict(route_options or {}),
+        )
+        authorization = RouteAuthorization(
+            semantic_intents=(intent,),
+            proposed_route="llm_general",
+            allow_free_supplement_after_empty=False,
+            force_free_supplement=False,
+            authorization_reason="direct_assistant_response",
+        )
+        decision = RouteDecision(
+            authorization=authorization,
+            retrieval_outcome="empty",
+            effective_route="llm_general",
+            route_reason="direct_assistant_response",
+        )
+        route = {
+            "name": "llm_general",
+            "confidence": 1.0,
+            "intent": intent,
+            "entity": None,
+            "requested_intents": [intent],
+            "semantic_intents": [intent],
+            "proposed_route": "llm_general",
+            "effective_route": "llm_general",
+            "retrieval_outcome": "empty",
+            "route_reason": "direct_assistant_response",
+            "retrieval_debug": {},
+        }
+        retrieval = FrozenRetrievalPacket(
+            plan=plan,
+            entity_ref=None,
+            route_decision=decision,
+            requested_intents=(intent,),
+            sources=(),
+            source_map=(),
+            media=(),
+            media_panels=(),
+            context="",
+            diagnostics={"route": route},
+            omitted_actions=(),
+            failure_actions=(),
+            planning_status="direct",
+            planning_warning="",
+            planning_error="",
+            assets=(),
+        )
+        packet = ResponsePacket(
+            retrieval_packet=retrieval,
+            answer=answer,
+            grounding_mode="none",
+            citation_validation=CitationValidation(valid=True),
+            memory_info={
+                "status": _normalized_memory_status(memory_status),
+                "turns_used": _normalized_turn_count(memory_turns_used),
+                "rewrite_mode": "none",
+            },
+            turn_outcome="not_committable",
+        )
+    active_trace.mark_model_first_token()
+    active_trace.mark_validated_ready()
+    return packet
+
+
 __all__ = [
     "DirectQuestionKind",
     "answer_direct_question",
+    "build_direct_response_packet",
     "classify_direct_question",
 ]
