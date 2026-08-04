@@ -471,7 +471,7 @@ def _smoke_harness() -> str:
                 printf '%s' '{"answer":"ok","media":[{"url":"/media/reverse1999-assets/fixture.webp"}]}' >"$output"
                 ;;
             http://127.0.0.1:18080/api/ask/stream)
-                printf 'event: sources\\ndata: {"sources":[]}\\n\\nevent: done\\ndata: {"answer":"ok"}\\n\\n' >"$output"
+                printf 'event: sources\\ndata: {"sources":[]}\\n\\nevent: status\\ndata: {"phase":"generating"}\\n\\nevent: token\\ndata: {"token":"o"}\\n\\nevent: token\\ndata: {"token":"k"}\\n\\nevent: status\\ndata: {"phase":"validating"}\\n\\nevent: done\\ndata: {"answer":"ok"}\\n\\n' >"$output"
                 ;;
             http://127.0.0.1/media/reverse1999-assets/fixture.webp)
                 content_type=image/webp
@@ -2455,6 +2455,40 @@ def test_smoke_fails_closed_on_asset_sse_and_media_projection_errors(
     result = _run_linux_harness(tmp_path, mutation(_smoke_harness()))
     assert result.returncode != 0
     assert diagnostic.lower() in (result.stdout + result.stderr).lower()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param(
+            lambda body: body.replace(
+                (
+                    'event: token\\ndata: {"token":"o"}\\n\\n'
+                    'event: token\\ndata: {"token":"k"}\\n\\n'
+                ),
+                "",
+            ),
+            id="zero-token-events",
+        ),
+        pytest.param(
+            lambda body: body.replace(
+                'event: token\\ndata: {"token":"k"}\\n\\n',
+                "",
+            ),
+            id="one-token-event",
+        ),
+    ],
+)
+def test_smoke_rejects_streams_without_two_nonempty_token_events(
+    tmp_path: Path,
+    mutation,
+) -> None:
+    result = _run_linux_harness(tmp_path, mutation(_smoke_harness()))
+
+    assert result.returncode != 0
+    assert "fewer than two non-empty token events" in (
+        result.stdout + result.stderr
+    ).lower()
 
 
 def test_cleanup_is_exactly_scoped_and_requires_release_confirmation() -> None:

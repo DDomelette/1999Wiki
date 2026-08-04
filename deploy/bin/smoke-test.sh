@@ -268,30 +268,68 @@ curl \
     --output "$TMP_DIR/ask-stream.txt" \
     "$CANDIDATE_BASE_URL/api/ask/stream"
 python3 - "$TMP_DIR/ask-stream.txt" <<'PY'
+import json
 import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").replace("\r\n", "\n")
-events = []
+parsed_events = []
 for block in text.split("\n\n"):
-    if not block.strip():
+    if not block.strip() or block.lstrip().startswith(":"):
         continue
     names = [
         line.partition(":")[2].strip()
         for line in block.splitlines()
         if line.startswith("event:")
     ]
-    if len(names) != 1:
+    data_lines = [
+        line.partition(":")[2].lstrip()
+        for line in block.splitlines()
+        if line.startswith("data:")
+    ]
+    if len(names) != 1 or not data_lines:
         raise SystemExit("smoke-test: malformed RAG SSE event block")
-    events.append(names[0])
-if not events:
+    try:
+        payload = json.loads("\n".join(data_lines))
+    except json.JSONDecodeError as error:
+        raise SystemExit("smoke-test: malformed RAG SSE JSON payload") from error
+    if not isinstance(payload, dict):
+        raise SystemExit("smoke-test: RAG SSE payload is not an object")
+    parsed_events.append((names[0], payload))
+if not parsed_events:
     raise SystemExit("smoke-test: RAG SSE response has no events")
+events = [name for name, _ in parsed_events]
 if "error" in events:
     raise SystemExit("smoke-test: RAG SSE response contains event: error")
 if events[-1] != "done" or events.count("done") != 1:
     raise SystemExit(
-        f"smoke-test: terminal event is not done exactly once; got {events!r}"
+        "smoke-test: terminal event is not done exactly once; "
+        f"got {events!r}"
     )
+token_rows = [
+    (index, payload.get("token"))
+    for index, (name, payload) in enumerate(parsed_events)
+    if name == "token"
+]
+if len(token_rows) < 2 or any(
+    not isinstance(token, str) or not token for _, token in token_rows
+):
+    raise SystemExit("smoke-test: fewer than two non-empty token events")
+done_index = events.index("done")
+if any(index >= done_index for index, _ in token_rows):
+    raise SystemExit("smoke-test: token event arrived after done")
+replacement_rows = [
+    (index, payload.get("answer"))
+    for index, (name, payload) in enumerate(parsed_events)
+    if name == "answer_replace"
+]
+if any(index >= done_index for index, _ in replacement_rows):
+    raise SystemExit("smoke-test: answer replacement arrived after done")
+draft = "".join(token for _, token in token_rows)
+visible_answer = replacement_rows[-1][1] if replacement_rows else draft
+done_answer = parsed_events[done_index][1].get("answer")
+if not isinstance(visible_answer, str) or done_answer != visible_answer:
+    raise SystemExit("smoke-test: streamed answer does not match done answer")
 PY
 
 MEDIA_RETRIEVAL_URL="$(
