@@ -11,11 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
-from src.huiji_rag.build.artifact_writer import _analyzer_probe_sha256
 from src.rag.chinese_analyzer import ChineseBM25Analyzer
 from src.rag.sparse import (
     LegacyRegexAnalyzer,
     LocalBM25SparseIndex,
+    analyzer_probe_sha256 as _analyzer_probe_sha256,
     canonical_child_corpus_sha256,
 )
 

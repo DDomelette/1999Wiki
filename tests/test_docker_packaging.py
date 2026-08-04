@@ -6,6 +6,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -118,6 +119,20 @@ def _copy_spec(instruction: Instruction) -> CopySpec:
             from_stage = flag.split("=", 1)[1]
     assert len(tokens) >= 2, f"COPY needs source and destination: {instruction.arguments}"
     return CopySpec(tuple(tokens[:-1]), tokens[-1], from_stage)
+
+
+def _materialize_local_copy(runtime_root: Path, copy: CopySpec) -> None:
+    destination_text = copy.destination.removeprefix("./").rstrip("/")
+    destination = runtime_root / destination_text
+    destination_is_directory = len(copy.sources) > 1 or copy.destination.endswith("/")
+    for source_text in copy.sources:
+        source = ROOT / source_text
+        target = destination / source.name if destination_is_directory else destination
+        if source.is_dir():
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
 
 
 def _normalized_source(source: str) -> str:
@@ -364,6 +379,30 @@ def test_backend_final_stage_has_executable_runtime_contracts() -> None:
     assert runtime.instructions.index(_instruction(runtime, "USER")[0]) < runtime.instructions.index(
         import_gate[0]
     )
+
+
+def test_backend_runtime_allow_list_can_import_application(tmp_path: Path) -> None:
+    runtime = _parse_dockerfile(BACKEND_DOCKERFILE)[1]
+    runtime_root = tmp_path / "runtime"
+    for instruction in _instruction(runtime, "COPY"):
+        copy = _copy_spec(instruction)
+        if copy.from_stage is None:
+            _materialize_local_copy(runtime_root, copy)
+
+    command = (
+        "import sys; "
+        f"sys.path.insert(0, {str(runtime_root)!r}); "
+        "import backend.main"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", command],
+        cwd=runtime_root,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_frontend_stages_build_then_serve_only_dist_as_caddy() -> None:
