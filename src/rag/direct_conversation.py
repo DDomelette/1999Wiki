@@ -201,9 +201,13 @@ def build_direct_response_packet(
     trace: RequestTrace | NullTrace | None = None,
 ) -> ResponsePacket | None:
     del category, action_payload
+    normalized_turn_count = _normalized_turn_count(memory_turns_used)
     kind = classify_direct_question(
         question,
-        has_conversation_context=bool(getattr(conversation, "turns", ())),
+        has_conversation_context=(
+            normalized_turn_count > 0
+            or bool(getattr(conversation, "turns", ()))
+        ),
     )
     if kind is None:
         return None
@@ -269,7 +273,7 @@ def build_direct_response_packet(
             citation_validation=CitationValidation(valid=True),
             memory_info={
                 "status": _normalized_memory_status(memory_status),
-                "turns_used": _normalized_turn_count(memory_turns_used),
+                "turns_used": normalized_turn_count,
                 "rewrite_mode": "none",
             },
             turn_outcome="not_committable",
