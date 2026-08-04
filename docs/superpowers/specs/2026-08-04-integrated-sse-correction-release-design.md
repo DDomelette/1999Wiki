@@ -1,7 +1,7 @@
 # Integrated SSE Correction Release Design
 
 **Date:** 2026-08-04
-**Status:** Approved for written review
+**Status:** Approved
 
 ## 1. Goal
 
