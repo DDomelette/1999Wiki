@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -88,11 +89,17 @@ def test_process_identity_rejects_command_drift() -> None:
         validate_process_identity(identity, observed)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows-only creation flags")
 def test_detached_runner_uses_no_stdin_and_windows_detach_flags() -> None:
     flags = windows_detach_flags()
     assert flags & subprocess.CREATE_NEW_PROCESS_GROUP
     assert flags & subprocess.DETACHED_PROCESS
     assert flags & subprocess.CREATE_NO_WINDOW
+
+
+@pytest.mark.skipif(os.name == "nt", reason="non-Windows creation flags")
+def test_detached_runner_uses_no_creation_flags_outside_windows() -> None:
+    assert windows_detach_flags() == 0
 
 
 def test_runner_streams_events_and_persists_stderr(tmp_path: Path) -> None:
