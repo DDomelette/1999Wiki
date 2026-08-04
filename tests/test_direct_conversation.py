@@ -4,6 +4,7 @@ import pytest
 
 from src.rag.direct_conversation import (
     answer_direct_question,
+    build_direct_response_packet,
     classify_direct_question,
 )
 
@@ -60,3 +61,56 @@ def test_meal_smalltalk_acknowledges_prompt_and_redirects_naturally() -> None:
 
     assert "不需要吃饭" in answer
     assert "角色" in answer or "剧情" in answer
+
+
+def test_direct_packet_has_no_retrieval_or_recovery_payload() -> None:
+    packet = build_direct_response_packet(
+        "你能回答什么",
+        memory_status="new",
+        memory_turns_used=0,
+    )
+
+    assert packet is not None
+    retrieval = packet.retrieval_packet
+    assert retrieval.requested_intents == ("meta_question",)
+    assert retrieval.sources == ()
+    assert retrieval.assets == ()
+    assert retrieval.media == ()
+    assert retrieval.omitted_actions == ()
+    assert retrieval.failure_actions == ()
+    assert retrieval.route_decision.effective_route == "llm_general"
+    assert retrieval.route_decision.route_reason == "direct_assistant_response"
+    assert packet.grounding_mode == "none"
+    assert packet.turn_outcome == "not_committable"
+    assert dict(packet.memory_info) == {
+        "status": "new",
+        "turns_used": 0,
+        "rewrite_mode": "none",
+    }
+
+
+def test_smalltalk_packet_uses_a_non_retrieval_intent() -> None:
+    packet = build_direct_response_packet("午饭吃了吗")
+
+    assert packet is not None
+    assert packet.retrieval_packet.requested_intents == ("smalltalk",)
+    assert packet.retrieval_packet.route_decision.effective_route == "llm_general"
+
+
+def test_direct_packet_normalizes_invalid_memory_diagnostics() -> None:
+    packet = build_direct_response_packet(
+        "你是谁",
+        memory_status="unexpected",
+        memory_turns_used=-4,
+    )
+
+    assert packet is not None
+    assert dict(packet.memory_info) == {
+        "status": "disabled",
+        "turns_used": 0,
+        "rewrite_mode": "none",
+    }
+
+
+def test_non_direct_question_returns_no_packet() -> None:
+    assert build_direct_response_packet("介绍一下玛蒂尔达") is None
