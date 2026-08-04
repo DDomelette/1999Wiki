@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -16,6 +17,7 @@ from src.rag.direct_conversation import (
     classify_direct_question,
 )
 from src.rag.serializers import response_packet_to_public_dict
+from src.rag.tracing import RequestTrace
 
 
 CONVERSATION_ID = "00000000-0000-4000-8000-000000000204"
@@ -54,6 +56,8 @@ def test_bounded_smalltalk_questions_are_direct(question: str) -> None:
 
 def test_game_question_is_not_intercepted() -> None:
     assert classify_direct_question("玛蒂尔达的技能怎么用") is None
+    assert classify_direct_question("你好，请介绍一下玛蒂尔达") is None
+    assert classify_direct_question("你能回答玛蒂尔达的技能吗") is None
 
 
 def test_meta_copy_is_subtype_specific() -> None:
@@ -126,6 +130,25 @@ def test_direct_packet_normalizes_invalid_memory_diagnostics() -> None:
 
 def test_non_direct_question_returns_no_packet() -> None:
     assert build_direct_response_packet("介绍一下玛蒂尔达") is None
+
+
+def test_ambiguous_usage_followup_stays_in_rag_when_history_exists() -> None:
+    conversation = SimpleNamespace(turns=(object(),))
+
+    assert build_direct_response_packet("怎么用", conversation=conversation) is None
+    assert build_direct_response_packet("我怎么使用", conversation=conversation) is not None
+
+
+def test_direct_trace_does_not_claim_an_upstream_model_token() -> None:
+    trace = RequestTrace()
+
+    packet = build_direct_response_packet("你是谁", trace=trace)
+
+    assert packet is not None
+    snapshot = trace.snapshot()
+    assert snapshot.model_first_token_ms is None
+    assert snapshot.validated_ready_ms is not None
+    assert [span.name for span in snapshot.spans] == ["answer.direct"]
 
 
 class _ExplodingExecutionService:
@@ -258,6 +281,7 @@ def test_direct_question_sequence_is_distinct_and_not_committed(direct_api_clien
         assert payload["omitted_actions"] == []
         assert payload["route"]["route_reason"] == "direct_assistant_response"
         assert "answer.direct" in payload["timing"]["stage_ms"]
+        assert payload["timing"]["model_first_token_ms"] is None
 
     assert len(set(answers)) == 4
 
@@ -299,3 +323,4 @@ def test_direct_sse_matches_sync_semantics_without_recovery_actions(
     assert done["route"]["requested_intents"] == ["smalltalk"]
     assert done["route"]["route_reason"] == "direct_assistant_response"
     assert "answer.direct" in done["timing"]["stage_ms"]
+    assert done["timing"]["model_first_token_ms"] is None
