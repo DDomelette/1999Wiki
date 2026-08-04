@@ -30,6 +30,12 @@ unchanged.
   a valid release source.
 - Production currently serves release `sha-1ec7752` from the green slot. The
   blue slot is the deployment target and green remains the rollback target.
+- The stopped blue slot is still recorded as the previous rollback release
+  `sha-0761382`. The deployment state machine forbids reusing blue until that
+  exact old target is retired with the checked-in cleanup command. Retirement
+  removes only the stopped blue containers, safe exact image identities, and
+  its previous-target registration; it does not remove release directories,
+  snapshots, data volumes, shared infrastructure, or the active green release.
 - Production currently uses Milvus collection
   `text_child_bge_m3_shadow_crawler_v3_20260721t051246z`.
 - The repository already contains the immutable dual-registry publication
@@ -129,6 +135,11 @@ No production slot is changed if this phase fails.
 
 - Capture the active green release, active BM25 schema/artifact identity,
   active Milvus collection, protected image digests, and rollback snapshot.
+- Revalidate that `sha-0761382` is the recorded stopped blue rollback target,
+  then retire it with the exact confirmation token
+  `remove-blue-sha-0761382`. Verify that green `sha-1ec7752` remains active and
+  healthy, `PREVIOUS_AVAILABLE=0`, no blue containers remain, and no active
+  image digest was removed. Stop if any identity differs.
 - Transfer the release manifest and same-commit runtime bundle, then verify
   their bytes on the server.
 - Pull both digest-qualified TCR images and verify their `RepoDigests`.
@@ -192,7 +203,10 @@ If any item is missing, the outcome is not reported as successfully deployed.
 - Do not print, persist, or commit TCR passwords, GitHub tokens, application
   secrets, or Docker auth payloads.
 - Do not accept mutable image tags without their verified digest.
-- Do not remove the previous production release during this change window.
+- Do not remove the active green `sha-1ec7752` release or the new rollback
+  state created after traffic switches. The only permitted retirement is the
+  explicitly authorized, stopped old blue target `sha-0761382` required to
+  make the blue slot reusable.
 - Do not widen the release to fix unrelated application behavior discovered
   during deployment. Stop or roll back, diagnose, and obtain a separately
   reviewed fix.
@@ -209,6 +223,8 @@ The release record must include:
 - server release directory and runtime-bundle identity;
 - preflight, inactive-slot smoke, switch, public smoke, and stabilization
   results;
+- old blue `sha-0761382` retirement command, exact target checks, and resulting
+  `PREVIOUS_AVAILABLE=0` state;
 - pre/post active slot, release, BM25 identity, and Milvus collection;
 - rollback availability and, if invoked, rollback verification.
 
