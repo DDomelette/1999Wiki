@@ -991,7 +991,7 @@ feat(rag): publish typed dense retrieval units
 **Files:**
 
 - Modify: `src/rag/vectorstore.py`
-- Modify only for the acyclic final-receipt field set: `src/huiji_rag/runtime_artifacts.py`
+- Modify only for the acyclic final-receipt field set and active-v1 resolver source-byte contract: `src/huiji_rag/runtime_artifacts.py`
 - Create: `scripts/probe_story_segment_storage.py`
 - Create: `scripts/build_huiji_typed_index.py`
 - Create: `tests/test_huiji_typed_shadow_builder.py`
@@ -1019,11 +1019,15 @@ Fake Milvus 必须断言：
 - missing/stale/unknown/failed Milvus preflight receipt 在 embedding provider/写 client 构造前拒绝；
 - fake collection 写入完成前不得生成 `rag.runtime-artifact-snapshot/v2`；
 - 成功 fake build 的 v2 snapshot 固定 actual collection/schema/row counts/build receipt；
-- 成功 fake build 同时输出 `active-control-runtime-snapshot.v1.json`，它是当前测试 commit 下 active v1 snapshot 的只读 raw-byte copy；
+- `resolve_active_runtime_snapshot_source_v1(cfg)` 的同一次调用返回已验证的 active snapshot 与 exact canonical source bytes；成功 fake build 输出的 `active-control-runtime-snapshot.v1.json` 必须与该 source bytes 逐字节相同，禁止从 dataclass 或 typed-v2 字段再次序列化；
 - shadow build receipt 的 `active_control_snapshot` 固定该 copy 的相对路径、size 和 SHA-256；receipt 不得包含 `candidate_runtime_snapshot` 或最终 v2 snapshot 的 raw-byte SHA-256；
 - 最终 v2 snapshot 单向固定 shadow build receipt 的相对路径与 raw-byte SHA-256，`runtime-artifact-snapshot.v2.sha256` 再固定最终 snapshot 的 raw-byte SHA-256；禁止 receipt 与 snapshot 互相包含对方最终 raw-byte SHA-256；
 - v2 resolver 与测试 fixture 必须使用同一个精确 receipt field set：包含 `active_control_snapshot`，不包含 `candidate_runtime_snapshot`；不得同时接受两套未版本化 field set 或按字段猜测版本；
 - active-control capture 前后 active pointer/config/collection inventory 逐字节一致；
+- deployment inventory 的 principal/allowed roles/allowed grant 五元组任一缺失、主体或作用域漂移、未显式批准 wildcard 时，在写 client 构造前拒绝；
+- success receipt 精确包含 `status`、`protected_state_before`、`protected_state_after` 和严格的 `execution_observations`，并记录 embedding/Milvus API calls、batch/retry/token-safe/timing/paged closure；缺失、额外或伪造字段均拒绝；
+- D4 已存在且含两个 preflight receipts 的 RunRoot 可被使用，但任何最终输出文件或 failure receipt 已存在、为 symlink/reparse target 或越出 project root 时，在外部调用前拒绝；
+- embedding/insert 使用确定性有界 batch 和有限 retry；写后验证使用分页/iterator，不得提交超过服务端 limit 的单次 query；
 - embedding failure 保留 shadow 和 failure receipt；
 - fake embedding 不重复处理同一 ordered row；
 - query-by-vector path never calls embedding；
@@ -1069,7 +1073,7 @@ build              必须同时重验 storage 与 Milvus preflight receipts；
                    成功写入验证后生成最终 runtime snapshot v2
 ```
 
-三个入口都要求同一 `rag.story-candidate-build-input/v1` 路径和期望 SHA-256。Storage receipt 固定 deployment inventory、远端 host key、路径/device、逐设备峰值公式和 `ttl_seconds=900`；硬门为 `story_segment_rows <= 25000` 且所有受影响设备 `projected_free_bytes >= 12 GiB`。Milvus preflight receipt 固定只读 inventory/RBAC、collection 名、写计数和 `ttl_seconds=300`。Builder 默认拒绝缺少 active/forbidden inventory、两个 receipt 身份不一致、任一 receipt 超时或时钟倒退；最终 v2 snapshot 不可作为 build 输入。成功 build 的固定输出契约为：
+三个入口都要求同一 `rag.story-candidate-build-input/v1` 路径和期望 SHA-256。Storage receipt 固定 deployment inventory、远端 host key、路径/device、逐设备峰值公式和 `ttl_seconds=900`；硬门为 `story_segment_rows <= 25000` 且所有受影响设备 `projected_free_bytes >= 12 GiB`。Milvus preflight receipt 固定只读 inventory/RBAC、collection 名、写计数和 `ttl_seconds=300`。Deployment inventory 的 exact RBAC policy 固定 `principal`、无重复升序 `allowed_roles`，以及 `role_name/database/object_type/object_name/privilege` 五元组集合；目标 collection 只能由 inventory 中受约束的 shadow-name 模板实例化，任何 wildcard 必须作为完整允许五元组显式出现。Observed user/role/grant 必须规范化为同一类型后精确比较，不能把 `object_name` 当 privilege，也不能从 observed grants 反推允许策略。Builder 默认拒绝缺少 active/forbidden inventory、两个 receipt 身份不一致、任一 receipt 超时或时钟倒退；最终 v2 snapshot 不可作为 build 输入。成功 build 的固定输出契约为：
 
 ```text
 shadow-build-receipt.v1.json
@@ -1078,7 +1082,11 @@ runtime-artifact-snapshot.v2.json
 runtime-artifact-snapshot.v2.sha256
 ```
 
-`active-control-runtime-snapshot.v1.json` 只能通过现有 active-v1 resolver 读取并 raw-byte 复制；不得由 typed v2 字段反推或改写。Receipt 只固定 `active_control_snapshot` 并证明 active pointer/config/collection inventory 零漂移；最终 v2 snapshot 固定 receipt 的相对路径与 raw-byte SHA-256，配套 `.sha256` 文件固定最终 snapshot。该单向证据链不得通过互相嵌入 raw-byte SHA-256 重新形成环。
+`src/huiji_rag/runtime_artifacts.py` 新增 `resolve_active_runtime_snapshot_source_v1(cfg) -> tuple[RuntimeArtifactSnapshot, bytes]`。该接口在一次 active-v1 resolution 内生成 exact `rag.active-control-runtime-snapshot/v1` canonical source bytes；其内容只能来自同一次调用已验证的 active pointer、runtime config、artifact tuple、collection identity 与 source raw-byte hashes。`active-control-runtime-snapshot.v1.json` 必须逐字节复制这份 bytes，不得由 typed v2 字段、返回的 dataclass 或第二次序列化反推。Receipt 固定 `active_control_snapshot`，并以 `protected_state_before`/`protected_state_after` 证明 active pointer/config/collection inventory 零漂移；最终 v2 snapshot 固定 receipt 的相对路径与 raw-byte SHA-256，配套 `.sha256` 文件固定最终 snapshot。该单向证据链不得通过互相嵌入 raw-byte SHA-256 重新形成环。
+
+成功 `rag.story-shadow-build-receipt/v1` 的 exact top-level fields 为：`schema_version/status/candidate_build_input_sha256/actual_collection_name/observed_collection_schema_fingerprint/observed_row_count/observed_retrieval_unit_type_counts/embedding_build_identity/ordered_primary_key_sha256/active_control_snapshot/protected_state_before/protected_state_after/execution_observations`。`execution_observations` 只包含三个 exact object：`embedding`、`milvus_write`、`closure_verification`；它们分别固定 API call/batch/max-batch/retry/token-safe/timing，create/insert/index/load/query-page/retry/timing，以及 observed count/PK/type/schema identities。所有 count 为非负整数、elapsed 为有限非负数，row totals 必须与 candidate 和 observed closure 相等。Failure receipt 使用独立 schema，记录失败 phase、collection-created、shadow-preserved 和 protected post；按 D Plan 保留 shadow，不自动 drop。
+
+CLI 必须把 candidate artifact root 固定为 `candidate-build-input.v1.json` 的父目录，把公共 containment/runtime evidence root 固定为 `cfg.paths.project_root`。D4 的 RunRoot 已由前两段门创建；Builder 只独占最终输出文件名，不要求 RunRoot 不存在。Provider/client、create、bounded embedding/insert batches、index/load、分页/iterator closure、active-control 与 receipt/snapshot publication 全部进入统一 failure handling；任一已存在 collection/output、race、symlink/reparse escape 或 publication failure 均 fail-closed 且不覆盖既有证据。Dry-run 仍执行全部本地 schema/path/hash/receipt/active-control/gate 验证，只禁止外部连接、写入和最终输出。
 
 - [ ] **Step 4: GREEN**
 
@@ -1793,7 +1801,7 @@ Expected: 业务断言失败，因为 candidate-build-input producer、clean-hea
 
 - [ ] **Step 2: 实现离线 builder 与 handoff emitter**
 
-实现 `scripts/build_story_segment_candidate.py` 和 evaluator/handoff contract。Producer 输出 structure、Segment、mapping、typed JSONL、`rag.story-candidate-build-input/v1`、hash-pinned deployment-inventory copy、offline capacity estimate、quality counterfactual、offline gates 和 `rag.story-candidate-build-receipt/v1`；不输出最终 `rag.runtime-artifact-snapshot/v2`，不调用 embedding/Milvus/network。Handoff emitter 支持测试中的 synthetic clean-head fixture，并在真实使用时强制 `e_commit == HEAD` 与 tracked tree clean。
+实现 `scripts/build_story_segment_candidate.py` 和 evaluator/handoff contract。Producer 输出 structure、Segment、mapping、typed JSONL、`rag.story-candidate-build-input/v1`、hash-pinned deployment-inventory raw-byte copy、offline capacity estimate、quality counterfactual、offline gates 和 `rag.story-candidate-build-receipt/v1`；不输出最终 `rag.runtime-artifact-snapshot/v2`，不调用 embedding/Milvus/network。Deployment inventory 只能来自 D intake 的 hash-pinned exact schema，必须固定 remote host/key/storage devices、Milvus database/principal/allowed roles/allowed grant 五元组；Producer 不得补默认值、手写策略或从测试/observed RBAC 反推。Handoff emitter 支持测试中的 synthetic clean-head fixture，并在真实使用时强制 `e_commit == HEAD` 与 tracked tree clean。
 
 - [ ] **Step 3: 定向 GREEN**
 

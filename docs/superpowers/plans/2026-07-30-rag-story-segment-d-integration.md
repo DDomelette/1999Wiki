@@ -1113,6 +1113,8 @@ candidate-build-receipt.v1.json
 
 D 重新验证 candidate-build-input 的完整 artifact tuple、expected typed collection schema、typed input、C/D0/E identities 和 protected state。命令还必须把 D intake 固定的 deployment inventory 复制为同一 candidate root 内的不可变 `deployment-inventory.v1.json`，并在 `rag.story-candidate-build-receipt/v1` 中记录相对路径/SHA-256。`candidate-build-input.v1.json` 必须由该命令实际生成，不能手工拼接；其 schema 明确禁止 actual collection name、observed schema、observed row count 和 shadow build receipt。
 
+`deployment-inventory.v1.json` 的 Milvus/RBAC 部分是唯一授权事实源，必须由 D intake producer 机器生成并由 D3 原字节复制，不允许 D3、D4 或 E 手填、补默认值或从 `describe_role()` 结果反推策略。它至少精确固定：remote host 与 host-key fingerprint、三个允许的绝对 storage path 及预期 device、Milvus URI/database/principal、允许的精确 role 集、以及每项允许 grant 的 `role_name/database/object_type/object_name/privilege` 五元组。`object_name` 可以是本轮唯一 `$ShadowCollection` 的受约束模板；database/global wildcard 只有在 inventory 中作为完整五元组显式列出时才被接受。D4 只把 read-only observed RBAC facts 与这些五元组比较；主体、role、database、object type/name、privilege 任一缺失、未知或超出 allowlist 均 fail-closed。D intake 缺少该 exact schema 时不得生成 E5.3 的真实 handoff、进入 D3 或执行 D4，也不得在 D4 临时补写；E2.2 只能使用同 schema 的 synthetic fixture 实现与测试 parser/preflight。
+
 ### Task D4：预检并执行一次 Typed Dense shadow build
 
 **Spec coverage:** `INDEX-P0-01` 至 `INDEX-P0-06`、`DENSEUNIT-P0-01` 至 `DENSEUNIT-P0-11`、`PERF-P0-01` 至 `PERF-P0-09`、`PROVENANCE-P0-01` 至 `PROVENANCE-P0-06`
@@ -1243,11 +1245,13 @@ runtime-artifact-snapshot.v2.json
 runtime-artifact-snapshot.v2.sha256
 ```
 
-`active-control-runtime-snapshot.v1.json` 是当前合并提交中对 active v1 的只读、hash-pinned copy，不修改 active pointer。最终 `rag.runtime-artifact-snapshot/v2` 固定实际 collection 名、observed schema fingerprint、observed row/type counts、embedding build identity、ordered PK hash、shadow build receipt SHA-256 和 protected active inventory；缺任一项不得生成成功 snapshot。
+`active-control-runtime-snapshot.v1.json` 是当前合并提交中 active-v1 resolver 生成的不可变 source bytes 的逐字节副本，不修改 active pointer。E2.2 必须提供单一 `resolve_active_runtime_snapshot_source_v1(cfg)` 接口：同一次调用返回已验证的 `RuntimeArtifactSnapshot` 与 exact `rag.active-control-runtime-snapshot/v1` canonical bytes；bytes 只由该次 resolver 已验证的 active pointer、runtime config、artifact tuple、collection identity 和 source raw-byte hashes 产生。Builder 必须在任何 embedding/Milvus 写调用前捕获这一份 bytes，之后只能原样写出，禁止从 dataclass、typed-v2 字段或第二次序列化重建。写后再次运行 resolver，并要求 source bytes、active pointer、config 与 collection inventory identities 全部逐字节/逐哈希相等。最终 `rag.runtime-artifact-snapshot/v2` 固定实际 collection 名、observed schema fingerprint、observed row/type counts、embedding build identity、ordered PK hash、shadow build receipt SHA-256 和 protected active inventory；缺任一项不得生成成功 snapshot。
 
 - [ ] **Step 5: 验证并固化 build receipt**
 
-D 重验 retrieval-unit type counts、nullable/sentinel invariants、vector dimension、text/metadata limits、row count、PK uniqueness、artifact identity、实际 collection schema、最终 v2 snapshot 及 active collection 零漂移。Receipt 记录 API call/batch/retry/token-safe timing、失败/成功状态、protected post，并固定同提交性能对照所需的 active-v1 control snapshot 路径/SHA-256；receipt 不得反向固定 candidate-v2 runtime snapshot。最终 v2 snapshot 单向固定 receipt 的相对路径与 raw-byte SHA-256，固定文件名 `runtime-artifact-snapshot.v2.sha256` 再固定 snapshot 的 raw-byte SHA-256，禁止两个 JSON 互相包含对方最终 raw-byte SHA-256。
+D 重验 retrieval-unit type counts、nullable/sentinel invariants、vector dimension、text/metadata limits、row count、PK uniqueness、artifact identity、实际 collection schema、最终 v2 snapshot 及 active collection 零漂移。成功 `rag.story-shadow-build-receipt/v1` 使用一个精确字段集：既有 candidate/collection/schema/row/type/embedding/ordered-PK/active-control 字段之外，必须包含 `status="succeeded"`、`protected_state_before`、`protected_state_after` 与 `execution_observations`。`execution_observations` 又使用 exact schema，分别记录 embedding 与 Milvus 的 API call count、batch count、最大 batch size、有限 retry count、token-safe input 上限、各阶段 monotonic elapsed milliseconds、分页验证次数，以及写后 count/PK/type/schema closure；不得把这些事实放入未受校验的自由字典。Resolver 与测试 fixture 只接受这一套字段集。Receipt 不得反向固定 candidate-v2 runtime snapshot；最终 v2 snapshot 单向固定 receipt 的相对路径与 raw-byte SHA-256，固定文件名 `runtime-artifact-snapshot.v2.sha256` 再固定 snapshot 的 raw-byte SHA-256，禁止两个 JSON 互相包含对方最终 raw-byte SHA-256。
+
+`$RunRoot` 在 build 前已经存在，并包含 hash-pinned storage 与 Milvus preflight receipts；Builder 不得因此拒绝整个目录。它必须在任何 provider/client/外部调用前重验 RunRoot containment、拒绝 symlink/reparse escape，并以 create-new/exclusive 语义独占四个最终输出文件名以及 failure-receipt 文件名；已存在任一目标文件即 fail-closed，且不得覆盖 receipt。真实 collection 仍为 create-new，检查与创建之间的 race 也必须报告 AlreadyExists。构建失败时按本计划保留已创建的 shadow collection并发布 create-new failure receipt，禁止自动 drop；active pointer/config/active collection 始终零漂移。
 
 ### Task D5：运行真实评测并生成 go/no-go
 
