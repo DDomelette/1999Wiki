@@ -991,9 +991,11 @@ feat(rag): publish typed dense retrieval units
 **Files:**
 
 - Modify: `src/rag/vectorstore.py`
+- Modify only for the acyclic final-receipt field set: `src/huiji_rag/runtime_artifacts.py`
 - Create: `scripts/probe_story_segment_storage.py`
 - Create: `scripts/build_huiji_typed_index.py`
 - Create: `tests/test_huiji_typed_shadow_builder.py`
+- Modify only for the acyclic final-receipt fixture/contract: `tests/test_dense_retrieval_units.py`
 - Modify: `tests/test_vectorstore.py`
 - Modify: `tests/test_huiji_shadow_builder.py`
 
@@ -1018,7 +1020,9 @@ Fake Milvus 必须断言：
 - fake collection 写入完成前不得生成 `rag.runtime-artifact-snapshot/v2`；
 - 成功 fake build 的 v2 snapshot 固定 actual collection/schema/row counts/build receipt；
 - 成功 fake build 同时输出 `active-control-runtime-snapshot.v1.json`，它是当前测试 commit 下 active v1 snapshot 的只读 raw-byte copy；
-- shadow build receipt 的 `active_control_snapshot` 固定该 copy 的相对路径、size 和 SHA-256，`candidate_runtime_snapshot` 固定最终 v2 路径/SHA-256；
+- shadow build receipt 的 `active_control_snapshot` 固定该 copy 的相对路径、size 和 SHA-256；receipt 不得包含 `candidate_runtime_snapshot` 或最终 v2 snapshot 的 raw-byte SHA-256；
+- 最终 v2 snapshot 单向固定 shadow build receipt 的相对路径与 raw-byte SHA-256，`runtime-artifact-snapshot.v2.sha256` 再固定最终 snapshot 的 raw-byte SHA-256；禁止 receipt 与 snapshot 互相包含对方最终 raw-byte SHA-256；
+- v2 resolver 与测试 fixture 必须使用同一个精确 receipt field set：包含 `active_control_snapshot`，不包含 `candidate_runtime_snapshot`；不得同时接受两套未版本化 field set 或按字段猜测版本；
 - active-control capture 前后 active pointer/config/collection inventory 逐字节一致；
 - embedding failure 保留 shadow 和 failure receipt；
 - fake embedding 不重复处理同一 ordered row；
@@ -1074,7 +1078,7 @@ runtime-artifact-snapshot.v2.json
 runtime-artifact-snapshot.v2.sha256
 ```
 
-`active-control-runtime-snapshot.v1.json` 只能通过现有 active-v1 resolver 读取并 raw-byte 复制；不得由 typed v2 字段反推或改写。Receipt 必须同时固定 `active_control_snapshot` 与 `candidate_runtime_snapshot`，并证明 active pointer/config/collection inventory 零漂移。
+`active-control-runtime-snapshot.v1.json` 只能通过现有 active-v1 resolver 读取并 raw-byte 复制；不得由 typed v2 字段反推或改写。Receipt 只固定 `active_control_snapshot` 并证明 active pointer/config/collection inventory 零漂移；最终 v2 snapshot 固定 receipt 的相对路径与 raw-byte SHA-256，配套 `.sha256` 文件固定最终 snapshot。该单向证据链不得通过互相嵌入 raw-byte SHA-256 重新形成环。
 
 - [ ] **Step 4: GREEN**
 
@@ -1082,6 +1086,7 @@ runtime-artifact-snapshot.v2.sha256
 & 'D:\Anaconda32024\envs\1999wiki\python.exe' -m pytest `
   tests/test_dense_retrieval_units.py `
   tests/test_huiji_typed_shadow_builder.py `
+  tests/test_huiji_runtime_artifacts.py `
   tests/test_vectorstore.py `
   tests/test_huiji_shadow_builder.py -q `
   --basetemp (Join-Path ([IO.Path]::GetTempPath()) ('1999wiki-story-e2-vectorstore-' + [Guid]::NewGuid().ToString('N')))

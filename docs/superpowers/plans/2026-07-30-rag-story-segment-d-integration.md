@@ -1247,7 +1247,7 @@ runtime-artifact-snapshot.v2.sha256
 
 - [ ] **Step 5: 验证并固化 build receipt**
 
-D 重验 retrieval-unit type counts、nullable/sentinel invariants、vector dimension、text/metadata limits、row count、PK uniqueness、artifact identity、实际 collection schema、最终 v2 snapshot 及 active collection 零漂移。Receipt 记录 API call/batch/retry/token-safe timing、失败/成功状态、protected post，并固定同提交性能对照所需的 active-v1 control snapshot 路径/SHA-256 与 candidate-v2 runtime snapshot 路径/SHA-256。
+D 重验 retrieval-unit type counts、nullable/sentinel invariants、vector dimension、text/metadata limits、row count、PK uniqueness、artifact identity、实际 collection schema、最终 v2 snapshot 及 active collection 零漂移。Receipt 记录 API call/batch/retry/token-safe timing、失败/成功状态、protected post，并固定同提交性能对照所需的 active-v1 control snapshot 路径/SHA-256；receipt 不得反向固定 candidate-v2 runtime snapshot。最终 v2 snapshot 单向固定 receipt 的相对路径与 raw-byte SHA-256，固定文件名 `runtime-artifact-snapshot.v2.sha256` 再固定 snapshot 的 raw-byte SHA-256，禁止两个 JSON 互相包含对方最终 raw-byte SHA-256。
 
 ### Task D5：运行真实评测并生成 go/no-go
 
@@ -1285,14 +1285,27 @@ $ActiveRuntimeSnapshot = [IO.Path]::GetFullPath(
 )
 $ActiveRuntimeSnapshotSha = [string]$BuildReceipt.active_control_snapshot.sha256
 $CandidateRuntimeSnapshot = [IO.Path]::GetFullPath(
-  (Join-Path $BuildRoot ([string]$BuildReceipt.candidate_runtime_snapshot.relative_path))
+  (Join-Path $BuildRoot 'runtime-artifact-snapshot.v2.json')
 )
-$CandidateRuntimeSnapshotSha = [string]$BuildReceipt.candidate_runtime_snapshot.sha256
+$CandidateRuntimeSnapshotShaFile = [IO.Path]::GetFullPath(
+  (Join-Path $BuildRoot 'runtime-artifact-snapshot.v2.sha256')
+)
+$CandidateRuntimeSnapshotSha = (Get-Content -Raw -LiteralPath $CandidateRuntimeSnapshotShaFile).Trim().ToLowerInvariant()
+if ($CandidateRuntimeSnapshotSha -notmatch '^[0-9a-f]{64}$') {
+  throw 'Candidate runtime snapshot SHA-256 sidecar is invalid'
+}
 if ((Get-FileHash -Algorithm SHA256 -LiteralPath $ActiveRuntimeSnapshot).Hash.ToLowerInvariant() -ne $ActiveRuntimeSnapshotSha) {
   throw 'Active control snapshot hash mismatch'
 }
 if ((Get-FileHash -Algorithm SHA256 -LiteralPath $CandidateRuntimeSnapshot).Hash.ToLowerInvariant() -ne $CandidateRuntimeSnapshotSha) {
   throw 'Candidate runtime snapshot hash mismatch'
+}
+$CandidateSnapshot = Get-Content -Raw -LiteralPath $CandidateRuntimeSnapshot | ConvertFrom-Json
+if ([string]$CandidateSnapshot.shadow_build_receipt.relative_path -ne 'shadow-build-receipt.v1.json') {
+  throw 'Candidate runtime snapshot receipt path mismatch'
+}
+if ([string]$CandidateSnapshot.shadow_build_receipt.sha256 -ne $ExpectedShadowBuildReceiptSha256.ToLowerInvariant()) {
+  throw 'Candidate runtime snapshot receipt SHA-256 mismatch'
 }
 $PerformanceReceipt = Join-Path $BuildRoot 'performance-control.v1.json'
 
