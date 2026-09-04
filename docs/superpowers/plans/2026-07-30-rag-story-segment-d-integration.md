@@ -54,6 +54,37 @@ S2 首批只准备可复用的文本核对逻辑，不宣称已解除真实文�
 - 本批结束后进入 S2 产物/路径/消费者的统一接口批，不再为继续拆私有 helper 增加准备批次。涉及已有未提交文件的提交应按实际依赖收拢，不为了制造独立提交重写历史或丢失旧修改。
 - 本批已由 D 验收：E 的 45 项回归、D 的 3 项独立测试通过；D 对照正常/阻断/仅诊断/媒体不可用四种状态，共 129 个输出文件字节一致，60 个既有定义及公开签名未变。生产代码净减 57 行，新增测试 60 行；代码仍保留在 E 的既有未提交集合内，待接口依赖一起验收提交，未合并 main。验收时 writer SHA-256 为 `5df1752ac172d2b5e706d61200fbb4886fe02b4bee5c62777e91f062ece6a044`，测试 SHA-256 为 `3c2437c0bd05bb3d0ca05c54d7e5af5607d0f9065a7406653a8cb1912eeb7144`。
 
+### S2 接口批：文本产物闭包与统一消费者
+
+本批替换 E 尚未发布的 Story→完整媒体构建路径，不把旧路径保留为另一种 Story 构建模式。C 已有全量 Corpus/Media V3 入口、active v1 解析及媒体 gate 仍保留；复用其来源恢复、投影、文本 fidelity、BM25 和 Story/Typed 算法，不复制整个构建器。以下规则是 D 冻结的内部接口决定，不改变产品功能或质量阈值。
+
+**产物与单一事实源：** 在同一 immutable 文本根目录生成下列 21 项文件。文件名、schema 和逻辑角色在现有 contracts 中用一个领域专用的固定目录表定义，writer/parser 消费同一表，不建立通用 registry 框架。
+
+| 组 | 文件/逻辑角色 |
+|---|---|
+| 基础文本 4 项 | `parent_blocks.jsonl`、`child_blocks.jsonl`、`excluded_entities.jsonl`、`indexes/child_text_bm25.json`；逻辑名沿用 `parent_blocks`、`child_blocks`、`excluded_entities`、`child_bm25`。 |
+| Story 12 项 | 第二批已有的 taxonomy、entity_link_registry、atom_structure 与 schema、segment_config、segments 与 schema、atom_to_segment 与 schema、context_budget、context_units schema、context_fixture。逻辑名为 `story_structure_taxonomy`、`story_entity_link_registry`、`story_atom_structure`、`story_atom_structure_schema`、`story_segment_config`、`story_segments`、`story_segment_schema`、`story_atom_to_segment`、`story_atom_to_segment_schema`、`story_context_budget`、`story_context_unit_schema`、`story_context_fixture`；沿用现有文件名/schema。 |
+| Typed Dense 3 项 | 沿用 `dense_retrieval_units.v1.jsonl`、`.schema.json`、`.manifest.json` 及现有三个逻辑名/schema。 |
+| 文本 fidelity 2 项 | `diagnostic/text_fidelity_ledger.v1.jsonl`（沿用逐记录 ledger row schema）、`diagnostic/text_build_diff.v1.json`（`huiji.text-build-diff/v1`，仅文本 active/candidate/category counts、真实 blocker 和 unexplained_parent_child_loss；不得声明媒体通过或把媒体缺失写成零）。 |
+
+- `text_artifact_manifest.v1.json` 使用 `huiji.story-text-artifacts-manifest/v1`，是上述文件路径、schema、hash、大小、行数的唯一发布清单；同时绑定 source inventory、代码/配置身份、原 fidelity baseline、已有 `story_structure` 来源证据和文本阶段状态。原始 C 证据继续 hash-pinned，不复制或改写旧 receipt。媒体标记 `deferred`，详情引用现有 C release 中的延期证据，不重算或核销旧 blocker。
+- `story_candidate_build_input.v2.json` / `rag.story-candidate-build-input/v2` 的 wire fields 精确为：`schema_version`、`story_retrieval_capability`、`text_artifact_manifest`、`config_identities`、`expected_milvus_schema`、`embedding_identity`、`provenance_identities`、`ordered_tuple_sha256`。manifest ref 包含 `relative_path/sha256/size_bytes`；其余身份含义沿用现有规则。**不再序列化第二套 `artifacts` 与 `typed_dense` 内容**：现有对象属性从已验证 manifest/typed manifest 一次解析得到只读视图，供现有消费者使用。全部 21 项都要校验，运行时实际消费其中 18 项；来源/保真不能因不参与检索而脱离清单。
+- manifest 不引用自身或 candidate，避免循环哈希；candidate 单向绑定 manifest。构造对象时允许 candidate 尚未写出，但最终文本 bundle verifier 必须验证恰好 21 项数据文件 + manifest + candidate、candidate→manifest 绑定，以及来源/结构/映射/文本 fidelity 的实际闭包。复用现有严格 Story source-truth 验证，不靠布尔声明通过。运行时读取 D 已验证的文件身份，不要求云端挂载本机原始 C 数据路径。
+- 旧 E candidate v1 属未发布中间产物：明确拒绝并要求重新构建，不做 silent migration、宽松 fallback 或双格式 Story 生产。active v1 不受此决定影响。
+
+**阶段边界与状态：**
+
+- 在既有 `HuijiCorpusBuilder` 中贯通独立的 Story 文本阶段；可替换现有 E 专用 `build_story_candidate` 的返回契约。全量 `build_candidate`/完整媒体 writer/verifier 继续使用原完整 gate。新的文本结果不得伪装成完整 `CorpusBuildResult` 或完整 `FidelityResult`。
+- 文本阶段只读取四份已恢复来源及文本 baseline（Parent/Child/exclusion/child BM25），保留恢复校验、source join blocker、投影闭包、C Story 来源验证和 pre/post source identity；不调用媒体本地字节检查、VoiceBinding、MinIO/Wiki 媒体兼容、媒体容量规划或 legacy media reconciliation。它们仍属于保留的完整媒体入口，不是被忽略的文本 blocker。
+- 第一批文本核对结果提升为明确的文本结果/入口，继续复用原逐记录算法，并保留排序、重复身份拒绝和 loss 检查；完整 fidelity 仍组合真实媒体核对。文本终态仅 `text_verified` 或 `blocked`，媒体状态始终 `deferred`。`text_verified` 仅证明文本产物，不能意味着评测通过、真实向量就绪、媒体完成或可以激活。
+- 构建先产出文本，再运行依赖该产物的评测，最后打包。S2 的本地 bundle 可在评测尚未执行时存在，但必须标为待评测，不能因缺报告而伪造通过，也不能调用 fake Dense 来补真实指标。S3 才补真实 observation producer；旧 56 项阈值/gold 不变，最终 handoff 与 D go/no-go 仍要求各自阶段的完整有效证据。
+
+**路径与接线：** candidate 的 manifest ref 相对 candidate 所在目录；manifest 内文件 ref 相对 manifest 所在目录。固定同根布局，禁止 repository-root rebase、`..`/绝对路径逃逸或猜测备用目录。registry/budget 也通过已验证逻辑引用读取，不再另猜固定文件名。E/D 使用同一业务构建与打包实现；打包如需复制，复制完整文本 bundle 并保持 candidate/manifest 字节和相对布局不变，不重新声明一套 hash。D3 receipt 引用该 bundle；不得只复制 candidate 文件。storage probe、fake typed builder、runtime snapshot v2/install 必须实际读到这个 bundle。完整媒体文件不进入该文本包，现有 active 媒体只由原 active snapshot 消费；D 的真实容量预检仍计算最终文本包/暂存/索引增长并保留 12 GiB 与 25,000 Segment 上限。
+
+**实施范围与退出：** 仅在 E 原工作树串行完成本接口批。生产允许 `build/{__init__,contracts,fidelity,artifact_writer,orchestrator}.py`、`src/huiji_rag/runtime_artifacts.py`、`src/rag/chain.py`（仅安装/文件消费）、`scripts/{build_story_segment_candidate,build_huiji_typed_index,probe_story_segment_storage}.py`；测试允许现有 corpus artifacts/builder/fidelity/builder_contracts、dense_retrieval_units、typed_shadow_builder、story_segment_runtime/eval/structure 文件。若确需统一重复 fixture，可新增一个 `tests/story_candidate_fixture.py` 并移除原重复构造；不得新增产品模块、监督器或通用测试框架。不修改 Planner/授权/融合算法、媒体实现、投影语义、真实 evaluator producer 或 frozen eval 文件。
+
+先用有意义的失败测试暴露无媒体字节的文本构建、缺 registry/budget、打包后实际 loader 失败；再贯通 producer→打包→storage→fake typed build→runtime install。还须验证文本损失/来源篡改/映射篡改仍阻断、同输入两根目录语义一致、完整非 Story Corpus/Media/active v1 回归、外部调用边界和非法旧 candidate 拒绝。只运行本地 fixture；本批不运行真实全量快照、embedding、Milvus 或媒体操作，不更新旧 D2 字节、不生成新监督 receipt、不提交。D 独立验收后与已有重叠改动按实际依赖成组提交；最终真实构建留在 S5。
+
 ### 验收顺序与证据含义
 
 1. **代码回归：** 验证授权、引用、预算、continuation、anchor 和接口行为；fake Dense 只验证算法及接线。
