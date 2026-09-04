@@ -12,7 +12,7 @@
 - 保留 E 的结构/分支信息、Atom BM25、Segment Dense、Typed Dense、融合与预算、多剧情比较、continuation、anchor、AnswerScope、Atom citation 和 REST/SSE 一致性。
 - 保留来源与产物身份校验、Owner/授权边界、准确的失败/空检索区分、引用闭包和会话提交原子性。
 - 真实 embedding/Milvus 仍由 D 在 E 合并后执行；仍检查云端容量，构建后保留至少 12 GiB，Story Segment 不超过 25,000；不得自动激活、覆盖 active collection 或下载媒体。
-- C 与 D0 已完成的提交和证据继续有效。E 在现有工作树、现有会话上继续；模型沿用用户最后设置的 `gpt-5.6-sol / max / fast`，不由历史 Plan 的标准速度条款覆盖。
+- C 与 D0 已完成的提交和证据继续有效。E 在现有工作树、现有会话上继续；按用户最新设置，后续执行使用 `gpt-6-astra / max / 普通速度`，不由历史 Plan 的模型或快速模式条款覆盖。恢复前分别核对模型、思考等级和 service tier；不能仅关闭快速模式选项就假定已切换普通速度。
 - 收敛起点为 E HEAD `c81d336806cd9f0b3abb32db01054287df14d711` 及已有 11 个未提交文件。已有改动、失败构建和验收证据保留；不得为了拆提交而重置或重放整条历史。
 
 ### 需要关闭的根因
