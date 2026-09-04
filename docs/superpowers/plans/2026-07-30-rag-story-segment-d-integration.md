@@ -34,6 +34,17 @@
 
 S2 开始编码前，D 必须依据现有消费者写清文本产物集合、媒体引用方式和阶段状态；不能用忽略所有媒体 blocker、伪造空媒体产物或放宽完整候选验证来实现。只读沿用既有媒体证据不代表新绑定已被验证。S1 可独立执行，不依赖 S2 的新产物。
 
+### S2 首批：先拆保真核对职责，不切换公开契约
+
+- S1 已由 D 独立复核：27 项定向测试通过、85 组新旧配置对照一致，fusion identity 保持不变；不把配置去重称为整个收敛任务完成。
+- S2 首批只允许修改 E 的 `src/huiji_rag/build/fidelity.py` 与 `tests/test_huiji_corpus_fidelity.py`。从现有 `build_fidelity_ledger` 抽出文本逐记录核对：Parent/Child、exclusion、Story migration 和 child BM25 共用原算法；媒体关系与 media BM25 继续由完整入口执行。此批不修改投影、writer、候选 schema、CLI 或任何运行时授权逻辑。
+- 保持 `build_fidelity_ledger` 的签名、`FidelityResult` 的公开字段，以及完整结果的 ledger、build_diff、分类、blocker、排序和拒绝行为不变。内部文本结果不得伪装成全量成功；不得通过构造空 `LegacyMediaReconciliation`、过滤 blocker 或新增宽松模式完成拆分。允许一个必要的私有结果结构，不建立通用验证框架。
+- D 的改前基线为现有 fidelity 文件 30 项测试通过。E 先保留现有测试的行为基线，再进行等价抽取；补充小规模完整输出对照及文本阶段不调用媒体核对的断言。改后运行同文件和既有 artifact writer 的邻接回归，使用 Conda `1999wiki` 与 OS temp basetemp，不创建逐修复 receipt，不执行真实快照。D 独立复核前不提交、不进入下一批。
+- 后续文本候选至少需要 10 项核心产物（现有 tuple 去除 `media_assets`、`media_bm25`），但 **10 项清单本身并不构成完整闭包**：registry、budget、其他实际消费的配置/结构 sidecar、来源与文本 fidelity 必须一并纳入可验证引用。D 在接口批开始前统一定稿，而非让各消费者自行猜测路径或 schema。
+- 后续接口批须同时解决 candidate 路径基准：当前 D3 将引用重基到 project root，而 storage、typed shadow 和 runtime 按 candidate 文档父目录解析；runtime 又按固定文件名读取 registry/budget。必须使用一致的文档/引用解析规则，实际穿过 storage loader、fake typed builder 与 runtime install 验证，不能仅以 parser 通过声称端到端可消费。原 active v1 的媒体解析与安全边界不变。
+
+S2 首批只准备可复用的文本核对逻辑，不宣称已解除真实文本构建的媒体阻断。文本构建、媒体状态和完整候选发布状态的接口切换另在同一 E 工作树串行完成。
+
 ### 验收顺序与证据含义
 
 1. **代码回归：** 验证授权、引用、预算、continuation、anchor 和接口行为；fake Dense 只验证算法及接线。
@@ -43,6 +54,8 @@ S2 开始编码前，D 必须依据现有消费者写清文本产物集合、媒
 5. **最终评测：** 使用真实候选及对应对照产生结果，覆盖全部 56 项要求；任何缺观测、未测或未通过项均不能得到最终 go。
 
 哪些指标属于各阶段，由 D 对照其计算所需输入逐项确定，不按当前实现方便程度分组。既有阈值和 gold 不降低；fake 指标不用于证明真实 Dense 质量。这里替代旧 D2 中“全部 56 项必须在真实向量构建前通过”的时序要求，不减少最终验收内容。
+
+S3 的已确认修复边界：当前 `story_segment_runner` 依赖 runtime snapshot 上并未实现的 `execute_measured_story_query`、`observed_dense_ranks` 和 `observed_capacity_evidence`，且真实 CLI 仍转入 fake Dense 评分核心。应使用明确的运行执行器产生观测，snapshot 继续只表示已验证的产物身份；性能与质量消费同源运行观测，fake 与真实结果明确区分。不得给不可变 snapshot 临时塞入测试属性，或以传入自报计数代替真实调用记录。6 项产物、24 项本地流程、26 项真实运行的初步分组需在 S3 按全部冻结分母和 producer 逐项验实后固化，不是当前已通过清单；最终仍要求全部 56 项完整有效。
 
 ### 简化后的监督与变更规则
 
