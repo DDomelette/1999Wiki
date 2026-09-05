@@ -110,6 +110,12 @@ S3 的已确认修复边界：当前 `story_segment_runner` 依赖 runtime snaps
 
 S3 同时迁移既有 `emit_story_segment_handoff`/validator 的旧 flat candidate v1 与内联 `typed_dense` 假设，使其消费本节唯一 v2 文本包，并与 D 统一继任交接契约。当前因 `evaluation_pending`/`operation_observations_pending` 正确拒绝打包，只证明未完成状态不会被误放行，**不证明最终 handoff 正向路径可用**。真实观测闭合后须恢复正向交接验收；不能添加 v1 兼容退路或临时伪造 ready。
 
+**S3 首个实现批次：补齐已冻结的基线约束。** `_passes_gate` 当前忽略 `baseline_relation="not_below"`，使达到绝对下限但退于真实基线的值可能通过。仅允许修改 E 的 `src/rag_eval/story_segment_runner.py` 中评分判定和 `tests/test_story_segment_eval.py` 对应测试：先用冻结的 BM25/最终证据 recall gate 验证“达下限但低于基线”失败，再在既有判定上同时执行原绝对阈值与基线关系。覆盖低于/等于/高于基线、仍低于绝对下限、缺观测与零分母；复用已有所有 gate 回归，不改阈值、指标字段、producer、snapshot、调用链或 handoff，不新增文件或回执。D 验收后独立提交。此批只修判定遗漏；基线来源、排名/分母和真实观测仍属于后续 S3，不能以本批单测通过宣称实测质量通过。
+
+本小批已由 D 验收并在 E 提交 `71dbf6cdc8f20bd9ac14c089bad0232ab80612e0`：生产 +2 行、测试 +48 行，只有上述两文件。E 的 RED 为预期的 2 failed/10 passed，GREEN 与邻接回归 24 passed；D 固定文件版本独立 16 passed，测试前后两文件 SHA 不变。D 日志 `C:\Users\HUAWEI\AppData\Local\Temp\1999wiki-d-s3-baseline-26eeda6eba3845b0890343b40d10a6ce\pytest.log`，SHA-256 `243441dc3d1396eba669327a8d3bba29350332278f700e02776c57df4868fb65`；E GREEN 日志 `C:\Users\HUAWEI\AppData\Local\Temp\s3-baseline-green-b723b65e627e4a91abeb8b8d1471db2e.log`，SHA-256 `515c3ebb1f4e0c06857f8f9fe656f216e771f01e7bb930634c15def0084072fb`。四份冻结评测输入未变，E 提交后工作树/index 干净；仍未合并 main，也未完成其余 S3/S5。
+
+**S3 只读对应核查（非质量通过）：** 56 项 producer/分母/阶段清单已在既有 E 任务 `01a0646c-69ee-74f3-a513-5724a0d3c8ef` 的执行轮 `01a06fb8-0b24-7f71-8ab0-affc20e5c8b7` 汇总，不另建一套监督回执。17 项尚无观测计算；其他项有公式也不代表已有真实 producer。必须修正独立 active baseline、Dense 与 fused 排名分离、Atom group/适用事件全集分母、REST/SSE sources/done 独立投影、canonical continuation 全页及调用边界观测；不得把 `len(cases)`、`max(1, …)`、自报零次或 candidate 自身冒充这些输入。优先复用现有 trace、授权 envelope、检索/context/response 对象，不把观测塞进 snapshot。每查询全 Segment 遍历须据实测量并处理；关系 precision/recall 的独立审定集合尚需从已批准证据定位，不由 registry 自证正确。E 提议将阶段初分调整为 6 产物/26 本地/24 真实，仍待逐批定稿，不能据此放行最终 handoff。
+
 ### 简化后的监督与变更规则
 
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
