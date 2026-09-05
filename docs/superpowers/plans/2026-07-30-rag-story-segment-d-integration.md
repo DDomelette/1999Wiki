@@ -126,6 +126,15 @@ S3 同时迁移既有 `emit_story_segment_handoff`/validator 的旧 flat candida
 
 **本批已验收：** E 提交 `0404ccb303fb88ef6d94cf6b1f3347758f7f3961`，严格为上述三文件：生产 +114 行、测试 +243 行，无新模块/回执。E 真实 bundle→CLI RED 2 项失败，canonical Atom 与下游 source refs 同时错配的补充 RED 1 项失败；最终定向 18 项和邻接 36 项通过。D 固定版本独立 43 项通过，三份代码、四份冻结评测输入及 Spec 共 8 个对象前后 SHA 零漂移；D 日志 `C:\Users\HUAWEI\AppData\Local\Temp\1999wiki-d-s3-artifacts-502a1151124448a18a4af4ce049149fe\pytest.log`，SHA-256 `02f7bc4a46e656fe32f391fa3d73016380681a57b9f0b8338a85e538f8d81c34`。E 定向/邻接日志 SHA 分别为 `dcc5d49f10a229fe609a5f7b3876a95139552d78e263fcbe7f6bf529c3e3b5e6` / `e30b11306a815bb4e216e9b2e3a171f586e81859fa86d185f75d5f1c274940ab`，普通日志路径保留在既有 E 执行轮 `01a07003-a2a8-7443-95ee-69e75eda9030`。提交后 E 工作树/index 干净，尚未合并 main；只证明两个产物 producer 的本地调用闭包，其他 54 项在该报告中仍未观测、总状态 `no_go`。真实 executor、独立 baseline、排名/分母修正和最终 v2 handoff 正向路径仍待完成；未执行真实快照、外部构建或激活。
 
+**S3 下一批：一次业务执行的内部结果出口。** 仅允许 E 修改 `src/rag/execution.py`、`src/rag_eval/story_segment_runner.py`、`tests/test_story_segment_runtime.py`、`tests/test_story_segment_eval.py`。在既有 `RAGExecutionService` 内将当前单次执行主体提取为一个共同私有入口，返回该次 `PreparedExecution` 与 `ResponsePacket`；原 `execute` 继续调用同一主体并仅返回原回答包，公开签名和产品行为不变。评测侧显式接收已安装的真实 chain、请求/会话与期望的候选 snapshot 身份，复用该共同入口以及 `RequestTrace`，保留同一次执行的准备结果、最终回答包与 trace snapshot；至多增加一个必要的内部不可变结果结构，不添加通用 callback/observer 框架、另一条生成流程、snapshot 动态属性或新的序列化回执。
+
+- 评测入口在执行前核对真实 `StoryRuntimeBundle` 的已验证安装身份及期望 snapshot；不绕过既有 resolver、vector adapter、collection/schema/embedding 校验。不在本批构造另一套工厂；本地测试使用真实小来源→23 文件→resolver/install→正常 `RAGChain` 构造，外部 planner/LLM/vector 边界使用受控替身。
+- 普通 grounded、local/immediate 与复合 Story 分支均只执行一次。复合请求可能已经在 prepare 内完成分支生成并返回 immediate packet，必须原样沿用；禁止评测侧再次生成/检索。结果消费复用现有 serializer 与 trace 投影进行只读验证，不新增只为展示“双消费者”的空适配器。最终上下文/source map/citation 必须来自实际准备/回答包，不能由 gold 或预制 `case_evidence` 填充。
+- trace 保留已有字段的原始含义：同步 `invoke` 返回后的 `model_first_token_ms` 不能被新入口解释为实测 TTFT；复合 prepare 的总耗时不能被解释为纯 retrieval。此批不出具 latency/quality gate、raw Dense/BM25/fused 排名或调用次数的缺测零值，不宣称已关闭 performance/evaluate 的跨进程复用。CLI、performance receipt、56 项评分、运行时产物 schema、raw-rank producer 和最终 handoff 不在本批修改；它们后续必须消费同源实际观测，不能以本批内部出口通过代替端到端验收。
+- 先以实际执行测试暴露结果出口缺失，再做共同主体抽取；验证两种调用入口的回答/citation/context 行为相同，普通和复合生成计数无额外增加，本地分支不生成，身份错配在执行前失败。对同一个结果多次调用现有 serializer/trace 投影时，以禁用执行入口的反例确认不会重跑。运行现有 execute、Story runtime、断供/补充分支和 eval 邻接测试，Conda `1999wiki`、OS temp、普通日志；D 独立复核前不提交、不进入后续批次。不得恢复旧 Step 6/Build A、创建新 E、运行真实全量快照或外部服务。
+
+D 本轮只读核对确认：冻结 baseline 是 retrieval-only，保留 85 例 RRF 检索/最终上下文和原始 Dense cassette，`generation_calls=0`，不能充作原始 BM25 或回答/端到端耗时基线；190 条等价记录在两阶段均无匹配（每阶段 48 条缺 source ref、47 条来源版本不符）。原字节和匹配规则保持，不重开 D0，不以 candidate 分数自比。后续评分必须按真实来源和适用分母计算，缺少独立输入的指标继续不通过。
+
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
 - 验证输入和跨进程/外部请求时保留严格检查；进程内使用已验证的不可变值，避免反复序列化和重验同一事实。跨请求 continuation 和外部文件不能按进程内可信对象处理。
 - 最终离线业务产物仍须证明确定性，并绑定已提交代码；日常等价重构不触发全量快照构建。代码身份变化不要求撤销已完成历史任务或重新运行 C/D0。
