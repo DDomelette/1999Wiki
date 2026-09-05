@@ -214,6 +214,14 @@ D 独立定向 **37 passed**（`C:\Users\HUAWEI\AppData\Local\Temp\1999wiki-d-s3
 
 **S3 下一项先核对计分口径，不改文件：** 在上述固定提交，E 只核对现有观测能否支撑 `fused_segment_recall_at_8` 与 `multi_detail_coverage_rate`，给 D 一份简短消息（不新增计划/receipt）。明确 gold group 的独立分母、同 ID 不同正文/来源版本的拒计规则、固定 Atom→Segment 映射、Top-8 的实际分支级边界，以及多细节“最终上下文可见”与“答案引用成功”的区别；不能把缺映射/缺样本删出分母、重跑检索/packer、从 observed 补 gold 或复用旧 fixture 平铺字段。D 同步核对冻结 gold/source/mapping 和 Spec；只有口径与真实接口一致才放行代码。仅阅读现有模块/小 fixture，不启动新 E、真实全量或外部调用；提交的原 56 gate 与阈值保持。
 
+**上述 Recall 口径已由 D 定案，放行实现：** E 在 `f5106b5` 仅修改 `src/rag_eval/story_run_observations.py` 与 `tests/test_story_segment_eval.py`，实现原 `fused_segment_recall_at_8`、`multi_detail_coverage_rate` 两项 producer。共用现有 artifact loader 和正文验证，原 collect/CLI/schema/56 项九字段报告、已有四项 producer 的口径及字节行为保持；不新增采集字段/模块/receipt，不改 runtime、runner、baseline、gold 或阈值。
+
+- 分母固定来自每个 `(query_id, group_id)`，所有 required groups 参加融合 Recall（现有 95：direct 92、anchor 2、continuation 1）；multi-detail 仅取 `stratum=single_story_multi_detail` 的 groups（现有 20）。数量动态计算；缺样本/缺映射/错版本不删分母，每组至多贡献一次，零分母不通过。只用 candidate 首个 timed sample，不能择优重测。
+- Gold Atom 必须与已验证候选 Atom 的 ID、完整正文 `evidence_sha256`（仅 NFC/换行）及精确 source title/json_path/source content hash 相符，再由已验证 Atom→Segment mapping 与 Segment 成员/Owner 机械推出 relevant Segment；同 ID 异正文/来源不能计覆盖，不能借用 `fused.matched_atom_ids` 排除 Dense-only 的有效命中。只检索引用既有输入，不要求整个 candidate Child 文件与旧 gold Atom artifact 同 hash，也不能从观察分数回填标签。
+- Top-8 是每个实际 KB 子任务的 Story 检索调用返回的 `candidates.fused[:8]`，保留原位置；单 KB 的多 Owner 比较共用这一个窗口，不是每 Owner 八条。核对既有最终 plan/authorization/span 归属和行 ID/Owner，同一原 query 的合法分支命中按 group 去重汇总。这是实际执行单元 Top-8 的 query-group Recall，不宣称存在 runtime 没有产出的 request-global 排名。禁止重新融合、跨分支拼排 8N、用 seed/selected/扩展代替 fused，或删除坏行后以 rank 9 回填。重复/未知 ID、Owner 矛盾等不完整输入按原严格校验拒绝，不能提升有效候选排名。
+- 多细节只看全局引用重绑定后的 `branch.context + selection + source_map` 与固定 Segment/Atom 完整可见正文闭包，不把候选命中当打包保留。将原 body helper 中共享的完整块/slot/heading/顺序检查抽出复用；旧 Owner/Page 的最终 public 来源及答案校验门留在原外层，新 Recall 不要求 LLM succeeded、回答包含引用或 response.sources 未裁掉。该 context 是最终 packer 文本，不等于完整模型消息或实际 API 调用证明，不能据此声称调用数/延迟通过。
+- 测试在 collect 前独立指定小来源 gold groups，验证真实 factory 接线；纯评分正反例覆盖第 8/9 位、单组替代 Atom/多分支去重、无映射/错正文/版本/path/缺样本仍保持分母、Dense-only、召回与 packing 两阶段不互相代替、LLM 后续失败/引用变化不改已打包证据分子。原四项指标及所有显式负例保持，两个冷消费者继续禁止重新执行检索/packer/模型；可提取纯正文渲染用于验证已观测块，不生成新选择。改前沿用已验收 238 项与原 baseline/deterministic 同字节证据；改后跑目标 RED/GREEN、完整 eval/baseline/deterministic 三文件，D 独立验收后提交。只说明新增两项真实 producer，其他未测门仍不通过，不触发全量/外部服务或新增监督层。
+
 D 本轮只读核对确认：冻结 baseline 是 retrieval-only，保留 85 例 RRF 检索/最终上下文和原始 Dense cassette，`generation_calls=0`，不能充作原始 BM25 或回答/端到端耗时基线；190 条等价记录在两阶段均无匹配（每阶段 48 条缺 source ref、47 条来源版本不符）。原字节和匹配规则保持，不重开 D0，不以 candidate 分数自比。后续评分必须按真实来源和适用分母计算，缺少独立输入的指标继续不通过。
 
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
