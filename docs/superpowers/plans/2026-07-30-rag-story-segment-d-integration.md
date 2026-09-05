@@ -210,6 +210,10 @@ D 独立定向 **37 passed**（`C:\Users\HUAWEI\AppData\Local\Temp\1999wiki-d-s3
 - D 改前 fusion/budget/context 三文件 **59 passed**：OS temp `1999wiki-d-segment-catalog-before-f772b3f55436438a88e177598b9df1d2\pytest.log`，SHA `397e486d58efba953a625a1d60e58a6bc6030e4a5d9ac983f84ca3dc3206f30d`。先增加有意义的重复扫描失败用例，再实现；用真实小来源安装后多次检索，证明同一索引复用且请求不再遍历全 Segment tuple/values 重建表或求总量，不能只测一个未接线 helper。纯函数同输入前后完整结果一致，未知命中/越权/坏 rank 等负例及相同 Owner/显式双向边/分支兼容约束保持。新增静态坏输入在安装/建表边界失败；索引不可变且值引用原 Segment。
 - 改后完整运行上述四测试文件、现有 `test_story_context_units.py` 与 `test_story_segment_eval.py`，保留真实小来源→安装→collect 的 ranks、最终正文/来源/引用断言。测试只证明算法等价与不重复整库扫描，不把 fixture 延迟当真实生产性能。Conda/OS temp、禁止真实全量与外部服务的边界不变；D 独立审查后提交，E 不自行提交或进入下一项。
 
+**静态索引检查点已验收：** D 在 E 提交 `f5106b5ecf872a48461dcd4d3d1deedda36f77c6`，七文件 `+225/-67`，其中三生产文件净增 10 行；以一个安装期二字段派生索引替换请求中四处建表及整库字符求和，没有兼容双轨或新模块。E 六文件 **238 passed**，OS temp `idxfull-01bb4e3b.log`，SHA `e67efc2c98692533d3d2ac4abbd6a12e9dc2cbb5a3a64b74db00100f14d5b17f`；D 独立 **90 passed**，OS temp `1999wiki-d-segment-index-final-1b1e41bcd14843bd81e5718e00f21930\pytest.log`，SHA `8353ad292687925158fef35ff2ffe4d1472a35f56c99822118784215cf3ef01e`。D 直接执行 `78864b0` 旧代码与新函数：160 组融合、252 组邻接扩展完全一致，完整 retrieve 输出同为 3741 bytes / SHA `fade51f18ffde9d45c9522490777bbb81dd3b6fa56c8735c42e34f7b493a2b94`。真实安装后的重复请求禁止遍历 Segment tuple 与索引，实际三函数复用同一索引；外部命中校验及已有断言保留。最终字节与 D 审查一致，E 树/index 干净，未合并 main；不把 fixture 耗时当作生产性能门已通过。
+
+**S3 下一项先核对计分口径，不改文件：** 在上述固定提交，E 只核对现有观测能否支撑 `fused_segment_recall_at_8` 与 `multi_detail_coverage_rate`，给 D 一份简短消息（不新增计划/receipt）。明确 gold group 的独立分母、同 ID 不同正文/来源版本的拒计规则、固定 Atom→Segment 映射、Top-8 的实际分支级边界，以及多细节“最终上下文可见”与“答案引用成功”的区别；不能把缺映射/缺样本删出分母、重跑检索/packer、从 observed 补 gold 或复用旧 fixture 平铺字段。D 同步核对冻结 gold/source/mapping 和 Spec；只有口径与真实接口一致才放行代码。仅阅读现有模块/小 fixture，不启动新 E、真实全量或外部调用；提交的原 56 gate 与阈值保持。
+
 D 本轮只读核对确认：冻结 baseline 是 retrieval-only，保留 85 例 RRF 检索/最终上下文和原始 Dense cassette，`generation_calls=0`，不能充作原始 BM25 或回答/端到端耗时基线；190 条等价记录在两阶段均无匹配（每阶段 48 条缺 source ref、47 条来源版本不符）。原字节和匹配规则保持，不重开 D0，不以 candidate 分数自比。后续评分必须按真实来源和适用分母计算，缺少独立输入的指标继续不通过。
 
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
