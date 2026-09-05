@@ -12,7 +12,7 @@
 - 保留 E 的结构/分支信息、Atom BM25、Segment Dense、Typed Dense、融合与预算、多剧情比较、continuation、anchor、AnswerScope、Atom citation 和 REST/SSE 一致性。
 - 保留来源与产物身份校验、Owner/授权边界、准确的失败/空检索区分、引用闭包和会话提交原子性。
 - 真实 embedding/Milvus 仍由 D 在 E 合并后执行；仍检查云端容量，构建后保留至少 12 GiB，Story Segment 不超过 25,000；不得自动激活、覆盖 active collection 或下载媒体。
-- C 与 D0 已完成的提交和证据继续有效。E 在现有工作树、现有会话上继续；按用户最新设置，后续执行使用 `gpt-6-astra / max / 普通速度`，不由历史 Plan 的模型或快速模式条款覆盖。恢复前分别核对模型、思考等级和 service tier；不能仅关闭快速模式选项就假定已切换普通速度。
+- C 与 D0 已完成的提交和证据继续有效。E 在现有工作树、现有会话上继续；按用户最新设置，后续执行使用 `gpt-6-astra / xhigh / 普通速度`，不由历史 Plan 的模型或快速模式条款覆盖。恢复前分别核对模型、思考等级和 service tier；不能仅关闭快速模式选项就假定已切换普通速度。
 - 收敛起点为 E HEAD `c81d336806cd9f0b3abb32db01054287df14d711` 及已有 11 个未提交文件。已有改动、失败构建和验收证据保留；不得为了拆提交而重置或重放整条历史。
 
 ### 需要关闭的根因
@@ -85,6 +85,17 @@ S2 首批只准备可复用的文本核对逻辑，不宣称已解除真实文�
 
 先用有意义的失败测试暴露无媒体字节的文本构建、缺 registry/budget、打包后实际 loader 失败；再贯通 producer→打包→storage→fake typed build→runtime install。还须验证文本损失/来源篡改/映射篡改仍阻断、同输入两根目录语义一致、完整非 Story Corpus/Media/active v1 回归、外部调用边界和非法旧 candidate 拒绝。只运行本地 fixture；本批不运行真实全量快照、embedding、Milvus 或媒体操作，不更新旧 D2 字节、不生成新监督 receipt、不提交。D 独立验收后与已有重叠改动按实际依赖成组提交；最终真实构建留在 S5。
 
+**S2 真实消费者联调发现的 Owner 接线修正：** 已发布的 C Atom/Segment/Typed Dense 使用来源 `story_entity_id`（例如 `1`），E0 registry 与授权 context 使用带类型的稳定键（例如 `story:1`）；不能按字面直接比较，也不能为对齐测试改写 C 数据。D 允许本批额外修改 `src/rag/story_authorization.py`、`src/rag/retriever.py` 和 `tests/test_story_authorization.py`，仅完成这一既有身份边界的精确接线，不改变授权算法或公开契约。
+
+- 在现有 detector 的已验证 Parent 索引上提供一个精确的 registry-key → 原始 Story ID 查询；只查带类型的注册键，拒绝未知键/非 Story 键，不用前缀剥离、raw-ID fallback、模糊匹配、默认放开或新增序列化映射。保持输入 Owner 顺序与一对一关系；不重新检测问题或改变授权集合。
+- `retrieve_story_branch_v2` 先完成原有授权/branch filter 闭包，再在同一入口映射一次。候选检索与预算/context 选择共用这个存储 ID 元组；原 context、required refs、公开 branch filter、continuation 和 anchor 继续使用原授权键。不得修改 Atom/Segment/Typed 行、Dense 过滤算法、融合/预算算法、引用身份或注册表产物。
+- 当前本地打包→storage→fake typed→安装后的业务失败是本修正的 RED。验收必须穿过真实 Policy/授权 context 与 `retrieve_story_branch_v2`，验证命中、来源/预算闭包及未授权 Story 隔离；覆盖 direct、continuation、anchor 共用映射、open-domain 不变及未知/跨类型键在检索前拒绝。旧 fixture 改为遵守真实 producer 的 ID 契约，不用给假候选补前缀掩盖问题。继续使用既有测试与普通日志，不新建修复回执；本修正及 S2 相邻回归通过后由 D 一并复核。
+
+**S1/S2 本地检查点（D 已验收）：** E 提交 `59604cb79b33b3cf9b3fa9762fca6b27e5c21ad5` 保存当前相互依赖的 22 个文件，包含此前未提交的构建脚本和评测测试，不代表本接口批新增了全部 diff。提交后工作树与 index 干净；尚未合并 main。S2 生产者、23 文件包、实际 storage/fake typed/runtime 消费、Owner 精确映射及同实体重复 Parent 的一致性去重已贯通；冲突事实仍拒绝。D 的 corpus 回归 105 项、eval/typed/dense 回归 102 项通过；后者运行中有共享 fixture 更新，因此最终固定版本另验 23 项（29 项被 `-k story` 排除），9 个相关文件前后 SHA 无变化。E 最终 runtime 全文件 47 项、authorization 139 项通过；没有把测试替身当作真实向量质量证据。
+
+- 最终 D 日志：`C:\Users\HUAWEI\AppData\Local\Temp\1999wiki-d-s2-final-20c19abd5ca4\pytest.log`，SHA-256 `9f48aec7bc57f5eb66be12ef624d389b96a6acb8bdfe92244f92939ca8f8ba8b`；E runtime 日志：`C:\Users\HUAWEI\AppData\Local\Temp\s2-local-859515f324b34a5aadc849917b10d6eb.log`，SHA-256 `910c7a8c26c5231c63cd7598eea6931ca3c0a12f6d74a3ccab94fe9912b994f1`。这些是普通测试记录，不生成额外监督回执；此前上下文压缩失败未改变已核验的测试结果。
+- 此检查点仅关闭 S1/S2 本地范围。真实快照、真实观测 producer、最终 handoff 正向路径、S4 收敛及 S5 完整交付仍待完成。现有 runner 的临时观测接线一并保存以保持依赖，但不得因此称其通过 S3。没有下载媒体、调用 embedding/Milvus 或更改生产激活状态。
+
 ### 验收顺序与证据含义
 
 1. **代码回归：** 验证授权、引用、预算、continuation、anchor 和接口行为；fake Dense 只验证算法及接线。
@@ -96,6 +107,8 @@ S2 首批只准备可复用的文本核对逻辑，不宣称已解除真实文�
 哪些指标属于各阶段，由 D 对照其计算所需输入逐项确定，不按当前实现方便程度分组。既有阈值和 gold 不降低；fake 指标不用于证明真实 Dense 质量。这里替代旧 D2 中“全部 56 项必须在真实向量构建前通过”的时序要求，不减少最终验收内容。
 
 S3 的已确认修复边界：当前 `story_segment_runner` 依赖 runtime snapshot 上并未实现的 `execute_measured_story_query`、`observed_dense_ranks` 和 `observed_capacity_evidence`，且真实 CLI 仍转入 fake Dense 评分核心。应使用明确的运行执行器产生观测，snapshot 继续只表示已验证的产物身份；性能与质量消费同源运行观测，fake 与真实结果明确区分。不得给不可变 snapshot 临时塞入测试属性，或以传入自报计数代替真实调用记录。6 项产物、24 项本地流程、26 项真实运行的初步分组需在 S3 按全部冻结分母和 producer 逐项验实后固化，不是当前已通过清单；最终仍要求全部 56 项完整有效。
+
+S3 同时迁移既有 `emit_story_segment_handoff`/validator 的旧 flat candidate v1 与内联 `typed_dense` 假设，使其消费本节唯一 v2 文本包，并与 D 统一继任交接契约。当前因 `evaluation_pending`/`operation_observations_pending` 正确拒绝打包，只证明未完成状态不会被误放行，**不证明最终 handoff 正向路径可用**。真实观测闭合后须恢复正向交接验收；不能添加 v1 兼容退路或临时伪造 ready。
 
 ### 简化后的监督与变更规则
 
