@@ -118,6 +118,12 @@ S3 同时迁移既有 `emit_story_segment_handoff`/validator 的旧 flat candida
 
 ### 简化后的监督与变更规则
 
+**S3 下一批：两个离线产物指标的实际 producer。** 仅放行 E 的 `src/rag_eval/story_segment_runner.py`、`scripts/evaluate_story_segment_rag.py`、`tests/test_story_segment_eval.py`。在现有评测 CLI 增加 `artifacts` 子命令，输入为 `--candidate-build-input/--expected-candidate-build-input-sha256`、`--thresholds/--expected-thresholds-sha256` 与独立 `--output`；一次通过既有 v2 parser 和 23 文件布局校验，不初始化配置客户端、runtime snapshot、网络或 fake Dense。复用 `evaluate_hard_gates` 的 56 条九字段指标行，在普通报告顶层标记 `evaluation_stage="artifacts"` 并绑定 candidate 原始 SHA/ordered tuple、manifest SHA 与 thresholds SHA；没有对应观测的其余 54 项继续 `passed=false`，报告总状态 `no_go`，不增加 ready/激活语义或新的监督回执。输出在输入文本包之外，不改写原 bundle。
+
+- `typed_dense_story_segment_row_limit`：分母为已校验 typed JSONL 的实际总行数，candidate/numerator 为其中 `retrieval_unit_type=story_segment` 的实际行数；不读取自报 capacity 字典，不硬编码历史计数。
+- `oversized_atom_mapping_body_citation_closure_rate`：按已校验规范 Story Atom 正文的 Unicode code point 长度与该包 `hard_max_chars` 动态选出完整分母，不仅依赖 `quality_flags` 或只验证首个 context fixture。对每个超长 Atom 复用现有 Segment/Atom→Segment/ContextUnit、正文渲染与 citation/source 映射规则，证明单 Atom 映射、完整 span/正文/hash/source refs/citation 闭合；不截断、不重分块、不复制一套 renderer。零分母遵循现有不通过规则，不能补成 1 或伪造已测通过。
+- RED/GREEN 必须穿过真实小型来源→23 文件 writer→评测入口：覆盖普通/超长混合、超长不在首个 Segment、所有超长 Atom 均计入、正常阈值边界判定、候选/阈值哈希及行数/映射/正文篡改拒绝，以及原产物字节零漂移和不触发外部客户端。允许复用已有 fixture/变异 helper；不改 build/ContextUnit/运行时产品文件，不建立新领域框架或 56 个 adapter。若现有接口确实不足，先报告精确接口缺口；不在本批顺手扩大授权。定向与评分/CLI/ContextUnit 邻接回归后由 D 独立验收提交；不运行真实全量快照或旧 Build A。
+
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
 - 验证输入和跨进程/外部请求时保留严格检查；进程内使用已验证的不可变值，避免反复序列化和重验同一事实。跨请求 continuation 和外部文件不能按进程内可信对象处理。
 - 最终离线业务产物仍须证明确定性，并绑定已提交代码；日常等价重构不触发全量快照构建。代码身份变化不要求撤销已完成历史任务或重新运行 C/D0。
