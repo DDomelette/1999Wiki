@@ -133,6 +133,10 @@ S3 同时迁移既有 `emit_story_segment_handoff`/validator 的旧 flat candida
 - trace 保留已有字段的原始含义：同步 `invoke` 返回后的 `model_first_token_ms` 不能被新入口解释为实测 TTFT；复合 prepare 的总耗时不能被解释为纯 retrieval。此批不出具 latency/quality gate、raw Dense/BM25/fused 排名或调用次数的缺测零值，不宣称已关闭 performance/evaluate 的跨进程复用。CLI、performance receipt、56 项评分、运行时产物 schema、raw-rank producer 和最终 handoff 不在本批修改；它们后续必须消费同源实际观测，不能以本批内部出口通过代替端到端验收。
 - 先以实际执行测试暴露结果出口缺失，再做共同主体抽取；验证两种调用入口的回答/citation/context 行为相同，普通和复合生成计数无额外增加，本地分支不生成，身份错配在执行前失败。对同一个结果多次调用现有 serializer/trace 投影时，以禁用执行入口的反例确认不会重跑。运行现有 execute、Story runtime、断供/补充分支和 eval 邻接测试，Conda `1999wiki`、OS temp、普通日志；D 独立复核前不提交、不进入后续批次。不得恢复旧 Step 6/Build A、创建新 E、运行真实全量快照或外部服务。
 
+**单次执行出口已由 D 验收：** E 提交 `d7b924928e532fbb1a3a5744b0a1e88c830bff6b`，仅上述四文件，生产 +63/-4（净 +59）行、测试 +196 行，没有新文件/工厂/回调/CLI/回执。有效 RED 为首组 7 项与补跑 multi 2 项；夹具的版本字段、授权身份和 `mixed` 预期错误未计作产品 RED。E 定向 9 项、普通执行/tracing 52 项、Story/eval 邻接 25 项通过；D 改前 52 项及改后独立 79 项均通过，后者包含上批全部产物指标回归，四份代码、四份冻结评测输入和 Spec 前后 SHA 零漂移。D 日志 `C:\Users\HUAWEI\AppData\Local\Temp\1999wiki-d-s3-execution-final-30e6a738dc8d4af5b4bcf537d0a2beab\pytest.log`，SHA-256 `396a13c25059abee353b81931a56724afe91ab300a32525f39c3b73787354580`；E 日志/hash/argv 保留在既有执行轮 `01a07033-a74d-7220-a61e-6e96e8a1b1ca`，D 已核对原文件。原 `execute` 签名未变，其余原有函数/测试 AST 未改写；提交后 E 工作树/index 干净，未合并 main。正常构造链已验证普通、即时、单 Story 和真实 local+Story 双子任务的生成计数与回答/引用等价。
+
+本批仅提供内部 `(prepared, response, trace)` 实际结果。现有 composite aggregate `context` 为空的行为保持，不能从空字段或最终摘要伪造逐分支模型输入；逐分支上下文、raw Dense/BM25/fused 排名、可靠时序/调用观测及跨 CLI 同源持久化仍需后续接线。旧 CLI 的 snapshot 方法缺口、独立评分和最终 v2 handoff 仍未关闭，不把本批局部通过称为完整 S3。未运行真实快照、外部服务或激活。
+
 D 本轮只读核对确认：冻结 baseline 是 retrieval-only，保留 85 例 RRF 检索/最终上下文和原始 Dense cassette，`generation_calls=0`，不能充作原始 BM25 或回答/端到端耗时基线；190 条等价记录在两阶段均无匹配（每阶段 48 条缺 source ref、47 条来源版本不符）。原字节和匹配规则保持，不重开 D0，不以 candidate 分数自比。后续评分必须按真实来源和适用分母计算，缺少独立输入的指标继续不通过。
 
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
