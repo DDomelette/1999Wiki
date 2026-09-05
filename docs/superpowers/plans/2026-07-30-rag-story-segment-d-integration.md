@@ -228,6 +228,12 @@ D 本轮只读核对确认：冻结 baseline 是 retrieval-only，保留 85 例 
 
 **下一项只读范围：** 同一 E 在 `7b6c5fd` 核对冻结 baseline/equivalence 能否支持 `final_evidence_recall` 与 `middle_late_final_evidence_recall_delta`。仅明确最终上下文阶段、独立分母、身份/等价闭包、必要 CLI 输入及现有 matcher/producer 复用；不修改文件、不新增文档或 receipt、不重采集、不扩展其他指标。D 同步核对后放行最小实现。
 
+**只读核对已完成，放行两个最终上下文指标：** D/E 均验证冻结 baseline business identity、85 个 case hash、gold/阈值/等价关联；现有未改 matcher 从历史两阶段结果复现 190 条等价记录。没有同 Atom ID 或同来源版本候选，故该次只读复验不需要额外 Atom needle。有效历史 Recall 为全体 `0/95`、中后段 `0/6`，不表示门通过。E 在 `7b6c5fd` 仅修改 `src/rag_eval/story_run_observations.py`、`scripts/evaluate_story_segment_rag.py`、`tests/test_story_segment_eval.py`；不改冻结文件、matcher/capture、runtime、runner 或阈值，不新增模块/框架/receipt。
+
+- `evaluate` 增加四个必填参数：`--baseline-receipt`、`--expected-baseline-receipt-sha256`、`--equivalence`、`--expected-equivalence-sha256`。历史输入先用外部预期 SHA 固定，再核对 schema、business/case hash、query 与 gold/阈值关联、阶段/目标/唯一性/计数闭包；business identity 从已固定 receipt 重算，不另立可编辑参数。既有 D 接受的精确历史字节是本批 baseline 来源，不在消费者中导入 capture/重开 D0/重采集或复制 matcher。baseline 缺项或身份矛盾必须拒绝，不默认零；历史代码身份保留历史值，不要求旧 capture SHA 等于当前脚本。必要报告输入身份与输出路径保护一并贯通。
+- 在原 group 遍历中复用已验证 relevant/visible 集合和一次 Owner 索引，追加两行，不重做检索、fusion、packer 或正文评分。全体按每个 `(query_id, group_id)` 计分；中后段仅按冻结 `query_type` 的 `middle_fact/ending_fact` 选组，不按候选分数或查询 ID 选组。两个阶段分开，baseline 只取 `final_context`，成员 Atom 命中 OR；候选缺样本/映射/错版本不删分母，跨合法分支每组至多一次。最终证据须达到 0.90 且不低于 baseline；中后段 baseline 低于 0.90 时至少提升 0.10，否则不退化；复用原 gate 算法，零分母不通过。原六项 producer 行保持一致。
+- 测试先独立声明小来源 gold 与历史上下文，再 collect 候选，不能从候选命中反填 baseline；共享精简的本文件 fixture 即可，不新增大体量测试框架。覆盖检索命中但最终未保留、替代 Atom/重复组计数、baseline 非零的相对门与 0.90 分支、缺失/错阶段/错目标/身份漂移拒绝、候选失败/缺证据仍保留分母、零分母、原六项字节等价及两个冷消费者禁止执行链。改前沿用已验收同字节 154 项；新增有效 RED 后实现，再跑完整 eval/baseline/deterministic 三文件及必要定向测试。Conda/OS temp、无真实全量或外部调用的边界不变；D 独立验收后提交，E 不自行提交或进入后续指标。
+
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
 - 验证输入和跨进程/外部请求时保留严格检查；进程内使用已验证的不可变值，避免反复序列化和重验同一事实。跨请求 continuation 和外部文件不能按进程内可信对象处理。
 - 最终离线业务产物仍须证明确定性，并绑定已提交代码；日常等价重构不触发全量快照构建。代码身份变化不要求撤销已完成历史任务或重新运行 C/D0。
