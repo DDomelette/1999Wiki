@@ -188,6 +188,8 @@ D 独立定向 **37 passed**（`C:\Users\HUAWEI\AppData\Local\Temp\1999wiki-d-s3
 - 质量只使用每个 query 的 candidate 首个 timed `sample_index=0`；warmup/其余重测不扩大分母或择优。独立 gold 要求不从 observed 补齐，缺样本/缺正文/无适用分母均不得通过。这两项不需要 baseline，沿用既有报告数值格式并明确未执行 baseline 比较；其余涉及调用数、检测 gold、continuation/anchor、REST/SSE、完整引用正确率、关系、性能的 gate 继续 pending。85 例/95 Atom groups/157 mention spans 等审计数量不进入生产常量。
 - RED 至少涵盖真实 factory 事务合法而独立 gold Owner 错误、两 Owner packing 后少一个/被拆成两 KB、Page 仅召回但最终丢弃、同名异 revision/hash、伪留 source metadata 而无正文、缺来源/缺样本；增加真正正向的双 Owner 与 Topic/Page 保留对照。复用现有小来源→23 文件→D4→collect fixture；fixture gold 必须显式独立提供，不能照抄本次 observed，冻结正式文件不改。改前采用刚验收的 628 项同字节基线，之后运行本批 RED/GREEN、完整 `test_story_segment_eval.py` 及 `test_story_segment_baseline.py`、`test_rag_eval_deterministic.py` 邻接，D 再独立抽验/冷消费者核对。仍使用 Conda 与 OS temp，不跑真实全量/外部服务。D 审查前不提交、不进入下一批；新范围外根因批量报告 D，不新增监督流程。
 
+本批 fixture 已揭示、D 确认的待修产品根：`packet_policy.py` 的 `TOPIC_STORY_POLICY.sections=(story,plot,lore)` 会排除真实 Topic 的 `lead` Child，而已授权 `story_examples` primary 必须保持 `intent=story`；因此单支主题＋剧情会只留下 Story 并报 `topic_page_shortfall`。本批评分器必须如实判 Page 保留失败。允许语义独立的 Topic primary＋Story 两 KB 请求作为评分器正向对照，但不得强制拆分正式请求或宣称修复原单支能力。E 保留现有失败观测/日志及身份，不新增 receipt；D 在本批检查点后单独定案最小运行时修复，最终交付前闭合。
+
 D 本轮只读核对确认：冻结 baseline 是 retrieval-only，保留 85 例 RRF 检索/最终上下文和原始 Dense cassette，`generation_calls=0`，不能充作原始 BM25 或回答/端到端耗时基线；190 条等价记录在两阶段均无匹配（每阶段 48 条缺 source ref、47 条来源版本不符）。原字节和匹配规则保持，不重开 D0，不以 candidate 分数自比。后续评分必须按真实来源和适用分母计算，缺少独立输入的指标继续不通过。
 
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
