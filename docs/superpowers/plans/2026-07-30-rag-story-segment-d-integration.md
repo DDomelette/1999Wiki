@@ -198,6 +198,18 @@ D 独立定向 **37 passed**（`C:\Users\HUAWEI\AppData\Local\Temp\1999wiki-d-s3
 - evaluator 不再依赖“自然存在的未修 bug”做负面 fixture：将该单支案例转为正向，调整其独立期望计数；原显式移除正文、缺源、错版本/种类等负面对照继续失败。评分器生产代码不改。补 policy 特征测试证明只有 Topic/story 的章节限制变化，其他字段和实体政策保持。若最小 policy 修正未能穿过真实单支链路，先向 D 给出范围外根因，不旁路现有 gate。
 - 使用现有失败观测与刚验收的同字节回归，不重复整轮基线；改后跑两个修改测试文件和现有 `test_rag_topic_scope.py`、`test_hybrid_retriever.py`、`test_retrieval_budget.py` 邻接。D 独立核对后提交。沿用同一 E 模型/工作树与 Conda/OS temp，禁止真实快照、外部服务、媒体、激活及新模块/receipt；不自行合并或进入下一项。
 
+本批邻接回归补充：E 五文件 151 passed + 1 failed、D 独立 49 passed + 1 failed 均只失败于 `tests/test_retrieval_budget.py::test_topic_policy_composition_preserves_story_sections` 的旧章节断言。D 已核对组合算法未变；额外只放行此测试文件将该用例迁移为 Topic/story 与 general_game 合并后的空章节限制，保留策略顺序、source_target 和其他组合断言，不改生产组合/预算逻辑。本批最终四文件；迁移后 E 重跑同五文件，D 独立复验。该迁移落实已批准行为，不降低质量门或新增产品范围。
+
+**Topic 检查点已验收：** D 在 E 提交 `78864b0692120de59ca54b3eb6a936f4db492811`，四文件 `+53/-15`，生产仅净增 2 行，无新模块。E 同字节五文件 **152 passed**，OS temp `topicfinal2-71cb7b32.log`，SHA `843ffac2d07345903b544a8be2ba64fec00f98294990f139c4c334697c0a0829`；D 独立 **50 passed**，OS temp `1999wiki-d-topic-policy-accepted-f916373aa3b949c496ddbf894151061c\pytest.log`，SHA `1ce80068a267d0d98b967bf16b1144968b818b5d975b6a07e2d14a0273036746`。336 组旧新 policy 对照仅 3 个 capability 的 Topic/story sections 改变，所有其他字段/情况一致。真实小来源单支保留 Topic 正文和 Story Atom 引用，Owner 仅 storm/01；原 required=2、available=1 短缺如实保留。评分器、冻结六输入与验收文件字节不变，E 树/index 干净，未合并 main；fixture 的 3/75 与 2/11 仍是 producer 测试数据，不是实际题集质量或发布结论。
+
+**下一小批：复用已安装 Segment 静态索引，落实 S4 的实际运行路径收敛。** 在 E 上述固定提交继续，不另起规划轮。D 已确认安装时 `StoryRuntimeBundle.__post_init__` 建成但丢弃 `by_segment`；每个分支随后在 retrieve、fusion、Retriever 与 expansion 重复遍历整库重建映射，并重算全文字符总量。该批仅消除重复静态工作，不声称已完成 S3 的剩余真实 producer 或达到性能门槛。
+
+- 生产只允许 `src/rag/chain.py`、`src/rag/story_retrieval.py`、`src/rag/retriever.py`；测试只允许现有 `test_story_segment_runtime.py`、`test_story_retrieval_fusion.py`、`test_story_retrieval_budget.py`、`test_hybrid_retriever.py`。保留已批准功能，不修改构建/观测/评测、Planner/授权、schema、gold/阈值、active/v1 路线或外部调用语义，不新增模块、框架、receipt 或全局缓存。
+- 在已验证安装边界建立并保留一份只读 ID→原 Segment 引用的派生索引及字符总量；保留需要的原有 Segment tuple，不复制正文/重建另一份业务事实，不允许调用者独立注入索引。原重复 ID、非空 ID/Owner、合法 sequence 与 Atom 闭包检查仍在边界严格执行。将原 `_segment_catalog` 的必要静态验证集中复用；请求内查表，不重新验证整库。
+- 统一迁移尚未发布的 retrieve/fusion/expand 内部参数和本仓调用者，让三者使用同一索引；不要增加“原 iterable＋可选 index”的双输入、旧新两套算法或为 E 自身历史测试造兼容包装。外部 BM25/Dense 返回的类型、rank、未知 ID、Owner/关系过滤与契约错误仍每次严格验证。保留原排序、得分、候选上限、seed/邻接顺序、预算、来源/引用和失败分类；expansion 的原上限改读预计算总量，不悄悄收紧或放宽实际预算。允许仅将 expansion 已访问 ID 的线性重复搜索改为保持原输出次序的集合。
+- D 改前 fusion/budget/context 三文件 **59 passed**：OS temp `1999wiki-d-segment-catalog-before-f772b3f55436438a88e177598b9df1d2\pytest.log`，SHA `397e486d58efba953a625a1d60e58a6bc6030e4a5d9ac983f84ca3dc3206f30d`。先增加有意义的重复扫描失败用例，再实现；用真实小来源安装后多次检索，证明同一索引复用且请求不再遍历全 Segment tuple/values 重建表或求总量，不能只测一个未接线 helper。纯函数同输入前后完整结果一致，未知命中/越权/坏 rank 等负例及相同 Owner/显式双向边/分支兼容约束保持。新增静态坏输入在安装/建表边界失败；索引不可变且值引用原 Segment。
+- 改后完整运行上述四测试文件、现有 `test_story_context_units.py` 与 `test_story_segment_eval.py`，保留真实小来源→安装→collect 的 ranks、最终正文/来源/引用断言。测试只证明算法等价与不重复整库扫描，不把 fixture 延迟当真实生产性能。Conda/OS temp、禁止真实全量与外部服务的边界不变；D 独立审查后提交，E 不自行提交或进入下一项。
+
 D 本轮只读核对确认：冻结 baseline 是 retrieval-only，保留 85 例 RRF 检索/最终上下文和原始 Dense cassette，`generation_calls=0`，不能充作原始 BM25 或回答/端到端耗时基线；190 条等价记录在两阶段均无匹配（每阶段 48 条缺 source ref、47 条来源版本不符）。原字节和匹配规则保持，不重开 D0，不以 candidate 分数自比。后续评分必须按真实来源和适用分母计算，缺少独立输入的指标继续不通过。
 
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
