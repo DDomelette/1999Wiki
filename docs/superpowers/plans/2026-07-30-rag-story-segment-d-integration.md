@@ -222,7 +222,11 @@ D 独立定向 **37 passed**（`C:\Users\HUAWEI\AppData\Local\Temp\1999wiki-d-s3
 - 多细节只看全局引用重绑定后的 `branch.context + selection + source_map` 与固定 Segment/Atom 完整可见正文闭包，不把候选命中当打包保留。将原 body helper 中共享的完整块/slot/heading/顺序检查抽出复用；旧 Owner/Page 的最终 public 来源及答案校验门留在原外层，新 Recall 不要求 LLM succeeded、回答包含引用或 response.sources 未裁掉。该 context 是最终 packer 文本，不等于完整模型消息或实际 API 调用证明，不能据此声称调用数/延迟通过。
 - 测试在 collect 前独立指定小来源 gold groups，验证真实 factory 接线；纯评分正反例覆盖第 8/9 位、单组替代 Atom/多分支去重、无映射/错正文/版本/path/缺样本仍保持分母、Dense-only、召回与 packing 两阶段不互相代替、LLM 后续失败/引用变化不改已打包证据分子。原四项指标及所有显式负例保持，两个冷消费者继续禁止重新执行检索/packer/模型；可提取纯正文渲染用于验证已观测块，不生成新选择。改前沿用已验收 238 项与原 baseline/deterministic 同字节证据；改后跑目标 RED/GREEN、完整 eval/baseline/deterministic 三文件，D 独立验收后提交。只说明新增两项真实 producer，其他未测门仍不通过，不触发全量/外部服务或新增监督层。
 
+**Group Recall 检查点已验收：** D 在 E 提交 `7b6c5fd010364821c7021065f03ca8e96a902eba`，两文件 `+338/-12`，生产净增 106 行，无新模块、schema 或采集字段。E 同字节三文件 **154 passed**，OS temp `grpfinal-bee585e0.log`，SHA `0cb9efc735bb0181b85eeeef372c623a546987748decf2dbde18906cd8a20e59`；D 独立 **52 passed**，OS temp `1999wiki-d-group-recall-final-bb15049bdb784c5e91393c2c2e840c78\pytest.log`，SHA `cc292c645ae8eca496cc5b6e4734ff7bab587a86224477e7c908ac89e31b54a7`。两个全新 Python 冷消费者在禁止配置/运行时/packing/网络调用时正常完成，输入零漂移；D 与 `f5106b5` 旧评分函数直接对照，既有四项 producer 行保持一致。Owner 索引由评分入口构建一次并显式共用。独立小来源测试的 6/102 与 2/22 仅证明两个 producer 实际接线及负例有效，报告仍为 `no_go`；目前六项 producer 已具备本地实现，不代表真实 85 题六项通过，其他 50 项仍待真实输入与实现。E 树/index 干净，未合并 main。
+
 D 本轮只读核对确认：冻结 baseline 是 retrieval-only，保留 85 例 RRF 检索/最终上下文和原始 Dense cassette，`generation_calls=0`，不能充作原始 BM25 或回答/端到端耗时基线；190 条等价记录在两阶段均无匹配（每阶段 48 条缺 source ref、47 条来源版本不符）。原字节和匹配规则保持，不重开 D0，不以 candidate 分数自比。后续评分必须按真实来源和适用分母计算，缺少独立输入的指标继续不通过。
+
+**下一项只读范围：** 同一 E 在 `7b6c5fd` 核对冻结 baseline/equivalence 能否支持 `final_evidence_recall` 与 `middle_late_final_evidence_recall_delta`。仅明确最终上下文阶段、独立分母、身份/等价闭包、必要 CLI 输入及现有 matcher/producer 复用；不修改文件、不新增文档或 receipt、不重采集、不扩展其他指标。D 同步核对后放行最小实现。
 
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
 - 验证输入和跨进程/外部请求时保留严格检查；进程内使用已验证的不可变值，避免反复序列化和重验同一事实。跨请求 continuation 和外部文件不能按进程内可信对象处理。
