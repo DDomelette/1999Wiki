@@ -272,6 +272,10 @@ D 两个全新冷进程禁用 16 个执行/网络入口、29 个输入零漂移�
 - 先跑现有 BM25/Analyzer/影子小 fixture 回归，再补能暴露全表遍历和无关文档读取的 RED；在实际安装链上扩展既有静态索引测试，证明真实 Atom 检索仍被执行而非替身返回。GREEN 必须覆盖 legacy/中文、重复词/同分/无命中/补齐、保存加载、空/失败重建；用独立旧公式的小型差分覆盖分数和完整返回顺序，原实现只保留在 Git 或测试 oracle，不能在产品保留双路径。复用既有 fixture，不为案例创建通用测试框架。
 - 改后跑三项 BM25/Analyzer/影子文件、完整 Story runtime/fusion，以及必要 observations 已安装链邻接；D 独立对照旧提交评分/文件字节、查询访问范围及 scope 后提交。只用本地 fixture/Conda `1999wiki`/OS temp，禁止真实快照、LLM/embedding/Milvus/SSH/媒体/激活。E 不 stage/commit，不进入其余五门或新采集批；异常在同一范围内根因明确时最小修复，越界先回报 D。
 
+**BM25 检查点已验收：** D 在 E 提交 `697c6ab8ddd8d4039cb3950fcf9cd0ecd8e90c0d`，三文件 `+153/-4`，生产净 +12 行，仅修改原索引类的初始化/build/search，13 个其余定义 AST 不变。E 原三文件 100 项通过；有效 RED 三处全表/无关读取失败；最终三文件 **108 passed**、完整 Story runtime/fusion 与观测邻接 **100 passed**。最终两日志为 OS temp `bmfull-ff8ee450.log` / `bmadj-6bdfe392.log`，SHA `a17eb8cef9408416146b661e327370a14972c3ea6be3b325dd600d8427697993` / `312f91914f56e3f491b64128783102d051a70a8b808e383af17c716f0806a1ee`。D 独立 **121 passed**，日志 `1999wiki-d-bm25-c6a078a28c4742f4b2a6266987e25cbb\pytest.log`，SHA `46e81efff9fa3709c35b9d79398427a0beeef2b73c078c8db56cf8f9fb6c0feb`；与 `f483e20` 实际旧类比较 **3,780 组完整查询结果、36 组保存字节完全一致**，差分日志同目录 `differential.log`，SHA `526afbb18c4a9b27c2b56cac372eff84743fdc2e1a9dbe86ad8d958658edace6`。2,000 文档/单命中小例中词频读取从 2,000 条降至 1 条，补齐结果仍相同；不外推整体延迟或真实扫描门通过。最终生产 SHA `e66200bfe4d266d0465bc8819650058d1da57b26570f856af13cbca7fc182d19`；树/index 干净，冻结四输入与 observations 字节不变，未合并 main、无外部调用。
+
+**下一项仍限定为只读具体接线：** 同一 E 在 `697c6ab` 核对主 Child 与 Story supplement 是否对同一 KB 的相同 query/model 重复调用 embedding，以及共用现有 `StoryDenseQuerySession` 的最小接线点。特别区分 `_RuntimeStoryRetriever.search` 返回固定主来源的替身与实际已安装 `Retriever.search`；不能用前者证明真实主路径调用数。按实际调用图说明正常/两个不同 query/依赖失败/并发子任务的作用域，并提出沿现有 RequestTrace 记录实际尝试（含异常）的最小方案及测试位置；不要增加全局缓存、observer、另一套计数事实源或宽松 duck-typing fallback。此轮仅一条紧凑报告，不改文件、不运行测试/采集、不新写计划或 receipt，不扩大六门分母、不进入真实构建；D 独立决定下一批统一实现与观测边界。
+
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
 - 验证输入和跨进程/外部请求时保留严格检查；进程内使用已验证的不可变值，避免反复序列化和重验同一事实。跨请求 continuation 和外部文件不能按进程内可信对象处理。
 - 最终离线业务产物仍须证明确定性，并绑定已提交代码；日常等价重构不触发全量快照构建。代码身份变化不要求撤销已完成历史任务或重新运行 C/D0。
