@@ -264,6 +264,14 @@ D 两个全新冷进程禁用 16 个执行/网络入口、29 个输入零漂移�
 
 **下一证据家族先只读，不改文件：** 同一 E 在 `f483e20` 核对六个调用/扫描门：`request_detector_calls`、`dense_embedding_calls_per_knowledge_subtask`、`reranker_api_calls`、`answer_scope_added_api_calls`、`ambiguous_story_detection_retriever_calls`、`story_query_time_full_scan_count`。将各门的独立分母、实际调用入口、现有 trace/counter、缺测/失败分支与尚缺观测写成一条紧凑消息，提出可共享的最小接线；不得从配置关闭、返回成功、预置零值或静态代码扫描宣称运行期零调用。优先复用现有同次结果/RequestTrace，不另设通用 observer、重复计数器或六份 scorer；若某门需要未有的观测，应明确缺口而非强行实现。此轮不写矩阵/计划/receipt、不跑采集/全量/外部服务，不改阈值、runtime 或启动新任务；D 独立核定后才放行实现。
 
+**2026-09-09：只读结论与最小 BM25 优化批。** D/E 均核对实际调用边界：Detector receipt 不是调用计数，Story Dense session 只记录成功向量且未覆盖主 Child 路径，rerank 阶段进入不等于 API 调用，AnswerScope 缺同包两次归一化观测；错误检测七类独立输入未被当前普通请求 collector 覆盖。六门暂不增加评分行，不将静态检查或单测通过冒充真实题集通过。后续调用观测仍优先沿现有 RequestTrace 接线，不新增通用 observer。另确认 `LocalBM25SparseIndex.search` 每个非空查询枚举全部 `doc_terms` 并重算文档长度；已安装 Story Atom 确实调用此索引，原 Segment 静态索引回归没有覆盖这一遍历。先修算法根因，不用一个预置扫描计数遮掩它。
+
+- 当前合法起点为 E `f483e20a48ec67923eb94acafd0b2ac0bed11e67`、干净树/index；旧 `c81d336 + 11 dirty files` 仅是历史收敛起点，不是当前恢复门。仅允许修改 `src/rag/sparse.py`、`tests/test_sparse_bm25.py`、`tests/test_story_segment_runtime.py`。同一现有 E task 执行，模型/速度保持最新批准设置，不新建会话、不恢复旧 Step 6/Build A。
+- 在现有 build/load 阶段生成 term→文档位置倒排表和文档长度；query 只访问查询词的 postings 与命中文档，按原文档位置稳定处理。复用已有词频，不复制第二套 TF 或引入新检索引擎。保持 Analyzer/参数、重复查询词的加权顺序、浮点评分、同分顺序、无命中返回空、既有零分补齐与 top_k 切片行为。补齐只按所需位置读取，不计算未命中文档的词频；高频词的合法 posting 命中可能覆盖全部文档，这不等同于无条件扫描全表，不能据此宣称最坏时间恒定。
+- 保持 records/文件 schema、Analyzer 身份、保存字节及 load 接口；倒排表是已安装索引的派生内存状态，不写新 sidecar、manifest 或兼容分支。成功重建统一替换状态，失败仍保留旧索引可用，空重建不能残留 posting。不得修改 BM25 召回/融合策略、授权、trace、观测 schema、冻结 eval 文件、构建器或生产产物。仅此优化不增加任何质量门的“通过”声明。
+- 先跑现有 BM25/Analyzer/影子小 fixture 回归，再补能暴露全表遍历和无关文档读取的 RED；在实际安装链上扩展既有静态索引测试，证明真实 Atom 检索仍被执行而非替身返回。GREEN 必须覆盖 legacy/中文、重复词/同分/无命中/补齐、保存加载、空/失败重建；用独立旧公式的小型差分覆盖分数和完整返回顺序，原实现只保留在 Git 或测试 oracle，不能在产品保留双路径。复用既有 fixture，不为案例创建通用测试框架。
+- 改后跑三项 BM25/Analyzer/影子文件、完整 Story runtime/fusion，以及必要 observations 已安装链邻接；D 独立对照旧提交评分/文件字节、查询访问范围及 scope 后提交。只用本地 fixture/Conda `1999wiki`/OS temp，禁止真实快照、LLM/embedding/Milvus/SSH/媒体/激活。E 不 stage/commit，不进入其余五门或新采集批；异常在同一范围内根因明确时最小修复，越界先回报 D。
+
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
 - 验证输入和跨进程/外部请求时保留严格检查；进程内使用已验证的不可变值，避免反复序列化和重验同一事实。跨请求 continuation 和外部文件不能按进程内可信对象处理。
 - 最终离线业务产物仍须证明确定性，并绑定已提交代码；日常等价重构不触发全量快照构建。代码身份变化不要求撤销已完成历史任务或重新运行 C/D0。
