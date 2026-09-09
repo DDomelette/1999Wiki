@@ -9,7 +9,9 @@
 - D 独立旧执行/复合及 API/SSE 邻接 **50 passed**（3.68 秒），日志 OS temp `1999wiki-d-s63-adj-29ff7dfd6fcb4edd86738f6ff709b7e6/pytest.log`，SHA `fc5c559156bcd3a1311a303b57158b045803e4d18392424088e7a084d84d2f6e`。另复用已固定 v4 小 fixture（SHA `245d987d955e0bdcc00eb62b889b69425bd8279b6af18864d25ecbe0a046a097`），冷评分拒绝 public failed/outcome 篡改，缺失正常化记录仍缺测，原 `[1,2,2,4]` 分母及输入字节不变；禁用 normalizer 与网络，未再采集。生产 SHA 前后为 `266e9f5c584d0be87d885a4e2bc96f034808d297b0fa5ce4fe7fb4c57d13dd98` / `9e010b750c80912dc085459290b55e944f300a420d9a04808dba6207723c6de5`；冻结输入、接口和 main 用户脏文件不变。
 - 本批只修复已暴露的真实根因，不新增指标 producer。仍为 15 项有本地 producer、41 项待完成、整体 `no_go`；没有真实题集/embedding/Milvus/SSH/媒体/激活。不把局部回归称为最终交付。
 
-**第 6.4 项先只读核定调用观测：** 同一 E 从 `cf1ff72` 接续此前调用家族核对，仅聚焦 `request_detector_calls`、`dense_embedding_calls_per_knowledge_subtask`、`reranker_api_calls` 三门。当前真实 continuation/anchor 入口与 v4 同次观测已可用；复用既有 RequestTrace/完成事件/实际 Dense 尝试，说明哪些已覆盖、哪些缺接点以及能够共用的最小改动。分母依冻结阈值和已批准的协议拒绝口径，保留 setup/target、普通/续页、失败与未测的区别；不能用缺 span、配置关闭或成功结果冒充零调用，不能用平均数掩盖逐请求/逐 KB 超限。只给一条紧凑消息，不新写矩阵/Plan/receipt、不改文件、不跑采集/测试/外部服务、不延伸其余门或新建任务。D 同步核对后决定单一实施范围；此处不是三门实现放行。
+**第 6.4 项只读核定已完成：** 同一 E 在干净 `cf1ff72` 给出三门报告，D 已对实际入口和冻结阈值交叉核对，无需重复盘点。普通/anchor 的 Detector 调用在 `request_plan.py::RequestPlanFinalizer.finalize`，合法续页在 `story_authorization.py::authorize_story_continuation_action`，两者尚缺实际尝试观测；现有检测回执不是调用次数。共享 Story Dense session 已记录含失败的 adapter 尝试，但纯非 Story typed Child 的直接 `embed_query` 缺同型观测与 KB 绑定；现有事件不证明 SDK 内部 HTTP 重试数。`reranker.py::SiliconFlowRerankClient.score` 的 `urlopen` 尚缺请求尝试观测，外层 rerank 阶段或配置关闭不能独自证明 API 零调用。
+
+后续仍由 D 固定一个最小实施范围，尚未放行编码。沿用原 trace 与 setup/target 分离，完整调用覆盖/终止证据须能区分零次和未测；协议拒绝沿既定口径，不造业务响应。Detector 每目标自然请求恰好一次、Dense 每目标 KB 最多两次且同 query/model 不重复、reranker 为零，均保持冻结阈值。现有四字段聚合 gate 尚不能独立表达逐 KB 重复约束：必须保留实际计数并落实逐项判定，不能以平均掩盖 `0/2`、改分母或伪造超限 candidate 数值；该计分接线与调用观测应一起明确，不另建评分/监督框架。只读阶段无代码、测试、采集或外部操作，三门和整体 `no_go` 状态未改变；E 留在原任务等待 D 的实施边界，而非等待用户裁决。
 
 ### 2026-09-10 前序检查点：第 6.2 项观测实现已验收
 
