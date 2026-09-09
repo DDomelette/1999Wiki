@@ -2,6 +2,14 @@
 
 > **当前执行依据：** 先执行下方 2026-09-05 收敛修订。保持 `D → 一个受监督的 E worker` 两层；已完成任务的历史步骤用于追溯，不重新启动 C、D0 或新 E 会话。
 
+### 2026-09-09 安全暂停（用户要求；恢复须等用户继续）
+
+- 已验收 E HEAD 仍为 `d35a4d1616f3e94cea9497dd66215f11ecb83658`；当前 anchor 批只有 `src/rag/{chain,execution,route_policy,story_authorization}.py` 和 `tests/test_story_segment_runtime.py` 五个未提交修改，`+136/-2`，index 空。它们是 **WIP，不是已验收交付**；不得清理、回退或从旧基线重做。
+- E 已结束编辑/测试，无本项目 pytest/构建进程。入口级有效 RED 2 failed：OS temp `anred2-ae59b884.log`，SHA `0f9a5344c6148eb278da34097f39d1bf238f1ffd3ba0317f485785dd28c1eef2`；当前最小接线 GREEN 2 passed：`angr1-0ee8a7d4.log`，SHA `c3f7eadb0652d387413572cfa5c9da364d76c867e0272fc7cbdb93b88331b8c1`。D 核对日志与暂停字节，但尚未独立验收实现，完整/邻接回归未执行。
+- E 暂停 SHA（依上述生产文件顺序，再测试）：`58c64d36e6d4a0572bde82056effffdf3f675b294bd4e7bafd7da7627d5e5083`、`18bb2d9c2e6fbbeead5e43fc118a736cc51816da289b8dedd2a9a9eda8e86f75`、`c23085c2e640eb1160659aa3289c6cfab6e23298d22df8a16c835b36ac70cbee`、`cff9f11b5eb0bd56085b80facd9ea460ef89135476261c32c7c7d224880150aa`、`790136489b36174e4c2dae062810d7c8380fbbb9c688821a7e91fd0b66a7a43d`。
+- D/main 暂存草稿仅 `.gitignore` 精确新增 v2 unignore，以及未跟踪的 `eval/story_segment_eval.v2.jsonl`（85 行，SHA `f1c91e9cc2fa4183fb1fd89af32bc90d15d10f730655116c2deb1450f91fa768`）。**草稿未完成独立语义审查、未冻结、未交 E 消费，也未更改现有运行入口。** `.gitignore` SHA `d0a860456829135ab5decfd5315b9643240455eb940bcb924c679403621e9769`。旧四份 v1 评测文件、用户其他脏文件保留；本暂停记录单独提交，不把草稿或 E WIP 当完成提交。
+- 恢复顺序：先核对上述现场；同一 E task `01a0646c-69ee-74f3-a513-5724a0d3c8ef`、原工作树/模型继续 anchor 批。补实际同请求 projection/UTC 的初次授权、envelope decoder、continuation builder 一致性与拒绝验证；补已提交 anchor 的过期/漂移/缺失、双 Story clear 不复活、实体冲突/多 required/无回指入口覆盖，再跑已批准完整/邻接回归并交 D 独立审查。D 同期收拢 v2 草稿的字段/协议拒绝/五例历史基线不可比边界；未完成输入冻结前不启动 collector 改造。不另开会话、不自动重跑旧基线/真实快照，不下载、不调用外部服务、不合并或激活。
+
 ## 2026-09-05：保留功能、收敛实现与验收流程
 
 用户已选择 **1A + 2A**：保留已批准的功能、用户可见行为、质量门槛和安全约束，允许合并重复流程与证据格式，并把验证放在实际证据产生之后。本节是 D/E 后续收敛工作的共同执行依据；与下文、E Plan 或旧 D2 契约冲突的**流程要求**以本节为准。原 Spec 的产品能力和安全不变量不因本修订被删除。
