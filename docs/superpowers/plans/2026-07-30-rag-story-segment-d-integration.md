@@ -13,7 +13,9 @@
 
 D 已核定三门的计分边界，尚未放行编码：在现有 `evaluate_hard_gates` 内仅为这三个调用门消费逐单位实际计数，其他门保留原四字段输入；仍输出原九字段指标行，不另建 scorer 或报告。单位来自原冻结请求/最终目标 KB 清单，而非出现过调用的子集；`numerator` 为实际调用总数、`denominator` 为完整单位数、`candidate` 为单位实际最大值，同时逐单位检查全部既有上下界。因而 `0/2` 或 `0/1` 不能靠汇总通过 Detector 门。Dense 另逐 KB 验证相同 query/model 的重复尝试数为零；实际两次重复仍报告两次并判失败，不伪造第三次调用。逐单位依据在既有 query diagnostics 中可追溯；未完整观测或零分母保持缺测/不通过，不从配置关闭或缺少 span 推出零次。
 
-调用观测仍沿原 trace 与 setup/target 分离，成功和异常尝试均计入；协议拒绝沿既定口径，不造业务响应或改分母。剩余 D 接线核定仅限完整观测的终止证明及实际 API 尝试入口：Spec `PIPE-P0-07` 明确写 query embedding API，故 `embed_query` adapter 次数不能冒充 SDK 内 HTTP 尝试数，也不能为凑门修改重试策略、阈值或引入通用监控框架。未解决该接点前 Dense 门继续缺测；本次不增加 producer、不运行测试/采集或外部操作。E 保持干净 `cf1ff72`，等待 D 在同一 S3 内完成最小实施范围，而非等待用户裁决；三门与整体 `no_go` 未改变。
+调用观测仍沿原 trace 与 setup/target 分离，成功和异常尝试均计入；协议拒绝沿既定口径，不造业务响应或改分母。Spec `PIPE-P0-07` 的 query embedding API 次数不得由 `embed_query` adapter 次数冒充，也不能为凑门修改重试策略或阈值。D 已核定实际 API 接点：在既有 `embeddings.py` 工厂通过 SDK 的 `DefaultHttpxClient` 和公开 request hook 观测每次 HTTP dispatch 尝试，保留 SDK 连接/超时/重试默认值；不改 SDK 私有方法、不全局 monkeypatch、不另建 transport/retry 框架。仅在 query embedding 调用动态范围内用私有 `ContextVar` 绑定原 trace 及 subtask/query/model 哈希，结束时 reset；不读取或落盘请求正文、密钥、URL，不把同步 query 接线扩成新的异步业务或文档构建功能。
+
+D 在 Conda `1999wiki`（Python 3.11.15；openai 2.44.0、httpx 0.28.1、langchain-openai 1.3.3）用内存 MockTransport 且禁止 socket 外连验证：429 重试、超时重试、307 跳转三个并发场景均为一次 SDK 调用、两次 transport 尝试及两条正确绑定的 hook 记录，绑定退出后清空；未关闭 SDK 默认两次重试。这里只证明扩展点可用，不是产品 RED/GREEN、真实 API/性能证据或任何 gate 通过。后续 D 仅需把已核定接点与完整观测终止证明、原失败/协议拒绝行为一起限定到现有文件；缺 hook、缺请求/KB 完整观测仍不能记实测零。E 保持干净 `cf1ff72`，尚未放行编码；三门和整体 `no_go` 未改变。
 
 ### 2026-09-10 前序检查点：第 6.2 项观测实现已验收
 
