@@ -11,7 +11,9 @@
 
 **第 6.4 项只读核定已完成：** 同一 E 在干净 `cf1ff72` 给出三门报告，D 已对实际入口和冻结阈值交叉核对，无需重复盘点。普通/anchor 的 Detector 调用在 `request_plan.py::RequestPlanFinalizer.finalize`，合法续页在 `story_authorization.py::authorize_story_continuation_action`，两者尚缺实际尝试观测；现有检测回执不是调用次数。共享 Story Dense session 已记录含失败的 adapter 尝试，但纯非 Story typed Child 的直接 `embed_query` 缺同型观测与 KB 绑定；现有事件不证明 SDK 内部 HTTP 重试数。`reranker.py::SiliconFlowRerankClient.score` 的 `urlopen` 尚缺请求尝试观测，外层 rerank 阶段或配置关闭不能独自证明 API 零调用。
 
-后续仍由 D 固定一个最小实施范围，尚未放行编码。沿用原 trace 与 setup/target 分离，完整调用覆盖/终止证据须能区分零次和未测；协议拒绝沿既定口径，不造业务响应。Detector 每目标自然请求恰好一次、Dense 每目标 KB 最多两次且同 query/model 不重复、reranker 为零，均保持冻结阈值。现有四字段聚合 gate 尚不能独立表达逐 KB 重复约束：必须保留实际计数并落实逐项判定，不能以平均掩盖 `0/2`、改分母或伪造超限 candidate 数值；该计分接线与调用观测应一起明确，不另建评分/监督框架。只读阶段无代码、测试、采集或外部操作，三门和整体 `no_go` 状态未改变；E 留在原任务等待 D 的实施边界，而非等待用户裁决。
+D 已核定三门的计分边界，尚未放行编码：在现有 `evaluate_hard_gates` 内仅为这三个调用门消费逐单位实际计数，其他门保留原四字段输入；仍输出原九字段指标行，不另建 scorer 或报告。单位来自原冻结请求/最终目标 KB 清单，而非出现过调用的子集；`numerator` 为实际调用总数、`denominator` 为完整单位数、`candidate` 为单位实际最大值，同时逐单位检查全部既有上下界。因而 `0/2` 或 `0/1` 不能靠汇总通过 Detector 门。Dense 另逐 KB 验证相同 query/model 的重复尝试数为零；实际两次重复仍报告两次并判失败，不伪造第三次调用。逐单位依据在既有 query diagnostics 中可追溯；未完整观测或零分母保持缺测/不通过，不从配置关闭或缺少 span 推出零次。
+
+调用观测仍沿原 trace 与 setup/target 分离，成功和异常尝试均计入；协议拒绝沿既定口径，不造业务响应或改分母。剩余 D 接线核定仅限完整观测的终止证明及实际 API 尝试入口：Spec `PIPE-P0-07` 明确写 query embedding API，故 `embed_query` adapter 次数不能冒充 SDK 内 HTTP 尝试数，也不能为凑门修改重试策略、阈值或引入通用监控框架。未解决该接点前 Dense 门继续缺测；本次不增加 producer、不运行测试/采集或外部操作。E 保持干净 `cf1ff72`，等待 D 在同一 S3 内完成最小实施范围，而非等待用户裁决；三门与整体 `no_go` 未改变。
 
 ### 2026-09-10 前序检查点：第 6.2 项观测实现已验收
 
