@@ -2,7 +2,7 @@
 
 > **当前执行依据：** 先执行下方 2026-09-05 收敛修订。保持 `D → 一个受监督的 E worker` 两层；已完成任务的历史步骤用于追溯，不重新启动 C、D0 或新 E 会话。
 
-### 2026-09-09 安全暂停（用户要求；恢复须等用户继续）
+### 2026-09-09 安全暂停快照（用户已继续，现场核对一致后恢复）
 
 - 已验收 E HEAD 仍为 `d35a4d1616f3e94cea9497dd66215f11ecb83658`；当前 anchor 批只有 `src/rag/{chain,execution,route_policy,story_authorization}.py` 和 `tests/test_story_segment_runtime.py` 五个未提交修改，`+136/-2`，index 空。它们是 **WIP，不是已验收交付**；不得清理、回退或从旧基线重做。
 - E 已结束编辑/测试，无本项目 pytest/构建进程。入口级有效 RED 2 failed：OS temp `anred2-ae59b884.log`，SHA `0f9a5344c6148eb278da34097f39d1bf238f1ffd3ba0317f485785dd28c1eef2`；当前最小接线 GREEN 2 passed：`angr1-0ee8a7d4.log`，SHA `c3f7eadb0652d387413572cfa5c9da364d76c867e0272fc7cbdb93b88331b8c1`。D 核对日志与暂停字节，但尚未独立验收实现，完整/邻接回归未执行。
@@ -308,6 +308,22 @@ D 独立 **94 + 13 passed**，后组覆盖最后修改节点、非 Story active 
 5. v2 输入与唯一 collector/validator/评分消费者在后一批贯通；采用有限的现有 direct/continuation/anchor 输入类型，不做场景 DSL 或另一个 RAG runner。前置失败、真实动作缺失、target 与 seed 关系不符都必须保留为未完成/失败，不能借用手工 receipt 补齐。新旧场景的匹配、计时与必要基线采集边界由 D 在输入冻结时明示。当前仅放行第 1–3 项产品修复；D 并行编写第 4 项输入，E 不提前改冻结文件或启动第 5 项。
 
 Conda `1999wiki`、OS temp、同一 E `gpt-6-astra / xhigh / 普通速度` 与两层拓扑不变。无真实全量构建、LLM/embedding/Milvus/SSH/媒体/生产写入，不合并 main、不激活；最终真实构建仍仅由 D 在完整 E 验收合并后执行。
+
+**2026-09-09 v2 场景输入冻结（仅输入，不代表执行通过）：** `eval/story_segment_eval.v2.jsonl` 使用 `rag.story-segment-eval-case/v2`，SHA-256 `20499bcbac896b6ff5ba14c65db657a7fe0669b6d5db5136365f0845371a6160`。D 按上述用户批准范围复核：85 个唯一、有序用例，80 个普通用例除版本和新增 `execution` 外逐字段不变；全部 95 组 Atom gold、Topic 来源、source relevance、Owner 标签、来源哈希与原 review 保留。原 review 仅指原事实证据审核，不表示用户逐句审核了新增前序请求。此前顶部暂停中的 v2 草稿身份只作历史记录，由本节替代。
+
+| 用例 | 独立编写的真实前序与目标 | 变化的含义 |
+|---|---|---|
+| `auth-08` | 前序与目标均为“请依次介绍《第二章2-12》、《第二章2-13》、《第二章2-14.1》、《第二章2-11.2》。”；消费前序实际返回、`target_subtask_order=1`、`page_index=1` 的 continuation。 | `page_index` 是零起点；第二页应覆盖原 gold `story:100220`，不是第三页，也不是把按钮文字作为原问题。 |
+| `auth-09` | 同上取得真实 action 后，仅把其 `canonical_payload_body_sha256` 首个十六进制字符确定性改为不同字符，不重算哈希或改写其它字段。 | 明确 `protocol_rejected`；没有业务 ResponsePacket，预期 authorization origin/outcome 为 null。预期零调用必须由目标拒绝边界实测，不是缺 trace 补零；不将本地解析异常冒充已观测 HTTP 422。 |
+| `auth-10` | 前序“请介绍剧情《第二章2-12》的开头。”成功引用并提交 set；目标仍为“后来发生了什么？”。 | 实际消费已提交 `story:100221` anchor，保留原目标 gold。 |
+| `auth-11` | 先“请介绍剧情《第二章2-11.2》的开头。”提交 set，再“请比较剧情《第二章2-12》和《第二章2-13》中的事件。”提交 clear；目标改为“后来发生了什么？”。 | 必须先有 anchor 再因多个 Story 清除；相同的合法回指不得复活旧 anchor。目标保持现有 Policy 的 `direct_query` 拒绝，不为标签修改产品拒绝来源。 |
+| `answer-scope-07` | 前序“请介绍剧情《第四章4-11.1》的开头。”成功引用并提交 set；目标仍为“接着呢？”。 | 实际消费 `story:100414` anchor，保留原 AnswerScope 与 gold。 |
+
+- **有限输入协议：** 普通用例只有 `execution={entry:direct}`；其它只使用 `entry=continuation|anchor` 和显式 `setup_queries`。anchor 的 `setup_expected_events` 一项对应一个真实提交；它和 `anchor.owner_id`、gold、预期 Owner 都只用于核对结果，不能构造授权、projection、action 或模型回复。来源 Atom 文件 SHA `40d17b412a60c44bcdab953d9d382d3fb32f0812026b0eb51b972961c40999a1` 已重验，五个前序标题与来源中的自然名称一致。
+- **真实入口与隔离：** 每个 warmup/计时重复使用新的会话，先实际执行前序，再执行目标；前序须通过原引用校验与 lease commit，不能重放手填 CompletedTurn。续页只按实际 action 中的 final plan/subtask order 与 page index 唯一选择；动作缺失/歧义、前序失败或事件不符均为场景失败，不能使用 expected Owner 搜索替代 action。`auth-11` 的 clear 是最后一次前序提交，目标则验证无复活。普通用例不受这些准备步骤影响。
+- **计量边界：** 前序调用和耗时与目标分别记录；目标 gate 的分母只包含目标执行，但不能隐藏准备成本。协议拒绝只接受实际入口的已定义解析拒绝，不接受任意异常；证明尚未进入 Planner/Detector/检索/生成后才可记录对应零次。它不属于业务 Detector 每请求一次门的适用分母，不能伪造 `not_applicable` 业务响应。NullTrace、采集缺失、前序失败均不等于实测零次或通过。
+- **历史基线与最终门禁：** 四份 v1 输入保留原字节。五条状态场景的旧无状态观测不可比较，不重写旧 baseline、不用候选自身或手工零值补对照。80 条普通用例只有在题干、全部语义字段及来源身份逐项相同后才允许明确关联旧观测，不能因 query_id 相同就跨版本自动转换。候选绝对质量仍覆盖全部 95 组 gold；需要完整对照而暂缺五条有效对照的指标保持未测，待 D 在真实评测阶段提供相应控制运行，不能缩小分母或降低阈值来通过。
+- **交接边界：** 本提交仅冻结独立场景输入及口径，不证明新 collector/validator/scorer 可用或新场景已通过。E 当前仍只执行 anchor 批第 1–3 项；D 验收该批后，再从此固定提交交接输入并放行第 5 项统一消费者，不读取 D 的未提交草稿，不建立第二个 runner/场景 DSL/监督回执。
 
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
 - 验证输入和跨进程/外部请求时保留严格检查；进程内使用已验证的不可变值，避免反复序列化和重验同一事实。跨请求 continuation 和外部文件不能按进程内可信对象处理。

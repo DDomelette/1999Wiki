@@ -37,6 +37,7 @@ eval/*
 !eval/rag_full_chain_thresholds.v1.json
 !eval/rag_full_chain_boundary_seeds.v1.jsonl
 !eval/story_segment_eval.v1.jsonl
+!eval/story_segment_eval.v2.jsonl
 !eval/story_segment_thresholds.v1.json
 !eval/story_baseline_atom_equivalence.v1.jsonl
 !eval/story_segment_baseline_receipt.v1.json
