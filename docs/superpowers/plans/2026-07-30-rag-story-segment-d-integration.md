@@ -2,7 +2,16 @@
 
 > **当前执行依据：** 先执行下方 2026-09-05 收敛修订。保持 `D → 一个受监督的 E worker` 两层；已完成任务的历史步骤用于追溯，不重新启动 C、D0 或新 E 会话。
 
-### 2026-09-10 当前检查点：第 6.2 项观测实现已验收
+### 2026-09-10 当前检查点：第 6.3 项已验收
+
+- D 已在原 E 分支提交 `cf1ff72bc663d9946ccf5204e97c97568a616256`（parent `737b6aa`），四个既有文件 `+106/-25`，生产净 +8 行、测试净 +73 行，无新文件或监督层；树/index 干净，未合并 main。回答异常在原私有 answer 边界保留已完成的路由/outcome/scope，仍为失败且无引用/实体锚点；契约异常、真正检索失败和早期失败沿原处理。消费者删除旧失败状态兼容例外，并发观测测试按 subtask ID 关联。
+- 有效 RED **4 failed / 4 passed**（73.68 秒），OS temp `s63red-91e70631.log`，SHA `146bd825474f1c2a6dfbf7d903de1a7728e22b6fc7206c2a86ca8737630d8157`。冻结后受影响 **15 passed**（133.80 秒），`s63green-f75fc46d.log`，SHA `fa229091c9367742646abf048c23e517937b244306f3b813fef0a9e18e2fb36d`；唯一 collect→冷消费者节点 **1 passed**（73.18 秒），`s63cold-ced97e7c.log`，SHA `e6bc581dc77605bbc1b82254f04ef7873dfc2eec161a68ef235fe1eda06d356d`。不将 RED 或重叠覆盖累加。
+- D 独立旧执行/复合及 API/SSE 邻接 **50 passed**（3.68 秒），日志 OS temp `1999wiki-d-s63-adj-29ff7dfd6fcb4edd86738f6ff709b7e6/pytest.log`，SHA `fc5c559156bcd3a1311a303b57158b045803e4d18392424088e7a084d84d2f6e`。另复用已固定 v4 小 fixture（SHA `245d987d955e0bdcc00eb62b889b69425bd8279b6af18864d25ecbe0a046a097`），冷评分拒绝 public failed/outcome 篡改，缺失正常化记录仍缺测，原 `[1,2,2,4]` 分母及输入字节不变；禁用 normalizer 与网络，未再采集。生产 SHA 前后为 `266e9f5c584d0be87d885a4e2bc96f034808d297b0fa5ce4fe7fb4c57d13dd98` / `9e010b750c80912dc085459290b55e944f300a420d9a04808dba6207723c6de5`；冻结输入、接口和 main 用户脏文件不变。
+- 本批只修复已暴露的真实根因，不新增指标 producer。仍为 15 项有本地 producer、41 项待完成、整体 `no_go`；没有真实题集/embedding/Milvus/SSH/媒体/激活。不把局部回归称为最终交付。
+
+**第 6.4 项先只读核定调用观测：** 同一 E 从 `cf1ff72` 接续此前调用家族核对，仅聚焦 `request_detector_calls`、`dense_embedding_calls_per_knowledge_subtask`、`reranker_api_calls` 三门。当前真实 continuation/anchor 入口与 v4 同次观测已可用；复用既有 RequestTrace/完成事件/实际 Dense 尝试，说明哪些已覆盖、哪些缺接点以及能够共用的最小改动。分母依冻结阈值和已批准的协议拒绝口径，保留 setup/target、普通/续页、失败与未测的区别；不能用缺 span、配置关闭或成功结果冒充零调用，不能用平均数掩盖逐请求/逐 KB 超限。只给一条紧凑消息，不新写矩阵/Plan/receipt、不改文件、不跑采集/测试/外部服务、不延伸其余门或新建任务。D 同步核对后决定单一实施范围；此处不是三门实现放行。
+
+### 2026-09-10 前序检查点：第 6.2 项观测实现已验收
 
 - D 已在原 E 分支提交 `737b6aa1f3ca449e407bd764ba64b355f729acd0`（parent `7372d8c`），九文件 `+574/-64`，生产净 +209 行（runtime/backend 净 +5、现有 evaluator 净 +204），测试净 +301。没有新文件、runner、公开 schema 镜像、监督回执或新的产品规则引擎；E 树/index 干净，尚未合并 main。
 - 同次业务首次正常化实参/结果在生成前保存，collector 对同一实参实际再调用一次，冷消费者不调用 normalizer。正式 REST 与 staged SSE 共用实际投影函数；观测格式为 `observations/v4`，历史观测不自动迁移，性能报告仍 v2，HTTP/TTFT 仍未测。Scope oracle 与运行时决策 helper 独立，未知严格姿态不猜通过。
