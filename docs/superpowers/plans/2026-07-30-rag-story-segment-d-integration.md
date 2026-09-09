@@ -2,13 +2,22 @@
 
 > **当前执行依据：** 先执行下方 2026-09-05 收敛修订。保持 `D → 一个受监督的 E worker` 两层；已完成任务的历史步骤用于追溯，不重新启动 C、D0 或新 E 会话。
 
-### 2026-09-10 当前检查点：第 5 项消费者批已验收
+### 2026-09-10 当前检查点：第 5 项已验收，适用性分母修订已批准
 
 - D 已在原 E 分支提交 `c6cc6fd54f0603229561d089c06b1145280368ab`（parent `f10a63c`），九文件 `+1072/-175`，工作树/index 干净，尚未合并 main。新增量主要在现有评测消费者与测试；`src/rag` 两文件净 +10 行，仅保留实际续页 context 和精确 decoder 异常/trace 接点。没有新模块、runner、框架或监督回执。
 - 严格 v1/v2 loader、真实 setup/commit/continuation/anchor、observations/v3 与 performance/v2 已贯通。续页 planning 如实为 null，沿原 action 与本次已验证的具体 context 消费，只执行目标 subtask；不重新授权或伪造 envelope。D 审查发现的缺测误计零分已关闭：未执行 target 的受影响指标保持缺测，不送入 gate；保留全部 95 组 gold，真实 completed 空检索/拒绝仍计零命中。仅 80 条逐字段/来源一致的 direct 例关联旧控制，五条状态例的历史控制仍不可用，相关比较保持 pending。
 - E 原完整 baseline/eval/runtime 是 **185 passed / 3 failed**，三个失败为新增参数/字段的旧测试调用未迁移，日志 OS temp `cvfull-2c6a1527.log`，SHA `49e773eea5d1477eea93d2fb0ad45d6027cc4272a379247bb7222611ced04065`。迁移及 P1/context 修正后最终受影响 **10 passed**，日志 `cvgfinal-7cca5c6e.log`，SHA `bf58be5762ad52878e4da3341e52a540e7c0eeed9be99eb28d1cf79d5474698e`；五文件 API/会话/授权/执行/复合邻接 **255 passed**，日志 `cvadjfinal-216a0cad.log`，SHA `7e4417db998318641b852de01d76d3ae984cb2652ab78c8bed3bcfebf45a62e1`。按 D 授权复用未改动 baseline/runtime 的已通过覆盖，不声称一次全量全绿，也不把重叠结果相加成独立测试数。
 - D 独立 SSE 全文件及两个 loader/实际续页节点 **54 passed**，日志 OS temp `1999wiki-d-consumer-28e4e5c05c864ee7880b4561a1c34ab9/pytest.log`，SHA `d663a56cb2e127f05629f61e80bb8b009e35ad6d8be64668075a496c6aca66f3`；另对最终小 fixture 产物作 8 项只读复验，覆盖完整观测、context/来源漂移、提交身份、终止 trace、候选不可伪装 unsupported 及 95 组缺测口径，未重新采集。九文件审查/提交前后 SHA 一致；冻结五输入与 Spec 无变化。原 RED 与 P1 RED 普通日志保留，无新证据层。
-- 本批完成不等于 E 最终交付或真实效果通过。11 项已有本地 producer、其余 45 项待完成及整体 `no_go` 不变，未执行真实题集、embedding/Milvus/SSH/媒体/激活。E 停在此干净检查点；接续先由 D 只读核定原 S3 剩余缺口与最小下一批边界，不重开 C/D0、旧 Step 6 或新 E 会话，不因本批提交自动进入未放行的真实构建。main 用户原有脏文件未触碰。
+- 本批完成不等于 E 最终交付或真实效果通过。11 项已有本地 producer、其余 45 项待完成及整体 `no_go` 不变，未执行真实题集、embedding/Milvus/SSH/媒体/激活。后续只读核定及用户裁决已完成，当前只放行下面的第 6.1 项；不重开 C/D0、旧 Step 6 或新 E 会话，不因本批提交自动进入真实构建。main 用户原有脏文件未触碰。
+
+### 2026-09-10 第 6.1 项：适用性分母与历史阈值身份解耦
+
+- 用户批准将 scope 适用性与归一化/一致性的分母分开，并要求克制代码膨胀。适用性覆盖目标子任务的 present/null 决策，包含应有和不应有 scope 的分支，每个目标决策计一次；归一化与一致性仍覆盖所有适用冻结 Story evidence packet、每包实际归一化两次。阈值仍为 1.00；setup 不是 target，未执行/缺失 target 仍未测，协议拒绝不制造业务 packet。此为验收计数修订，不改变产品适用矩阵、检索/生成行为或召回门槛。
+- D 冻结新配置 `eval/story_segment_thresholds.v2.json`，SHA `b995e8eb7de46f33281e3bfb5c12a90d351ac6c09b01a0fb23c95e2a94fa0759`。仅增加 `all_target_scope_applicability_decisions` 定义并将 `story_answer_scope_applicability_rate.denominator` 指向它；其他 55 项、全部数值/方向/基线关系、旧分母定义保持。文件 v2 是策略数据修订，字段结构未变，仍使用 `rag.story-segment-thresholds/v1` wire schema 和已有 loader；不新增 schema 分支。旧 v1 配置、五份历史输入和 Spec 原字节保留。Git 仅精确 unignore 这一个新配置文件；后续输入一律来自已提交字节。
+- 当前 `_baseline_final_hits` 将历史 baseline 的阈值整文件 SHA 等同于本轮阈值 SHA，导致本次不影响 Recall 的分母修订也会错误阻断旧 Recall 对照。修正这个身份职责：历史 receipt 继续固定其原阈值文件；本轮 candidate/evaluator 独立固定当前阈值文件。`evaluate` 新增一个必填 `--baseline-thresholds` 路径，预期 SHA 只能取已验证 baseline receipt 的 `inputs.thresholds_sha256`，不另加用户自报哈希。当前阈值复用既有已验证 bundle 的阈值对象；历史阈值用同一个 loader 读一次。当前消费历史结果的 `final_evidence_recall` 与 `middle_late_final_evidence_recall_delta` 两门，逐项要求 gate 定义及其引用的分母定义与历史相同；不同就拒绝借用，不提供自动迁移/重采集。仅非比较的 scope 适用性分母修订不破坏这两个对照。报告分别保留当前及历史阈值身份，不覆写旧 receipt，不放宽 baseline business/case/equivalence/gold/80 direct 关联检查；五条状态控制仍缺测。
+- 代码仅允许 E 的 `src/rag_eval/story_run_observations.py`、`scripts/evaluate_story_segment_rag.py`、`tests/test_story_segment_eval.py`、`tests/test_story_segment_baseline.py`。D 先把已提交的新配置和对应 `.gitignore` 单行导入同一 E 分支作为干净输入检查点；E 不读取其他工作树未提交数据、不自行编辑冻结配置。无需修改现有 threshold loader、runtime、capture、runner、模型/API、授权或正常化函数；不为此引入通用策略继承、版本迁移、观测/回执框架或重复执行路径。
+- 在现有测试节点先证明新阈值与历史 Recall 对照被错误整文件 SHA 拒绝，再实现最小职责拆分。GREEN 覆盖 v1 同版本与 v2 当前/v1 历史、全部 56 门及数值不变、仅已批准分母变化、历史文件错 SHA/Recall gate 或其分母变化拒绝、80 direct/95 gold 与缺测规则保持、CLI 参数与输出输入路径保护、冷消费者不触发执行/网络。修复缺陷的测试针对真实边界，不为不相关极端输入增加防御分支；已有类型/身份校验不重复执行，已验证进程内对象直接复用。
+- 完成后跑受影响 eval/threshold/baseline 节点及必要 CLI 邻接，给出准确日志和最终范围供 D 独立复验。只用 Conda `1999wiki`、小 fixture 和 OS temp，不重复未变化的整套 runtime 回归。E 不 stage/commit、不新增文档或 receipt；D 形成独立检查点。本项不新增任何质量门的通过声明，也不伪造同包两次归一化、内部 RouteDecision 或 REST/SSE 观测。缺失的 scope packet 观测与四面投影留在原 S3，D 依据现有接点另定一个连贯实现范围，不让 E自行扩大本项。
 
 ### 2026-09-09 前序检查点：anchor 已验收，v2 输入已冻结
 
