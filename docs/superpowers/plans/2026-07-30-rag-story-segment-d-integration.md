@@ -2,13 +2,21 @@
 
 > **当前执行依据：** 先执行下方 2026-09-05 收敛修订。保持 `D → 一个受监督的 E worker` 两层；已完成任务的历史步骤用于追溯，不重新启动 C、D0 或新 E 会话。
 
-### 2026-09-09 当前检查点：anchor 已验收，v2 输入已冻结
+### 2026-09-10 当前检查点：第 5 项消费者批已验收
+
+- D 已在原 E 分支提交 `c6cc6fd54f0603229561d089c06b1145280368ab`（parent `f10a63c`），九文件 `+1072/-175`，工作树/index 干净，尚未合并 main。新增量主要在现有评测消费者与测试；`src/rag` 两文件净 +10 行，仅保留实际续页 context 和精确 decoder 异常/trace 接点。没有新模块、runner、框架或监督回执。
+- 严格 v1/v2 loader、真实 setup/commit/continuation/anchor、observations/v3 与 performance/v2 已贯通。续页 planning 如实为 null，沿原 action 与本次已验证的具体 context 消费，只执行目标 subtask；不重新授权或伪造 envelope。D 审查发现的缺测误计零分已关闭：未执行 target 的受影响指标保持缺测，不送入 gate；保留全部 95 组 gold，真实 completed 空检索/拒绝仍计零命中。仅 80 条逐字段/来源一致的 direct 例关联旧控制，五条状态例的历史控制仍不可用，相关比较保持 pending。
+- E 原完整 baseline/eval/runtime 是 **185 passed / 3 failed**，三个失败为新增参数/字段的旧测试调用未迁移，日志 OS temp `cvfull-2c6a1527.log`，SHA `49e773eea5d1477eea93d2fb0ad45d6027cc4272a379247bb7222611ced04065`。迁移及 P1/context 修正后最终受影响 **10 passed**，日志 `cvgfinal-7cca5c6e.log`，SHA `bf58be5762ad52878e4da3341e52a540e7c0eeed9be99eb28d1cf79d5474698e`；五文件 API/会话/授权/执行/复合邻接 **255 passed**，日志 `cvadjfinal-216a0cad.log`，SHA `7e4417db998318641b852de01d76d3ae984cb2652ab78c8bed3bcfebf45a62e1`。按 D 授权复用未改动 baseline/runtime 的已通过覆盖，不声称一次全量全绿，也不把重叠结果相加成独立测试数。
+- D 独立 SSE 全文件及两个 loader/实际续页节点 **54 passed**，日志 OS temp `1999wiki-d-consumer-28e4e5c05c864ee7880b4561a1c34ab9/pytest.log`，SHA `d663a56cb2e127f05629f61e80bb8b009e35ad6d8be64668075a496c6aca66f3`；另对最终小 fixture 产物作 8 项只读复验，覆盖完整观测、context/来源漂移、提交身份、终止 trace、候选不可伪装 unsupported 及 95 组缺测口径，未重新采集。九文件审查/提交前后 SHA 一致；冻结五输入与 Spec 无变化。原 RED 与 P1 RED 普通日志保留，无新证据层。
+- 本批完成不等于 E 最终交付或真实效果通过。11 项已有本地 producer、其余 45 项待完成及整体 `no_go` 不变，未执行真实题集、embedding/Milvus/SSH/媒体/激活。E 停在此干净检查点；接续先由 D 只读核定原 S3 剩余缺口与最小下一批边界，不重开 C/D0、旧 Step 6 或新 E 会话，不因本批提交自动进入未放行的真实构建。main 用户原有脏文件未触碰。
+
+### 2026-09-09 前序检查点：anchor 已验收，v2 输入已冻结
 
 - D 已在原 E 分支提交 `4b1682fa0c9f00127304ec219ee6912d2234d218`：六文件 `+379/-4`，生产四文件净 +64 行，无新模块、公开 schema、宽松兼容或监督回执。原 anchor helper 经正常 execute/prepare 入口消费真实已提交 turn；授权、envelope 重验、action builder 共用同一 projection/UTC。缺失、过期、身份漂移、双 Story clear、实体冲突、多 required、无回指及 local/open-domain 边界保持；未授权时保留原 direct-query 拒绝。E 树/index 干净，尚未合并 main。
 - E 完整 runtime/authorization/conversation/request-plan **299 passed**，日志 OS temp `anfull-159a3ac5.log`，SHA `411169759bf2f4f45b780a767883438a70d83d3e8873ffbddf5cc5ea8bdeb184`。新增测试曾暴露四处不合法 Planner fixture 和旧 fixture 的 candidate/legacy Retriever 混配；只修正测试输入及同源安装，生产未为测试放宽。最终签名测试精确接受原五项加 keyword-only projection/UTC。
 - D 独立 **116 + 59 passed**：四文件 API/执行/复合/SSE 邻接日志 `1999wiki-d-anchor-adj-b69b0357c9194f43ac9cf0dbdd99e1d9/pytest.log`，SHA `5921138aafa6d0606c2bc755568ac072a1325f848c38a638df62f016b2812724`；16 项新入口和完整 route-policy 日志 `1999wiki-d-anchor-entry-ef5f78bd59de4c509fcd6b011f8132f4/pytest.log`，SHA `3adc57d770d151e76f63663fd48e9ad3f0e0951e2f363680c3dbe3b1b39a5791`。六文件前后 SHA 一致；同五文件邻接由 D 的实际结果覆盖，不要求 E 再重复一遍。有效入口 RED 和最小 GREEN 已保存在历史暂停提交 `dee63b0`，不因恢复重跑。
 - D/main 提交 `ffffdc688dc4a251441ecff53ceafa2c307f0214` 冻结 v2 输入（SHA `20499bcbac896b6ff5ba14c65db657a7fe0669b6d5db5136365f0845371a6160`）；85 例只修订获批五例，80 普通用例与全部 95 组 gold 不变。下文明确真实前序/目标分离、拒绝口径及历史不可比范围。输入冻结不等于 collector 已能消费，不伪造新 baseline。
-- 接续只读核定已结束；D 把同字节 v2 输入导入 E 固定提交 `f10a63cbc6cca8dceaa769b03ece2c0886ff6f11`，不依赖 D 工作树的未提交文件。后续只执行下方单一消费者批，不重建 runner/场景 DSL。不重开 C/D0、不运行真实全量、LLM/embedding/Milvus/SSH/媒体/激活；现有 11 项本地 producer、45 项待完成及整体 `no_go` 不变。旧暂停现场及哈希由 Git 历史追溯，用户其它脏文件未触碰。
+- D 把同字节 v2 输入导入 E 固定提交 `f10a63cbc6cca8dceaa769b03ece2c0886ff6f11`，不依赖 D 工作树的未提交文件；基于该提交执行的单一消费者批现已完成，结果与接续边界见上方当前检查点。旧暂停现场及哈希由 Git 历史追溯，用户其它脏文件未触碰。
 
 ## 2026-09-05：保留功能、收敛实现与验收流程
 
