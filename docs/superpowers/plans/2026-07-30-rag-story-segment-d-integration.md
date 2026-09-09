@@ -11,11 +11,22 @@
 
 **第 6.4 项只读核定已完成：** 同一 E 在干净 `cf1ff72` 给出三门报告，D 已对实际入口和冻结阈值交叉核对，无需重复盘点。普通/anchor 的 Detector 调用在 `request_plan.py::RequestPlanFinalizer.finalize`，合法续页在 `story_authorization.py::authorize_story_continuation_action`，两者尚缺实际尝试观测；现有检测回执不是调用次数。共享 Story Dense session 已记录含失败的 adapter 尝试，但纯非 Story typed Child 的直接 `embed_query` 缺同型观测与 KB 绑定；现有事件不证明 SDK 内部 HTTP 重试数。`reranker.py::SiliconFlowRerankClient.score` 的 `urlopen` 尚缺请求尝试观测，外层 rerank 阶段或配置关闭不能独自证明 API 零调用。
 
-D 已核定三门的计分边界，尚未放行编码：在现有 `evaluate_hard_gates` 内仅为这三个调用门消费逐单位实际计数，其他门保留原四字段输入；仍输出原九字段指标行，不另建 scorer 或报告。单位来自原冻结请求/最终目标 KB 清单，而非出现过调用的子集；`numerator` 为实际调用总数、`denominator` 为完整单位数、`candidate` 为单位实际最大值，同时逐单位检查全部既有上下界。因而 `0/2` 或 `0/1` 不能靠汇总通过 Detector 门。Dense 另逐 KB 验证相同 query/model 的重复尝试数为零；实际两次重复仍报告两次并判失败，不伪造第三次调用。逐单位依据在既有 query diagnostics 中可追溯；未完整观测或零分母保持缺测/不通过，不从配置关闭或缺少 span 推出零次。
+D 已核定三门的计分边界，实施许可仅见下方 6.4 范围：在现有 `evaluate_hard_gates` 内仅为这三个调用门消费逐单位实际计数，其他门保留原四字段输入；仍输出原九字段指标行，不另建 scorer 或报告。单位来自原冻结请求/最终目标 KB 清单，而非出现过调用的子集；`numerator` 为实际调用总数、`denominator` 为完整单位数、`candidate` 为单位实际最大值，同时逐单位检查全部既有上下界。因而 `0/2` 或 `0/1` 不能靠汇总通过 Detector 门。Dense 另逐 KB 验证相同 query/model 的重复尝试数为零；实际两次重复仍报告两次并判失败，不伪造第三次调用。逐单位依据在既有 query diagnostics 中可追溯；未完整观测或零分母保持缺测/不通过，不从配置关闭或缺少 span 推出零次。
 
 调用观测仍沿原 trace 与 setup/target 分离，成功和异常尝试均计入；协议拒绝沿既定口径，不造业务响应或改分母。Spec `PIPE-P0-07` 的 query embedding API 次数不得由 `embed_query` adapter 次数冒充，也不能为凑门修改重试策略或阈值。D 已核定实际 API 接点：在既有 `embeddings.py` 工厂通过 SDK 的 `DefaultHttpxClient` 和公开 request hook 观测每次 HTTP dispatch 尝试，保留 SDK 连接/超时/重试默认值；不改 SDK 私有方法、不全局 monkeypatch、不另建 transport/retry 框架。仅在 query embedding 调用动态范围内用私有 `ContextVar` 绑定原 trace 及 subtask/query/model 哈希，结束时 reset；不读取或落盘请求正文、密钥、URL，不把同步 query 接线扩成新的异步业务或文档构建功能。
 
-D 在 Conda `1999wiki`（Python 3.11.15；openai 2.44.0、httpx 0.28.1、langchain-openai 1.3.3）用内存 MockTransport 且禁止 socket 外连验证：429 重试、超时重试、307 跳转三个并发场景均为一次 SDK 调用、两次 transport 尝试及两条正确绑定的 hook 记录，绑定退出后清空；未关闭 SDK 默认两次重试。这里只证明扩展点可用，不是产品 RED/GREEN、真实 API/性能证据或任何 gate 通过。后续 D 仅需把已核定接点与完整观测终止证明、原失败/协议拒绝行为一起限定到现有文件；缺 hook、缺请求/KB 完整观测仍不能记实测零。E 保持干净 `cf1ff72`，尚未放行编码；三门和整体 `no_go` 未改变。
+D 在 Conda `1999wiki`（Python 3.11.15；openai 2.44.0、httpx 0.28.1、langchain-openai 1.3.3）用内存 MockTransport 且禁止 socket 外连验证：429 重试、超时重试、307 跳转三个并发场景均为一次 SDK 调用、两次 transport 尝试及两条正确绑定的 hook 记录，绑定退出后清空；未关闭 SDK 默认两次重试。这里只证明扩展点可用，不是产品 RED/GREEN、真实 API/性能证据或任何 gate 通过。缺 hook、缺请求/KB 完整观测仍不能记实测零。6.4 的合法起点为 E 干净 `cf1ff72`；三门和整体 `no_go` 尚未改变。
+
+### 2026-09-10 第 6.4 项：同次执行的三个调用门
+
+本批属于已批准的 S3 观测补齐，不进入 S4/S5 或新的产品阶段。D 仅放行 `request_detector_calls`、`dense_embedding_calls_per_knowledge_subtask`、`reranker_api_calls` 的有效 RED→最小实现→GREEN；不同时补其他待测门、改调用策略或重新调查已核定接点。完成后由 D 独立验收提交，E 不 stage/commit、不自行进入下一批。
+
+- **实际尝试入口：** Detector 的普通/anchor finalizer 与合法 continuation 路各在实际 `detect` 调用处记录尝试，不把 finalizer 完成或已有 detection receipt 当次数。Dense 复用上述公开 HTTP hook，原共享 session 的 adapter span 保留为逻辑调用/耗时，不和 API attempt 混算；纯非 Story typed Child 也绑定目标 KB/query/model，不能只覆盖 Story。Reranker 在现有 `SiliconFlowRerankClient.score` 的实际 `urlopen` 边界计尝试，原外层 rerank span 仍只是阶段；开关继续关闭。观测只透传既有 trace，不增加业务调用、重试、向量重算或第二份计数器。
+- **完整观测与零次：** collector 用原 `RequestTrace` 包住实际目标执行至返回或异常退出；每个目标 KB 的检索区间也须有真实结束依据，异常不可丢事件。客户端可观测性来自实际已安装 hook 的检查，不能预填 true、以配置关闭代替或给无观测 fake client 伪造 API 零次。新增记录优先使用现有 span/安全标量，不新建 observer、receipt、snapshot 字段或完整输入镜像。`NullTrace`、缺 frame/缺 hook、未闭合执行和未知目标集保持对应门缺测；完整执行但实测零次是计分事实，不得当缺测来掩盖 Detector 失败。
+- **原语义不变：** setup、warmup 与 candidate 首个 timed target 沿原隔离；续页只计实际目标，不重计 setup 或未执行兄弟。协议拒绝仍只证明原解码拒绝，不生成 plan/packet/Detector 调用；如增加外层观测 span，既有拒绝识别仅精确接受这个外层与原解码异常，不能顺带放宽异常分类。生成失败后已完成的检索状态/scope 保持 6.3 行为；异常传播、授权、会话提交和公开 REST/SSE 不改。
+- **计分与冷消费：** 按上方逐单位规则在原 consumer/runner 一次派生计数；完整分母不按有调用、成功或非空结果筛选。缺单位事实的汇总输入不能自报通过；只新增这三门需要的内部逐单位输入，其他门算式/字段保持。沿原 trace 和 query diagnostics/性能报告展示实际计数、逻辑 adapter 耗时与缺测状态，不能把 hook 记录耗时当 HTTP 总延迟或 TTFT。冷 evaluate/performance 不执行业务、normalizer、SDK 或网络；不改 frozen gold/threshold/baseline，不自动迁移旧观测。
+- **生产 allowlist：** `src/rag/{tracing,embeddings,vectorstore,story_retrieval,request_plan,story_authorization,chain,execution,retriever,reranker}.py` 与 `src/rag_eval/{story_run_observations,story_segment_runner}.py`。仅作上述观测/透传/消费；不改各自业务决策算法、客户端重试/代理/连接默认行为、公开响应模型或依赖版本。尽量使用既有参数/入口，不为未触发的假设故障扩充防御分支。若无法在现有 span/报告结构内表达必要事实，先给 D 精确缺口，不自行增加版本兼容层。
+- **测试 allowlist 与退出：** 仅现有 `tests/{test_tracing,test_rag_tracing,test_reranker,test_story_request_plan_v2,test_story_authorization,test_story_segment_runtime,test_story_segment_eval}.py`，无新文件。RED 须暴露真实缺失/错误计数，不仅测试导入失败：Detector 的逐请求 `0/1`、`0/2` 不可被平均或最大值掩盖；Dense 同 query 两次、不同 query 三次、失败重试及并发绑定；reranker 零/一次异常尝试；缺 hook/frame 与实测零的区别。用安装后的真实本地小 fixture 走 collect→冷消费者，同时验证协议拒绝、非 Story KB、续页 setup 隔离与 6.3 生成失败不退化。HTTP 使用现有 SDK 加内存 MockTransport/本地替身并禁止外连，不是真实 API。复用未变回归，不重跑全量构建链；Conda `1999wiki`、OS temp 日志/basetemp。报告实际改动量、RED/GREEN、未测项与日志，不新建监督文件；局部 producer 完成不等于真实质量通过或整体 go。
 
 ### 2026-09-10 前序检查点：第 6.2 项观测实现已验收
 
