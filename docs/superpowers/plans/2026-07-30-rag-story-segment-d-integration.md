@@ -2,13 +2,21 @@
 
 > **当前执行依据：** 先执行下方 2026-09-05 收敛修订。保持 `D → 一个受监督的 E worker` 两层；已完成任务的历史步骤用于追溯，不重新启动 C、D0 或新 E 会话。
 
-### 2026-09-10 当前检查点：第 5 项已验收，适用性分母修订已批准
+### 2026-09-10 当前检查点：第 6.1 项已验收
+
+- D 将获批阈值修订以干净输入提交 `3999f541a63831b26f7acaf3778f5da64d8c08c6` 导入原 E 分支后，已独立验收并提交实现 `7372d8c3bd351b4bc413ff3522a21b108d892ef2`。仅下方约定四文件 `+111/-22`，生产代码净 +14 行，无新增模块、测试函数、运行时防御分支或监督回执；E 工作树/index 干净，尚未合并 main。
+- 历史阈值 SHA 只取已验证 baseline receipt；当前复用既有 bundle，历史/当前用同一 loader 各解析一次，只比较两个历史 Recall gate 及其引用的分母定义。CLI 和实际消费入口都明确要求历史题集及历史阈值路径，不加可选空值兼容。新配置仍为原 wire schema；冻结输入、历史结果和 Spec 未改动。
+- 有效 RED 为 **2 failed / 1 passed**（4.95 秒），日志 OS temp `s61red-0e58012b.log`，SHA `055836acde6fa42585e686a18d1b8730403941ca427528529af237b68a43d556`。最终一次受影响回归 **13 passed / 0 failed / 0 skipped**（210.32 秒），日志 `s61green-81503a48.log`，SHA `462cb8a2c743cb319de9f59d3fac6bb768ec6398b5f9dec4558e9098e0e1c582`；四文件 AST/compile、diff 检查通过。不重跑未变 runtime 全套，不把历史重叠测试累加。
+- D 复用上一批已固定的小 fixture（observations SHA `ec15b69308133a061d2eec96aa39b2b926fe134646a00502a7e928d18a67c4a2`），以真实冷 `evaluate` CLI 独立运行当前 v1/历史 v1、当前 v2/历史 v1 两组；56 项除批准的分母元数据外与原报告一致，absolute quality、query diagnostics、95 gold 和 `no_go` 不变。当前/历史 SHA 错配各拒绝一次，拒绝不产生报告，采集入口和 socket 禁用，输入及四源文件前后零漂移。日志 OS temp `1999wiki-d-s61-4d9381f4470247e692b0bee016f74485/audit.log`，SHA `3a882e0a47fae4f25955e45c7442415b1c04f3f7543d4db4d5cb7d0af256f461`。这是本地消费者复验，不是真实题集采集或真实效果通过。
+- 6.1 不新增指标 producer。原 S3 的 11 项已有本地 producer、45 项待完成及五条状态历史控制缺测均保持。下一步由 D 依据当前 E 提交的实际接点明确同包正常化、适用性和内部/REST/SSE 投影观测的连贯实现范围；E 等待的是 D 的范围交接，不是用户裁决。不得重新请求已获批的分母变更，不重开 C/D0、会话或新评测框架，不自动执行真实构建或激活。每 30 分钟自检保持 ACTIVE，继续沿用用户已批准的人工裁决/低额度停止条件。
+
+### 2026-09-10 前序检查点：第 5 项已验收，适用性分母修订已批准
 
 - D 已在原 E 分支提交 `c6cc6fd54f0603229561d089c06b1145280368ab`（parent `f10a63c`），九文件 `+1072/-175`，工作树/index 干净，尚未合并 main。新增量主要在现有评测消费者与测试；`src/rag` 两文件净 +10 行，仅保留实际续页 context 和精确 decoder 异常/trace 接点。没有新模块、runner、框架或监督回执。
 - 严格 v1/v2 loader、真实 setup/commit/continuation/anchor、observations/v3 与 performance/v2 已贯通。续页 planning 如实为 null，沿原 action 与本次已验证的具体 context 消费，只执行目标 subtask；不重新授权或伪造 envelope。D 审查发现的缺测误计零分已关闭：未执行 target 的受影响指标保持缺测，不送入 gate；保留全部 95 组 gold，真实 completed 空检索/拒绝仍计零命中。仅 80 条逐字段/来源一致的 direct 例关联旧控制，五条状态例的历史控制仍不可用，相关比较保持 pending。
 - E 原完整 baseline/eval/runtime 是 **185 passed / 3 failed**，三个失败为新增参数/字段的旧测试调用未迁移，日志 OS temp `cvfull-2c6a1527.log`，SHA `49e773eea5d1477eea93d2fb0ad45d6027cc4272a379247bb7222611ced04065`。迁移及 P1/context 修正后最终受影响 **10 passed**，日志 `cvgfinal-7cca5c6e.log`，SHA `bf58be5762ad52878e4da3341e52a540e7c0eeed9be99eb28d1cf79d5474698e`；五文件 API/会话/授权/执行/复合邻接 **255 passed**，日志 `cvadjfinal-216a0cad.log`，SHA `7e4417db998318641b852de01d76d3ae984cb2652ab78c8bed3bcfebf45a62e1`。按 D 授权复用未改动 baseline/runtime 的已通过覆盖，不声称一次全量全绿，也不把重叠结果相加成独立测试数。
 - D 独立 SSE 全文件及两个 loader/实际续页节点 **54 passed**，日志 OS temp `1999wiki-d-consumer-28e4e5c05c864ee7880b4561a1c34ab9/pytest.log`，SHA `d663a56cb2e127f05629f61e80bb8b009e35ad6d8be64668075a496c6aca66f3`；另对最终小 fixture 产物作 8 项只读复验，覆盖完整观测、context/来源漂移、提交身份、终止 trace、候选不可伪装 unsupported 及 95 组缺测口径，未重新采集。九文件审查/提交前后 SHA 一致；冻结五输入与 Spec 无变化。原 RED 与 P1 RED 普通日志保留，无新证据层。
-- 本批完成不等于 E 最终交付或真实效果通过。11 项已有本地 producer、其余 45 项待完成及整体 `no_go` 不变，未执行真实题集、embedding/Milvus/SSH/媒体/激活。后续只读核定及用户裁决已完成，当前只放行下面的第 6.1 项；不重开 C/D0、旧 Step 6 或新 E 会话，不因本批提交自动进入真实构建。main 用户原有脏文件未触碰。
+- 本批完成不等于 E 最终交付或真实效果通过。11 项已有本地 producer、其余 45 项待完成及整体 `no_go` 不变，未执行真实题集、embedding/Milvus/SSH/媒体/激活。后续只读核定及用户裁决已完成，当时仅放行下面的第 6.1 项，现已验收如上；不重开 C/D0、旧 Step 6 或新 E 会话，不因本批提交自动进入真实构建。main 用户原有脏文件未触碰。
 
 ### 2026-09-10 第 6.1 项：适用性分母与历史阈值身份解耦
 
