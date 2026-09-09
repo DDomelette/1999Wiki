@@ -291,6 +291,16 @@ D 独立 **94 + 13 passed**，后组覆盖最后修改节点、非 Story active 
 
 **接续只核定最小调用观测接线：** 同一 E 在 `d35a4d1` 仅核对现有 RequestTrace 如何覆盖 request-level detector 的普通入口和 continuation 再验证，以及 reranker 实际 `urlopen` 边界；区分一次执行的完整覆盖与“没有 span 所以是零”。沿用此前六门分母盘点，不重开全量审查，不新增矩阵/文档/receipt，不改代码或运行测试/采集。给 D 一条紧凑的接口与缺口报告：准确调用者/参数、实际可复用的完成事件、失败或绕过入口、当前 collector 未覆盖的场景，及同一批 producer 能否成立。不得预先扩大到 HTTP 通用埋点、SDK 重试、AnswerScope 或标签构造；D 同步核对后放行最小连贯批。
 
+**2026-09-09：用户批准五条状态场景与协议拒绝口径的窄修。** 上述只读核对已结束：`auth-08/09/10/11`、`answer-scope-07` 缺完整前序输入；旧 capture 按普通文字执行它们，不能作为真实续页/锚点场景基线。`authorize_story_anchor_follow_up` 也没有生产调用者，原测试直接调用 helper→Retriever，不能证明第二轮正常问答可达。按以下顺序在同一 E/D 内串行闭合，不因修复新增泛化框架或监督回执：
+
+1. **先接通已批准的 anchor 产品入口。** E 从 `d35a4d1` 修改范围仅 `src/rag/{chain,execution,route_policy,story_authorization}.py` 和现有 `tests/{test_story_segment_runtime,test_story_authorization,test_conversation_memory,test_request_plan}.py`（只需实际相关文件）。复用原 Finalizer、固定 `StoryFollowUpResolver`、`project_story_anchor` 和 `authorize_story_anchor_follow_up`，把合法 follow-up 接入统一授权 envelope；不能增加独立检索路线、从期望 Owner/Planner rewrite 创建锚点、跳过 envelope 重验或重复调用 Detector/Planner。显式 Story、冲突角色/Topic/Story、多 Story-required 子任务及无回指问题保持原拒绝/授权边界；未持有合格已提交 anchor 时确定性拒绝，local 与 open-domain 不因此升级。
+2. **同请求使用同一真实 projection 与 UTC 授权时刻。** clock 可注入，运行时默认当前 aware UTC；授权、执行前 envelope 重验、续页 action builder 的 envelope 核对必须使用同一请求的输入，不能把已验收 anchor 再按空会话/direct-only 路线重算。复用现有内部参数/结果传递，不新增公开 schema、可变 anchor sidecar 或授权签名层。缺失可信上下文不能接受外来 anchor envelope；expiry/clear/identity mismatch、伪造 context 仍严格拒绝。第一轮与后续轮的 set/clear 仍由原 `build_completed_turn` 与 lease commit 负责。
+3. **入口级测试，不以 helper 成功替代。** 在已安装小来源链上，外部 Planner/生成/向量边界可用确定替身；实际执行第一轮显式单 Story→真实结果与引用校验→原子提交→第二轮 `chain.execute/prepare_execution`。证明合法 anchor 被消费、授权 Owner/来源正确、Detector 每请求一次、无额外 Planner；覆盖两 Story 清除后不复活、到期/身份不匹配/无 anchor、实体冲突和独立新问题拒绝，以及 REST/SSE 共用 prepare 后的语义。可复用现有非 UI 会话测试，无需启动服务器。先产生能揭示未接线的 RED，再最小实现，运行四个相关测试文件及原 Story runtime/authorization/会话邻接；D 独立验收后提交，E 不自行提交。不顺手补调用 scorer/trace 或修 Planner 语义。
+4. **D 冻结明确的 v2 执行场景，再交 E 统一消费。** 旧四份 v1 gold/threshold/baseline/equivalence 字节保留历史身份，不覆盖、不自动转换旧观测。新场景显式区分前序真实请求、目标业务请求与协议拒绝；续页只选择前序实际返回 action，锚点只使用真实成功并已提交的 turn。五例的独立场景输入由 D 明确编写，不能运行时从 expected Owner/gold 反填授权。未修改的 80 例保持原题干、gold/预期；五例的改动与历史基线不可比范围明示。协议解析拒绝在业务 Detector 门中记为不适用、单独严格核对拒绝且 Planner/检索/生成均未进入，不补零冒充缺测、不降低原数值质量/性能阈值。此次批准允许修正这五例与对应适用口径；不批准重写其他标签或伪造新 baseline。
+5. v2 输入与唯一 collector/validator/评分消费者在后一批贯通；采用有限的现有 direct/continuation/anchor 输入类型，不做场景 DSL 或另一个 RAG runner。前置失败、真实动作缺失、target 与 seed 关系不符都必须保留为未完成/失败，不能借用手工 receipt 补齐。新旧场景的匹配、计时与必要基线采集边界由 D 在输入冻结时明示。当前仅放行第 1–3 项产品修复；D 并行编写第 4 项输入，E 不提前改冻结文件或启动第 5 项。
+
+Conda `1999wiki`、OS temp、同一 E `gpt-6-astra / xhigh / 普通速度` 与两层拓扑不变。无真实全量构建、LLM/embedding/Milvus/SSH/媒体/生产写入，不合并 main、不激活；最终真实构建仍仅由 D 在完整 E 验收合并后执行。
+
 - 普通等价重构先运行现有特征测试，再修改，再运行定向/相邻回归；修复缺陷时增加能暴露根因的测试。D 在批次完成后独立审查，不为每个辅助函数或每次恢复新增 RED acceptance、ledger 或 receipt。
 - 验证输入和跨进程/外部请求时保留严格检查；进程内使用已验证的不可变值，避免反复序列化和重验同一事实。跨请求 continuation 和外部文件不能按进程内可信对象处理。
 - 最终离线业务产物仍须证明确定性，并绑定已提交代码；日常等价重构不触发全量快照构建。代码身份变化不要求撤销已完成历史任务或重新运行 C/D0。
