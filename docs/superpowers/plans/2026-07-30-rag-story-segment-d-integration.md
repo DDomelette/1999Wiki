@@ -2,7 +2,25 @@
 
 > **当前执行依据：** 先执行下方 2026-09-05 收敛修订。保持 `D → 一个受监督的 E worker` 两层；已完成任务的历史步骤用于追溯，不重新启动 C、D0 或新 E 会话。
 
-### 2026-09-10 当前检查点：第 6.1 项已验收
+### 2026-09-10 当前检查点：第 6.2 项观测实现已验收
+
+- D 已在原 E 分支提交 `737b6aa1f3ca449e407bd764ba64b355f729acd0`（parent `7372d8c`），九文件 `+574/-64`，生产净 +209 行（runtime/backend 净 +5、现有 evaluator 净 +204），测试净 +301。没有新文件、runner、公开 schema 镜像、监督回执或新的产品规则引擎；E 树/index 干净，尚未合并 main。
+- 同次业务首次正常化实参/结果在生成前保存，collector 对同一实参实际再调用一次，冷消费者不调用 normalizer。正式 REST 与 staged SSE 共用实际投影函数；观测格式为 `observations/v4`，历史观测不自动迁移，性能报告仍 v2，HTTP/TTFT 仍未测。Scope oracle 与运行时决策 helper 独立，未知严格姿态不猜通过。
+- D 曾复现配套篡改：保留实际非空 selection/context，却把 scope final units 清空并同步改两次结果，四门仍为 1.0。该 P1 现已通过有序 unit 摘要/分配身份、状态及 first/public 关联关闭；LLM 后删除正常化记录保持缺测。修复中重复的正文 citation-marker 解析和 Retriever shortfall 归因重推已移除，正文/引用完整性继续由既有门负责。最终 consumer SHA `d168c2b6010991bc7297074985f98e9d2e6fe24e9f57d5d547fda63641837220`。
+- 基础 RED **4 failed**（17.93 秒），OS temp `s62red-8b548b76.log`，SHA `479e9ae1e92bf81b8baea534fbd95a38bcba10806fe00a25d1188e743b9991cb`；P1 RED **2 failed**（27.29 秒），`s62p1red-a72fc953.log`，SHA `7ed66395de13c91ee86b49579cbee188aaa999d0895c168cf80c88cf20640f3c`。裁剪后冻结九文件的新进程回归 **13 passed / 0 failed / 0 skipped**（306.02 秒），`s62closed-16eb91dd.log`，SHA `eaeb0228cb525ca526fe7b032befe747dd7acde0c00bd3e43f5e9e4408927912`。
+- 邻接日志 `s62adj-479336c0.log` 为 **130 passed / 1 failed**（159.46 秒），SHA `3be399be5f4993b582d2853fdac023ad77af931e0b77ff08a1bb68723697dfa4`。该进程已加载裁剪前 consumer，唯一失败是新正文 parser 抢先拦截既有 coverage 低分变异；仅复用未变 API/SSE/纯 scope 层通过结果，consumer 的通过依据为上述 fresh run。未删旧 coverage 测试；不将重叠结果相加、不声称一次全量全绿。
+- D 独立复验原固定 v4 小 fixture（SHA `e198dbfc5ec127645605f220b637353f83c75d27ab9fa6bea01169e488c113c4`）的原始配套篡改、unit hash、public scope 和 shortfall 输入漂移均被阻断，缺 rebound record 包括伪装 failed 均缺测，原分母 `[1,2,2,4]` 保持；无输入写入。另独立正式接口 **3 passed**（2.30 秒），日志 OS temp `1999wiki-d-s62-api-d0570ccd82c64914b5092aabd0ae4d08/pytest.log`，SHA `c9f6d50b468c9a49fc647b40db6da0b3f0e74d86f78d8d71b538a5c679058c49`，覆盖最终验证失败不提交会话、SSE 顺序及 REST/SSE 会话语义。九文件提交前后 SHA 一致，冻结输入与用户 main 脏文件不变。
+- 新增四个本地 producer，总数 15，其余 41 项待完成，不是 15 项真实业务质量已通过。最终小 fixture 的 95 gold 保持，整体 `no_go`；未运行真实题集、embedding/Milvus/SSH/媒体/激活。已明确暴露一个旧运行时缺陷：复合 LLM 异常被通用 `_failed_branch` 错归为检索失败并丢失已生成 scope；新适用性门会正确计失败，而不是掩盖它。下一步仅放行下方 6.3 修复此状态保留问题，无需用户新裁决。
+
+### 2026-09-10 第 6.3 项：复合回答异常保留已完成检索状态
+
+- 基于 E 干净 `737b6aa`。根因与修复边界：全局来源分配/正常化完成后的私有 `_answer_composite_branch` 异常，当前被通用 `execute_request_plan` catch 丢回无阶段信息的 `_failed_branch`。在掌握该次实际 `branch_payload.route_decision` 与 `scope_normalization.result` 的现有私有 answer 调用边界处理普通回答异常，保留真实 effective route、retrieval outcome、scope；不得从 evaluator 观测反向驱动运行时，也不新建异常框架或重跑检索。`StoryRuntimeContractError` 的原 fail-closed 传播继续保留。
+- 沿用原确定性失败答案/错误标识、`status=failed`、不可提交失败分支及未生成引用的处理，不改授权、模型调用/重试数或尽力回答策略。真正检索失败和进入正常化前的无记录失败继续保持 failed/null，不能伪造成功检索或 scope。局部成功分支仍可回答；请求级 outcome 继续只走已有聚合器，不另造汇总字段。生成失败不是检索失败，恢复元数据也不等于恢复答案成功。
+- 消费层只移除已不再需要的“public failed 可与正常化 outcome 不同”兼容例外，改为关联该次实际结果；不改 oracle、分母、阈值、观测 schema 或缺测政策。保留旧事实的测试应升级为有效 RED：应当维持的真实检索状态/scope 尚未维持，而不是删除 applicability=0 的证据来造通过。
+- 仅允许 `src/rag/execution.py`、`src/rag_eval/story_run_observations.py`、`tests/test_story_segment_runtime.py`、`tests/test_story_segment_eval.py`。原观测 test 的并发调用按 subtask ID 匹配对象身份，不依赖线程完成顺序；无需增加线程框架或压力测试。无新文件、回执、计划副本或公开 contracts 改动。
+- E 有效 RED→最小修复→GREEN，覆盖复合生成失败、局部成功与失败并存、实际检索失败、早期 failure/契约异常、scope/唯一 outcome 四面投影、调用数和失败分支会话不提交；复用已有真实安装的小 fixture、API/SSE 邻接和冷评分，不进行完整题集/外部模型/向量/媒体操作。保持 Conda `1999wiki` 与 OS temp；不 stage/commit。完成后 D 独立验收提交，不继续自行扩展至其余 41 门或真实构建。
+
+### 2026-09-10 前序检查点：第 6.1 项已验收
 
 - D 将获批阈值修订以干净输入提交 `3999f541a63831b26f7acaf3778f5da64d8c08c6` 导入原 E 分支后，已独立验收并提交实现 `7372d8c3bd351b4bc413ff3522a21b108d892ef2`。仅下方约定四文件 `+111/-22`，生产代码净 +14 行，无新增模块、测试函数、运行时防御分支或监督回执；E 工作树/index 干净，尚未合并 main。
 - 历史阈值 SHA 只取已验证 baseline receipt；当前复用既有 bundle，历史/当前用同一 loader 各解析一次，只比较两个历史 Recall gate 及其引用的分母定义。CLI 和实际消费入口都明确要求历史题集及历史阈值路径，不加可选空值兼容。新配置仍为原 wire schema；冻结输入、历史结果和 Spec 未改动。
