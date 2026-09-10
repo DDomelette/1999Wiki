@@ -1,6 +1,6 @@
 # 线程 D：剧情 Segment 前置门、集成与向量影子构建 Implementation Plan
 
-> **当前执行依据：** 先执行下方 2026-09-05 收敛修订。保持 `D → 一个受监督的 E worker` 两层；已完成任务的历史步骤用于追溯，不重新启动 C、D0 或新 E 会话。
+> **当前执行依据：** 当前仅执行顶部第 6.5 项的两文件 RED→实现→GREEN，合法起点为 E 干净 `1ca7f77b96c360e427618d899ba32f90744c152a`。2026-09-05 修订规定共同边界；更早 RED-only、Step 6/Build A、`c81d336 + 11 dirty` 均为已被后续验收替代的历史步骤，不是本轮恢复条件。保持 `D → 一个受监督的 E worker` 两层，不重新启动 C、D0 或新 E 会话。
 
 ### 2026-09-10 当前检查点：第 6.4 项已验收
 
@@ -12,7 +12,7 @@
 
 ### 2026-09-10 第 6.5 项：归属与授权指标
 
-**只读核定已完成，现放行两门最小实现：** E 只读轮 `01a0891e-49b7-78a1-a545-c4957725b7eb` 与 D 独立核对一致：冻结 v2 有 157 个 Story mention span（74 例），正例授权基数为 86 个 query–Owner 单位（direct 83、continuation 1、anchor 2）。70 个 direct 正例的 83 个标注 span 与 83 个有序 Owner 逐例同基数且 Owner 不重复；所有 span 与原问题位置/文本相符。这些数值只是当前输入的复核结果，实现须动态计算。现有 v4 已有 final plan、detection/assignment、授权 context 与状态来源，不新增运行时字段。下方旧“先只读”步骤现为已完成记录。
+**只读核定已完成，现放行两门最小实现：** E 只读轮 `01a0891e-49b7-78a1-a545-c4957725b7eb` 与 D 独立核对一致：冻结 v2 有 157 个 Story mention span（74 例），正例授权基数为 86 个 query–Owner 单位（direct 83、continuation 1、anchor 2）。70 个 direct 正例的 83 个标注 span 与 83 个有序 Owner 逐例同基数且 Owner 不重复；所有 span 与原问题位置/文本相符。这些数值只是当前输入的复核结果，实现须动态计算。现有 v4 已有 final plan、detection/assignment、授权 context 与状态来源，不新增运行时字段。
 
 - **唯一归属：** 阈值的 `all_unique_source_spans` 按 Spec `REQUESTPLAN2-P0-04/09` 与第 26.1 节解释为有独立金标的 Story mention occurrence，不是完整子任务 span 数。以 `(query_id, start, end)` 为单位保留 157 个基数；同 Owner 不同位置不合并。将金标位置/文本关联实际 occurrence，再独立按最终 subtask 的 span 检查恰好一个 ready KB 或合法 boundary 归属，并核对 assignment 行；不能以 validator/assignment_closed 成功代替检查，不能将同一 subtask 的两个 span 计作两个 Owner。分页待续与 33+ 拒绝仍计其原问题 occurrence；continuation 携带的旧 Plan/setup 不新增本次跨度，当前 anchor/open-domain 无标注时也不添单位。检测漏掉已有金标应计失败，不缩分母；完整必要观测缺失仍缺测。
 - **授权正确性：** 保留每个冻结预期 query–Owner 单位，不按实际成功、非空检索或已授权集合筛选。direct 使用金标 span 与有序 Owner 的独立对应确定授权所在 scope；continuation 只用实际 target 页，anchor 只用实际 target 已提交来源。逐单位检查 expected Owner/order/origin/coverage、实际 required/authorized 同一 context 及其唯一作用域；错误 origin/顺序/归属不能仅靠 Owner 集合相同通过。`answer-scope-06` 的预期检索失败不移除其授权单位，授权与答案/引用成功分开。
@@ -20,9 +20,7 @@
 - **现有消费者接线：** 仅 candidate 首个 timed target，setup/warmup/其他重复样本不计。复用 `_execution_planning` 和已验证输入；接口/身份严格校验与独立 gold 评分分工，不复制运行时授权/Detector/Finalizer，不重跑它们来算期望。所有可能产生额外授权的目标都须有完整观测；缺目标不可按零声明通过。精确已证明的协议拒绝无 plan/授权单位且下游为零，不伪造 planning；沿已批准拒绝语义处理。报告沿原 56 行九字段、query diagnostics、缺测/零分母规则，另 54 门行为保持；不另建 scorer、receipt、sidecar、版本兼容或采集入口。
 - **唯一文件范围与验证：** 仅 E 的 `src/rag_eval/story_run_observations.py` 与 `tests/test_story_segment_eval.py`。在既有小 fixture/节点做有效 RED→最小实现→GREEN：不同位置同 Owner、同任务多 span、零/多归属、合法 boundary、漏检测不缩分母；完整授权与同集合错顺序/错 origin/错 scope、额外/重复授权、空金标错误授权、合法续页/anchor、检索失败仍计授权、缺 target/必要观测、协议拒绝和 setup 隔离。保留原生产者对照与所有显式负例，collect→冷消费者在禁止业务/normalizer/网络时可消费；不新增运行时防御逻辑。复用未变回归，跑受影响节点与必要 eval/baseline 邻接，不重跑全量构建链。Conda `1999wiki`、OS temp 日志/basetemp，报告改动量、未测项与日志。E 不 stage/commit、不写新文档/文件、不运行真实全量或外部服务；完成后 D 独立验收提交，不自行进入下一批。
 
-- 起点为同一 E 的干净 `1ca7f77`。仅核对 `request_plan_occurrence_unique_assignment_rate` 与 `required_story_authorization_precision` 两项，尚未放行实现；不重开已验收 6.4 或旧恢复起点。D/E 分别核对冻结 v2 case 的 `request_plan_source_spans`、期望 Owner/顺序/授权来源，与同次实际 final plan、授权 context、continuation/anchor 状态的关联。
-- 给出每项独立分子/分母、去重/作用域、现有字段/消费接点和确实缺少的证据；区分 direct/分页待续、合法 continuation、anchor、open-domain、拒绝和 setup/target。不能按观察到的成功/授权子集缩小分母，不能把运行时 validator 通过当作独立 gold 正确率，也不能把 setup 的跨度当成续页新请求的跨度。如冻结标注与 Spec 存在实质冲突，只报告精确证据，不修 gold 或猜测口径。
-- E 只回一份短报告，不改代码/文档、不 stage/commit、不新建文件或任务、不运行测试/采集/外部服务。D 同步核对分母与既有评测接口；仅在两项的证据和语义闭合后，才在原 S3 内确定最小实现范围。模型/思考等级保持 `gpt-6-astra / xhigh`，标准速度；本地 `service_tier=default` 已核对，任务接口不暴露单轮 tier，不能声称已独立确认覆盖值。
+- **恢复说明：** E 实施轮 `01a08941-3a78-7b83-a39f-c4d89143437e` 在上下文压缩后重新采用旧 `c81d336 + 11 dirty` 门禁，只预检即停止，未编辑或测试。D 已确认当前 HEAD/干净树正是已验收 6.4 的状态，不存在产品或冻结输入漂移；该历史状态阻断无效，继续本项，不重做 D2/旧 Step 6。此说明不豁免当前文件范围、冻结输入和实际测试要求。模型/思考等级保持 `gpt-6-astra / xhigh`、标准速度；本地 `service_tier=default` 已核对，任务接口不暴露单轮 tier，不声称已独立确认覆盖值。
 
 ### 2026-09-10 前序检查点：第 6.3 项已验收
 
@@ -126,7 +124,7 @@ D 在 Conda `1999wiki`（Python 3.11.15；openai 2.44.0、httpx 0.28.1、langcha
 - 保留来源与产物身份校验、Owner/授权边界、准确的失败/空检索区分、引用闭包和会话提交原子性。
 - 真实 embedding/Milvus 仍由 D 在 E 合并后执行；仍检查云端容量，构建后保留至少 12 GiB，Story Segment 不超过 25,000；不得自动激活、覆盖 active collection 或下载媒体。
 - C 与 D0 已完成的提交和证据继续有效。E 在现有工作树、现有会话上继续；按用户最新设置，后续执行使用 `gpt-6-astra / xhigh / 普通速度`，不由历史 Plan 的模型或快速模式条款覆盖。恢复前分别核对模型、思考等级和 service tier；不能仅关闭快速模式选项就假定已切换普通速度。
-- 收敛起点为 E HEAD `c81d336806cd9f0b3abb32db01054287df14d711` 及已有 11 个未提交文件。已有改动、失败构建和验收证据保留；不得为了拆提交而重置或重放整条历史。
+- 2026-09-05 的历史收敛起点为 E HEAD `c81d336806cd9f0b3abb32db01054287df14d711` 及当时 11 个未提交文件；它已被后续验收提交替代，不是当前恢复门。当前起点只取文档顶部的最新执行项。已有改动、失败构建和验收证据保留；不得为了拆提交而重置或重放整条历史。
 
 ### 需要关闭的根因
 
