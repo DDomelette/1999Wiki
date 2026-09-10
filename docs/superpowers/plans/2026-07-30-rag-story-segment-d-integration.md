@@ -1,8 +1,21 @@
 # 线程 D：剧情 Segment 前置门、集成与向量影子构建 Implementation Plan
 
-> **当前执行依据：** 第 6.5 项已验收，当前合法恢复点为 E 干净 `09fe8836c6c3df85489d288b1e72ea695914dfe4`。第 6.6 项只读核定已完成；现在只放行下方两个原始通道 Recall 的本地消费者，不放行融合排序指标。2026-09-05 修订规定共同边界；下方各已验收批的旧起点、RED-only、Step 6/Build A、`c81d336 + 11 dirty` 都不是当前恢复条件。保持 `D → 一个受监督的 E worker` 两层，不重新启动 C、D0 或新 E 会话。
+> **当前执行依据：** 第 6.6 项已验收，当前合法恢复点为 E 干净 `26e1fe9d3f7b206006ad9b4caf843986d095cfbc`。现在只执行下方第 6.7 项的只读核定，不重做已验收批或启动融合排序实现。2026-09-05 修订规定共同边界；下方各已验收批的旧起点、RED-only、Step 6/Build A、`c81d336 + 11 dirty` 都不是当前恢复条件。保持 `D → 一个受监督的 E worker` 两层，不重新启动 C、D0 或新 E 会话。
 
-### 2026-09-10 第 6.6 项：只实施原始通道 Recall，保留控制缺口
+### 2026-09-10 第 6.7 项：Detector 精确率与召回率，只读核定
+
+- 同一 E 在干净 `26e1fe9` 仅核对 `policy_story_mention_precision`、`policy_story_mention_recall` 两门。复用已观测的 Policy 检测结果与冻结 Story mention occurrence 金标，说明实际字段、最小接线、独立分母、负例/漏检/额外与重复检测、明确拒绝与观测缺失的区别。与已验收 6.5 的唯一归属/授权正确性区分，不把 assignment 成功当作 Detector 正确，也不重跑 Detector 当 oracle。
+- 只读确认 direct/continuation/anchor 各自本次自然语言请求的检测与 setup/旧签名 Plan 中的历史检测如何分离；不要根据现有金标以外的名称、模糊文本或候选命中自行补标签。报告确实缺少的语义/观测，不凭缺字段默认通过。无需重新盘点全部 56 门，不扩展至 Planner mutation、fallback、状态会话或排序指标。
+- 只返回简短接点/分母/最小范围报告；无编辑、测试、采集、stage/commit、新文件/回执或外部调用。D 定案后才允许本批实现。Conda `1999wiki`、Astra/xhigh/标准速度、同一 E 不变。
+
+### 2026-09-10 当前检查点：第 6.6 项已验收
+
+- D 已将 E 两个既有文件提交为 `26e1fe9d3f7b206006ad9b4caf843986d095cfbc`（parent `09fe883`）：`+152/-4`，生产净 +40 行、测试净 +108 行，无新增文件/模块/运行时机制。`story_run_observations.py` SHA `d4ae79c27b62abb56f7f46f2157c8fbaa3d9e022a246f4d79a0415c8c32e1732`；测试 SHA `052dce5a49dcf0f71b59b9db36187b1ae8c342c3c415922c678bd4963489c45f`，提交前后相同，树/index 干净，未合并 main。
+- E 有效 RED **2 failed**（41.97 秒），OS temp `s66red-8d673a21.log`，SHA `12331ec6ef85299be7d3372ce581941f3e2962c206c18960ff02c7cb6199167d`；GREEN **2 passed**（97.06 秒），`s66green-ecc50088.log`，SHA `c638ee72bbef497f76de7ff8603a145c2552117d12ef950d7e2a53564f1150d0`；最终受影响与邻接 **11 passed**（151.54 秒），`s66final-0be46106.log`，SHA `a1c3587e4532dd3576c53b40c292028a7865560d9237828b62fef10d0d999733`。最终 group 节点包含后补的来源/映射/raw 独立性断言，复用未变 cold CLI GREEN；不将重叠覆盖累加或声称一次全量回归。
+- D 用既有固定小观测（SHA `1d34064a88386cf65dd3a1af7c1c63d6a0692d7ee22e3fffcc1c066dc548a315`）完成 **16 项冷复验**：精确 Atom 与同 Segment 其他 Atom、80/81 和 30/31、空/缺测、失败 target、fused 隔离、错来源不缩分母、同组重复及 warmup。原观测先经验证，评分变异不宣称仍是合法 wire 事务；执行/normalizer/socket 禁用，未再采集、输入零漂移。日志 `C:/Users/HUAWEI/AppData/Local/Temp/1999wiki-d-s66-58e0672483f740be99b1a56a5a5b09b6/cold.log`，SHA `6c056c22b42d7a1d8eadad5620e10124f51f0b459c249c276ef1a137193f30ae`。current/historical/stateful 三份报告的其余 54 门逐字段均与已验收 6.5 相同，整体仍 `no_go`。
+- 现在 **21 项已有本地硬门 producer、35 项仍未闭合**；另有 BM25 候选绝对值消费者，但无独立 raw Top-80 baseline，不能计作完整硬门 producer或真实质量通过。MRR/nDCG 未实施，状态历史控制及真实效果仍待完成。没有真实题集/embedding/Milvus/SSH/媒体/激活，冻结输入及 main 用户原有脏文件不变。下一步仅为上方 6.7 的只读核定，不要求用户重复批准日常 D 验收。
+
+### 2026-09-10 第 6.6 项历史实施范围：原始通道 Recall（已验收）
 
 - 只读轮 `01a08993-9379-7632-b20f-2d690f7af2d2` 已完成，D 独立核对一致：现有观测保存每 KB 的 raw Atom BM25、raw Segment Dense、过滤排名和 fused，不能混用。冻结 baseline 的 `retrieval_at_k` 是旧 RRF 输出，旧配置 `bm25_k=40`，没有 raw BM25@80；190 条 equivalence 均未匹配只能说明其各自阶段的来源覆盖，不能证明 raw BM25 为零。五个状态例仍无可比历史控制；有 gold 的排名总体为 72 例，其中 3 个状态例不能被排除。
 - 本批仅在原 E `09fe883` 上实现 `atom_bm25_recall_at_80` 的独立候选绝对值及 `segment_dense_recall_at_30`。D 在观察真实候选效果前固定子集：BM25 使用 `query_type=exact_lexical`；语义 Dense 使用 Spec 第 25.2 节的 `stratum in {single_story_fact, single_story_multi_detail}`，包含单点首/中/末段和多细节原因/经过/关系两类，不按结果择题。当前分别为 12 例/12 groups 和 20 例/30 groups，只用于审计，实现从冻结题集动态选择/计数。阈值仍分别为 0.95 且不低于基线、0.85；不修改 gold、阈值或 schema。
