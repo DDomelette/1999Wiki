@@ -10,6 +10,12 @@
 - D 独立五文件邻接 **271 passed**（13.28 秒），日志 OS temp `1999wiki-d-s64-adj-3386e35deb35493c92711847bb340cee/pytest.log`，SHA `16dbeec2bbc907d07aabf292f64a02201e1597bebcc8a651f526662e08171f88`。另复用固定小 fixture（SHA `1d34064a88386cf65dd3a1af7c1c63d6a0692d7ee22e3fffcc1c066dc548a315`）完成 **11 项冷复验**：原计数、重复 API、缺 API/KB/hook/request、身份/时间关联漂移、HTTP 前失败及无 adapter；真实零次保留，缺测不通过。日志同目录 `cold-final.log`，SHA `4e9cfa9cf8aae8a9c85fddbcc92966c9f50f98db13dd72c939bd42b4286f9bd7`；执行入口、normalizer 与 socket 禁用，未再采集，输入字节不变。上述日志及最终 16 文件在提交前再次核对一致，未重复运行未变测试。
 - 本批增加三个本地 producer，累计 **18 项已有本地 producer、38 项待完成**，不是 18 项真实质量门已通过。HTTP/TTFT、五条状态例历史控制和真实题集仍未完成，整体 `no_go`。没有真实 embedding/Milvus/SSH/媒体/激活。下批尚未下发，由 D 在既有 S3 内先核定范围，不要求用户重新批准普通验收，不自动进入 S4/S5 或真实构建。
 
+### 2026-09-10 第 6.5 项：归属与授权指标，先只读核定
+
+- 起点为同一 E 的干净 `1ca7f77`。仅核对 `request_plan_occurrence_unique_assignment_rate` 与 `required_story_authorization_precision` 两项，尚未放行实现；不重开已验收 6.4 或旧恢复起点。D/E 分别核对冻结 v2 case 的 `request_plan_source_spans`、期望 Owner/顺序/授权来源，与同次实际 final plan、授权 context、continuation/anchor 状态的关联。
+- 给出每项独立分子/分母、去重/作用域、现有字段/消费接点和确实缺少的证据；区分 direct/分页待续、合法 continuation、anchor、open-domain、拒绝和 setup/target。不能按观察到的成功/授权子集缩小分母，不能把运行时 validator 通过当作独立 gold 正确率，也不能把 setup 的跨度当成续页新请求的跨度。如冻结标注与 Spec 存在实质冲突，只报告精确证据，不修 gold 或猜测口径。
+- E 只回一份短报告，不改代码/文档、不 stage/commit、不新建文件或任务、不运行测试/采集/外部服务。D 同步核对分母与既有评测接口；仅在两项的证据和语义闭合后，才在原 S3 内确定最小实现范围。模型/思考等级保持 `gpt-6-astra / xhigh`，标准速度；本地 `service_tier=default` 已核对，任务接口不暴露单轮 tier，不能声称已独立确认覆盖值。
+
 ### 2026-09-10 前序检查点：第 6.3 项已验收
 
 - D 已在原 E 分支提交 `cf1ff72bc663d9946ccf5204e97c97568a616256`（parent `737b6aa`），四个既有文件 `+106/-25`，生产净 +8 行、测试净 +73 行，无新文件或监督层；树/index 干净，未合并 main。回答异常在原私有 answer 边界保留已完成的路由/outcome/scope，仍为失败且无引用/实体锚点；契约异常、真正检索失败和早期失败沿原处理。消费者删除旧失败状态兼容例外，并发观测测试按 subtask ID 关联。
