@@ -2,7 +2,15 @@
 
 > **当前执行依据：** 先执行下方 2026-09-05 收敛修订。保持 `D → 一个受监督的 E worker` 两层；已完成任务的历史步骤用于追溯，不重新启动 C、D0 或新 E 会话。
 
-### 2026-09-10 当前检查点：第 6.3 项已验收
+### 2026-09-10 当前检查点：第 6.4 项已验收
+
+- D 已在原 E 分支提交 `1ca7f77b96c360e427618d899ba32f90744c152a`（parent `cf1ff72`），仅本批 16 个既有文件 `+576/-57`，生产净 +206 行、测试净 +313 行，无新模块或监督文件。提交前后逐文件 SHA 一致，E 树/index 干净；未合并 main，冻结题集/阈值/Spec、公开接口文件及 main 用户原有脏文件不变。
+- 三门现从同次执行的实际 Detector、SDK 公开 HTTP request hook、reranker `urlopen` 尝试派生逐单位计数；完整请求/KB 观测区间与实际 hook 可观测性区分零次和缺测。其他 53 门算法、原九字段指标行和调用/重试策略不改。纯非 Story Child 曾因复用 Story session 改变异常类型，有效 RED 后已撤回该复用，只透传原调用的 trace/身份，保持原成功结果与异常类型。
+- E 基础受影响回归 **65 passed**（234.23 秒，OS temp `s64focused-88f0c0eb.log`，SHA `e567f2c148b171d13dae7a8252fd62b623bde6cdaada961918327c71a4306bbb`），邻接 **24 passed**，collect→冷消费 **2 passed**。D 发现的 P1 是成功 adapter 缺 API 事件被错误计为零次；修复只关联同 KB/query/model、adapter 区间内已有 API 事件，缺失仍缺测，不伪造次数。对应 RED **1 failed**（`s64p1red-e112dcf5.log`，SHA `464f1fcbb448eeed233da171af3377f8cb2202448a9996e293a68af97c250907`），GREEN **1 passed**（`s64p1green-71d51eaf.log`，SHA `57348fbb1f64720ec5c81151cee829e55610b22761fb6857562d456dbd49d10b`），最终受影响 **13 passed**（`s64p1adj-0c936ff9.log`，SHA `5c9a2156b8b4418e191298f2f402a8eb0602725e9223f6d63ec103801f87960b`）。复用未变覆盖，不累加重叠测试数。
+- D 独立五文件邻接 **271 passed**（13.28 秒），日志 OS temp `1999wiki-d-s64-adj-3386e35deb35493c92711847bb340cee/pytest.log`，SHA `16dbeec2bbc907d07aabf292f64a02201e1597bebcc8a651f526662e08171f88`。另复用固定小 fixture（SHA `1d34064a88386cf65dd3a1af7c1c63d6a0692d7ee22e3fffcc1c066dc548a315`）完成 **11 项冷复验**：原计数、重复 API、缺 API/KB/hook/request、身份/时间关联漂移、HTTP 前失败及无 adapter；真实零次保留，缺测不通过。日志同目录 `cold-final.log`，SHA `4e9cfa9cf8aae8a9c85fddbcc92966c9f50f98db13dd72c939bd42b4286f9bd7`；执行入口、normalizer 与 socket 禁用，未再采集，输入字节不变。上述日志及最终 16 文件在提交前再次核对一致，未重复运行未变测试。
+- 本批增加三个本地 producer，累计 **18 项已有本地 producer、38 项待完成**，不是 18 项真实质量门已通过。HTTP/TTFT、五条状态例历史控制和真实题集仍未完成，整体 `no_go`。没有真实 embedding/Milvus/SSH/媒体/激活。下批尚未下发，由 D 在既有 S3 内先核定范围，不要求用户重新批准普通验收，不自动进入 S4/S5 或真实构建。
+
+### 2026-09-10 前序检查点：第 6.3 项已验收
 
 - D 已在原 E 分支提交 `cf1ff72bc663d9946ccf5204e97c97568a616256`（parent `737b6aa`），四个既有文件 `+106/-25`，生产净 +8 行、测试净 +73 行，无新文件或监督层；树/index 干净，未合并 main。回答异常在原私有 answer 边界保留已完成的路由/outcome/scope，仍为失败且无引用/实体锚点；契约异常、真正检索失败和早期失败沿原处理。消费者删除旧失败状态兼容例外，并发观测测试按 subtask ID 关联。
 - 有效 RED **4 failed / 4 passed**（73.68 秒），OS temp `s63red-91e70631.log`，SHA `146bd825474f1c2a6dfbf7d903de1a7728e22b6fc7206c2a86ca8737630d8157`。冻结后受影响 **15 passed**（133.80 秒），`s63green-f75fc46d.log`，SHA `fa229091c9367742646abf048c23e517937b244306f3b813fef0a9e18e2fb36d`；唯一 collect→冷消费者节点 **1 passed**（73.18 秒），`s63cold-ced97e7c.log`，SHA `e6bc581dc77605bbc1b82254f04ef7873dfc2eec161a68ef235fe1eda06d356d`。不将 RED 或重叠覆盖累加。
