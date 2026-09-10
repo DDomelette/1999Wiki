@@ -1,12 +1,15 @@
 # 线程 D：剧情 Segment 前置门、集成与向量影子构建 Implementation Plan
 
-> **当前执行依据：** 第 6.5 项已验收，当前合法恢复点为 E 干净 `09fe8836c6c3df85489d288b1e72ea695914dfe4`。现在仅执行下方第 6.6 项的只读核定，不重测已验收批。2026-09-05 修订规定共同边界；下方各已验收批的旧起点、RED-only、Step 6/Build A、`c81d336 + 11 dirty` 都不是当前恢复条件。保持 `D → 一个受监督的 E worker` 两层，不重新启动 C、D0 或新 E 会话。
+> **当前执行依据：** 第 6.5 项已验收，当前合法恢复点为 E 干净 `09fe8836c6c3df85489d288b1e72ea695914dfe4`。第 6.6 项只读核定已完成；现在只放行下方两个原始通道 Recall 的本地消费者，不放行融合排序指标。2026-09-05 修订规定共同边界；下方各已验收批的旧起点、RED-only、Step 6/Build A、`c81d336 + 11 dirty` 都不是当前恢复条件。保持 `D → 一个受监督的 E worker` 两层，不重新启动 C、D0 或新 E 会话。
 
-### 2026-09-10 第 6.6 项：通道 Recall 与融合排序，先只读核定
+### 2026-09-10 第 6.6 项：只实施原始通道 Recall，保留控制缺口
 
-- 同一 E 在干净 `09fe883` 核对 `atom_bm25_recall_at_80`、`segment_dense_recall_at_30`、`fused_mrr_at_8`、`fused_ndcg_at_8` 四门。复用已保存的真实通道/融合排名、独立 gold 及既有 Atom→Segment 闭包；先明确子集、完整分母、实际每 KB Top-K 与多分支作用域、rank/gain/IDCG 计算、实际空结果和缺测的区别，不重做检索/排序/packing。
-- D 同步核对冻结 baseline/equivalence 的阶段和排名身份。BM25 要求不低于独立 baseline，MRR/nDCG 要求不低于 baseline−0.02；历史 RRF/final-context 不能冒充 raw BM25，Segment 与历史 Child/Parent 排名不能无说明混比。分别报告可复用的真实控制、缺失的控制、五个状态例不可比和必要的后续生产阶段，不填零、不用 candidate 自比、不重开 D0 或擅自重采集。
-- 只回一份短报告，列已有字段/函数、最小连贯实现范围和确实需要 D 定案的语义；无代码/文档修改、stage/commit、测试/采集/全量/外部调用或新文件/任务。D 定案后才放行实施，不凭这轮报告把四门标完成；保持既有阈值/gold/schema、同一 E 与 Astra/xhigh/标准速度。
+- 只读轮 `01a08993-9379-7632-b20f-2d690f7af2d2` 已完成，D 独立核对一致：现有观测保存每 KB 的 raw Atom BM25、raw Segment Dense、过滤排名和 fused，不能混用。冻结 baseline 的 `retrieval_at_k` 是旧 RRF 输出，旧配置 `bm25_k=40`，没有 raw BM25@80；190 条 equivalence 均未匹配只能说明其各自阶段的来源覆盖，不能证明 raw BM25 为零。五个状态例仍无可比历史控制；有 gold 的排名总体为 72 例，其中 3 个状态例不能被排除。
+- 本批仅在原 E `09fe883` 上实现 `atom_bm25_recall_at_80` 的独立候选绝对值及 `segment_dense_recall_at_30`。D 在观察真实候选效果前固定子集：BM25 使用 `query_type=exact_lexical`；语义 Dense 使用 Spec 第 25.2 节的 `stratum in {single_story_fact, single_story_multi_detail}`，包含单点首/中/末段和多细节原因/经过/关系两类，不按结果择题。当前分别为 12 例/12 groups 和 20 例/30 groups，只用于审计，实现从冻结题集动态选择/计数。阈值仍分别为 0.95 且不低于基线、0.85；不修改 gold、阈值或 schema。
+- 复用 `_group_observations` 中独立 gold 的 Atom 内容/来源及 Atom→Segment/Owner 闭包；同一 gold group 任一合法 Atom 的 raw BM25 命中、或机械派生 Segment 的 raw Dense 命中计一次。分母先取完整 gold groups，缺映射/未命中不移除单位；不把同 Segment 的其他 Atom 当作 BM25 精确命中。仅 candidate 首个 timed target；按实际每 KB 通道位次限定 80/30，再并集计 group 命中，不做请求级重排、补位、Owner/关系过滤后的冒名或 final-context 替代。命中重复不加分，非子集/设置与 warmup 不进入分母。
+- 完整且实际观测为空的通道计零；缺 target、缺必要 raw 通道观测仍缺测，不能由 fused 非空或配置推断。沿现有授权/来源校验消费，不复制 validator 或运行时逻辑。BM25 绝对 numerator/denominator/candidate 与历史控制缺失原因写入原 `absolute_quality`，不提交一个 baseline=0 的 BM25 gate observation；其硬门维持未通过，直到后续获批 D 控制证据阶段具备同口径独立 raw Top-80。Dense 本身不要求历史比较，可沿原绝对门送入 scorer。其余 54 门、原九字段报告和缺测规则保持。
+- `fused_mrr_at_8`、`fused_ndcg_at_8` 本批不实施。Spec `STORYBRANCH-P0-18` 的 2～3 Story 是一个不可拆 KB、一个真实 Top-8，不应为了评分新增跨分支比较。当前文档未把全部混合任务的排名汇总和旧 Child/Parent 对新 Segment 的 gain/IDCG 比较定义完整；D 另行冻结同口径后再放行，不临时发明合并榜、用实际命中数算 IDCG、缩至 69 例或以候选自比。没有重采集/重开 D0/新 baseline 的许可；这些是未完成项，不称四门闭合。
+- 只允许修改 E 的 `src/rag_eval/story_run_observations.py` 和 `tests/test_story_segment_eval.py`，不新建文件/框架/回执。复用现有小 fixture 做有效 RED→最小实现→GREEN：精确子集、完整 group 分母、同 group 多 Atom/同 Segment 不同 Atom、真实 raw 与过滤/fused 不同、80/81 与 30/31 界限、多 KB 不重排/重复计分、空与缺测、错来源/映射、target 与 warmup 隔离、无 BM25 对照不放行、其余指标不漂移。选择受影响节点和必要邻接，不重复全量构建或未变回归。Conda `1999wiki`、OS temp 日志/basetemp；E 不 stage/commit、不修改文档或冻结输入、不运行真实题集/embedding/Milvus/SSH/媒体/激活。完成后 D 独立验收，不自行进入排序门或新阶段；模型仍为 Astra/xhigh/标准速度。
 
 ### 2026-09-10 当前检查点：第 6.5 项已验收
 
