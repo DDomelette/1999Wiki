@@ -1,6 +1,12 @@
 # 线程 D：剧情 Segment 前置门、集成与向量影子构建 Implementation Plan
 
-> **当前执行依据：** 第 6.5 项已验收，当前合法恢复点为 E 干净 `09fe8836c6c3df85489d288b1e72ea695914dfe4`，本批不再实施或重测；下一批由 D 在既定 S3 内核定范围。2026-09-05 修订规定共同边界；下方各已验收批的旧起点、RED-only、Step 6/Build A、`c81d336 + 11 dirty` 都不是当前恢复条件。保持 `D → 一个受监督的 E worker` 两层，不重新启动 C、D0 或新 E 会话。
+> **当前执行依据：** 第 6.5 项已验收，当前合法恢复点为 E 干净 `09fe8836c6c3df85489d288b1e72ea695914dfe4`。现在仅执行下方第 6.6 项的只读核定，不重测已验收批。2026-09-05 修订规定共同边界；下方各已验收批的旧起点、RED-only、Step 6/Build A、`c81d336 + 11 dirty` 都不是当前恢复条件。保持 `D → 一个受监督的 E worker` 两层，不重新启动 C、D0 或新 E 会话。
+
+### 2026-09-10 第 6.6 项：通道 Recall 与融合排序，先只读核定
+
+- 同一 E 在干净 `09fe883` 核对 `atom_bm25_recall_at_80`、`segment_dense_recall_at_30`、`fused_mrr_at_8`、`fused_ndcg_at_8` 四门。复用已保存的真实通道/融合排名、独立 gold 及既有 Atom→Segment 闭包；先明确子集、完整分母、实际每 KB Top-K 与多分支作用域、rank/gain/IDCG 计算、实际空结果和缺测的区别，不重做检索/排序/packing。
+- D 同步核对冻结 baseline/equivalence 的阶段和排名身份。BM25 要求不低于独立 baseline，MRR/nDCG 要求不低于 baseline−0.02；历史 RRF/final-context 不能冒充 raw BM25，Segment 与历史 Child/Parent 排名不能无说明混比。分别报告可复用的真实控制、缺失的控制、五个状态例不可比和必要的后续生产阶段，不填零、不用 candidate 自比、不重开 D0 或擅自重采集。
+- 只回一份短报告，列已有字段/函数、最小连贯实现范围和确实需要 D 定案的语义；无代码/文档修改、stage/commit、测试/采集/全量/外部调用或新文件/任务。D 定案后才放行实施，不凭这轮报告把四门标完成；保持既有阈值/gold/schema、同一 E 与 Astra/xhigh/标准速度。
 
 ### 2026-09-10 当前检查点：第 6.5 项已验收
 
