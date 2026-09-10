@@ -1,8 +1,15 @@
 # 线程 D：剧情 Segment 前置门、集成与向量影子构建 Implementation Plan
 
-> **当前执行依据：** 当前仅执行顶部第 6.5 项的两文件 RED→实现→GREEN，合法起点为 E 干净 `1ca7f77b96c360e427618d899ba32f90744c152a`。2026-09-05 修订规定共同边界；更早 RED-only、Step 6/Build A、`c81d336 + 11 dirty` 均为已被后续验收替代的历史步骤，不是本轮恢复条件。保持 `D → 一个受监督的 E worker` 两层，不重新启动 C、D0 或新 E 会话。
+> **当前执行依据：** 第 6.5 项已验收，当前合法恢复点为 E 干净 `09fe8836c6c3df85489d288b1e72ea695914dfe4`，本批不再实施或重测；下一批由 D 在既定 S3 内核定范围。2026-09-05 修订规定共同边界；下方各已验收批的旧起点、RED-only、Step 6/Build A、`c81d336 + 11 dirty` 都不是当前恢复条件。保持 `D → 一个受监督的 E worker` 两层，不重新启动 C、D0 或新 E 会话。
 
-### 2026-09-10 当前检查点：第 6.4 项已验收
+### 2026-09-10 当前检查点：第 6.5 项已验收
+
+- D 已在 E 原分支提交 `09fe8836c6c3df85489d288b1e72ea695914dfe4`（parent `1ca7f77`）。仅 `src/rag_eval/story_run_observations.py` 与 `tests/test_story_segment_eval.py`，`+311/-1`：既有评测消费者净 +135 行、测试净 +175 行；无运行时代码、schema、冻结输入或新文件变化。两文件提交前后 SHA 一致，E 树/index 干净，未合并 main。
+- E 有效 RED **2 failed**（40.29 秒），OS temp `s65red-63b61b07.log`，SHA `6207fde09f0b468b3bfa2e9a30ea80f103a3b511e518de0987d917f41c1ce49a`；最终受影响 **8 passed**（131.79 秒），`s65green-16efee77.log`，SHA `ecd8448a254d64cbdfe3556068cea264da2a86f7cabc633d155d4c67cc6a9314`。邻接原为 **37 passed / 1 failed**，唯一失败是旧 group-recall 测试未将已验收 6.4 三门及本批两门移出 missing 清单；迁移到 20/36 并补实际分母/调用断言后，该节点 **1 passed**（33.66 秒），`s65adjfix-1617a91b.log`，SHA `880f081e80d43f521bdeeb8bbb64405b71273839e8bea272c2d5194d7f62365c`。未改产品来兼容旧断言，不把这些重叠覆盖相加或称为一次全绿。
+- D 独立真实执行/分支证据节点 **6 passed**（44.08 秒），OS temp `1999wiki-d-s65-e0237858016949e1876da043a68ebfc7/pytest.log`，SHA `e79142d037b931ef4a008b0b2c2566432301775dfee8ff7d192b3df6a860f705`。复用已固定 6.4 小观测（SHA `1d34064a88386cf65dd3a1af7c1c63d6a0692d7ee22e3fffcc1c066dc548a315`），通过 **14 项冷评分检查**：独立错 Owner/空金标/错 origin、重复镜像、错 scope、漏 mention、缺 target/assignment/context、生成失败和 warmup 隔离；先验证原观测，变异仅隔离评分逻辑，不宣称变异仍是合法 wire 事务。日志同目录 `cold-final.log`，SHA `abd6decb9b27d26de463d283792f674be12f2eba84a4a95f03f6aa1d2669f1f2`；执行/normalizer/socket 禁用、输入零漂移。D 另逐字段对照 6.4/6.5 的 current、historical、stateful 三份报告，各自其余 54 个指标完全一致，均 `no_go`。
+- 两个本地 producer 已完成，累计 **20 项、36 项仍待完成**，不表示真实题集正确率已通过。独立 gold 的完整单位、额外错误声明和缺测语义保留；未新增防御框架或运行时检查。没有真实全量/embedding/Milvus/SSH/媒体/激活，最终质量、HTTP/TTFT、状态历史控制和 E 最终交付仍未完成。普通下一批核定由 D 负责，无需用户再批准日常交接；当前未自动放行新批次。
+
+### 2026-09-10 前序检查点：第 6.4 项已验收
 
 - D 已在原 E 分支提交 `1ca7f77b96c360e427618d899ba32f90744c152a`（parent `cf1ff72`），仅本批 16 个既有文件 `+576/-57`，生产净 +206 行、测试净 +313 行，无新模块或监督文件。提交前后逐文件 SHA 一致，E 树/index 干净；未合并 main，冻结题集/阈值/Spec、公开接口文件及 main 用户原有脏文件不变。
 - 三门现从同次执行的实际 Detector、SDK 公开 HTTP request hook、reranker `urlopen` 尝试派生逐单位计数；完整请求/KB 观测区间与实际 hook 可观测性区分零次和缺测。其他 53 门算法、原九字段指标行和调用/重试策略不改。纯非 Story Child 曾因复用 Story session 改变异常类型，有效 RED 后已撤回该复用，只透传原调用的 trace/身份，保持原成功结果与异常类型。
@@ -10,7 +17,7 @@
 - D 独立五文件邻接 **271 passed**（13.28 秒），日志 OS temp `1999wiki-d-s64-adj-3386e35deb35493c92711847bb340cee/pytest.log`，SHA `16dbeec2bbc907d07aabf292f64a02201e1597bebcc8a651f526662e08171f88`。另复用固定小 fixture（SHA `1d34064a88386cf65dd3a1af7c1c63d6a0692d7ee22e3fffcc1c066dc548a315`）完成 **11 项冷复验**：原计数、重复 API、缺 API/KB/hook/request、身份/时间关联漂移、HTTP 前失败及无 adapter；真实零次保留，缺测不通过。日志同目录 `cold-final.log`，SHA `4e9cfa9cf8aae8a9c85fddbcc92966c9f50f98db13dd72c939bd42b4286f9bd7`；执行入口、normalizer 与 socket 禁用，未再采集，输入字节不变。上述日志及最终 16 文件在提交前再次核对一致，未重复运行未变测试。
 - 本批增加三个本地 producer，累计 **18 项已有本地 producer、38 项待完成**，不是 18 项真实质量门已通过。HTTP/TTFT、五条状态例历史控制和真实题集仍未完成，整体 `no_go`。没有真实 embedding/Milvus/SSH/媒体/激活。下批尚未下发，由 D 在既有 S3 内先核定范围，不要求用户重新批准普通验收，不自动进入 S4/S5 或真实构建。
 
-### 2026-09-10 第 6.5 项：归属与授权指标
+### 2026-09-10 第 6.5 项历史实施范围：归属与授权指标（已验收）
 
 **只读核定已完成，现放行两门最小实现：** E 只读轮 `01a0891e-49b7-78a1-a545-c4957725b7eb` 与 D 独立核对一致：冻结 v2 有 157 个 Story mention span（74 例），正例授权基数为 86 个 query–Owner 单位（direct 83、continuation 1、anchor 2）。70 个 direct 正例的 83 个标注 span 与 83 个有序 Owner 逐例同基数且 Owner 不重复；所有 span 与原问题位置/文本相符。这些数值只是当前输入的复核结果，实现须动态计算。现有 v4 已有 final plan、detection/assignment、授权 context 与状态来源，不新增运行时字段。
 
