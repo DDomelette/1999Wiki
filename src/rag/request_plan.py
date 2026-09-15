@@ -196,6 +196,9 @@ class RequestPlanner:
             "task_type 只能是 assistant_meta/social_smalltalk/knowledge_base/general_open/"
             "out_of_scope。不得输出 route、授权、实体、检索参数或回答。最多四个任务；"
             "只拆分语义独立且没有共享指代的请求。"
+            "知识库属于《重返未来：1999》，角色、技能、心相、剧情、物品和世界观问题"
+            "应归类 knowledge_base；例如介绍玛蒂尔达、槲寄生的技能。"
+            "general_open 仅用于明确与该游戏无关的问题；不确定时先归类 knowledge_base。"
         )
 
     def _safe_local_or_fixed_plan(
@@ -317,6 +320,9 @@ class RequestPlanner:
         subtasks: list[PlannedSubtask] = []
         for order, (task_type, subquery, depends_on) in enumerate(tasks, start=1):
             query_plan = None
+            known_entity = getattr(self._query_planner, "has_known_entity", None)
+            if task_type == "general_open" and callable(known_entity) and known_entity(subquery, category):
+                task_type = "knowledge_base"
             if task_type == "knowledge_base":
                 query_plan = self._plan_kb(
                     subquery,

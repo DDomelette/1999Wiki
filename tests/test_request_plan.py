@@ -53,6 +53,35 @@ class PlannerLLM:
         return SimpleNamespace(content=json.dumps(self.payload, ensure_ascii=False))
 
 
+@pytest.mark.parametrize("name", ["玛蒂尔达", "槲寄生", "别名测试"])
+def test_known_corpus_entity_overrides_general_open_misclassification(name):
+    from src.rag.entity_lexicon import EntityLexicon
+    from src.rag.query_plan import QueryPlanner
+
+    lexicon = EntityLexicon.from_records([
+        {"entity_name": "玛蒂尔达", "entity_id": "char:3041", "entity_type": "character",
+         "aliases": ["别名测试"]},
+        {"entity_name": "槲寄生", "entity_id": "char:3003", "entity_type": "character"},
+    ])
+    query = f"介绍一下{name}"
+    llm = PlannerLLM({"subtasks": [{"task_type": "general_open", "query": query,
+                                   "order": 1, "depends_on": []}]})
+    plan = RequestPlanner(llm, query_planner=QueryPlanner(None, lexicon)).plan(query)
+    assert plan.subtasks[0].task_type == "knowledge_base"
+    assert plan.subtasks[0].query_plan.entity_id in {"char:3041", "char:3003"}
+
+
+def test_unrelated_general_question_remains_general_open_with_lexicon():
+    from src.rag.entity_lexicon import EntityLexicon
+    from src.rag.query_plan import QueryPlanner
+
+    query = "法国的首都是哪里"
+    llm = PlannerLLM({"subtasks": [{"task_type": "general_open", "query": query,
+                                   "order": 1, "depends_on": []}]})
+    plan = RequestPlanner(llm, query_planner=QueryPlanner(None, EntityLexicon.from_records([]))).plan(query)
+    assert plan.subtasks[0].task_type == "general_open"
+
+
 _SENSITIVE_ERROR = (
     "sk-test-secret C:\\Users\\reviewer\\private\\config.py "
     "Traceback (most recent call last): upstream response body"

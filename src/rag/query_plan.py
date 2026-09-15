@@ -472,6 +472,12 @@ class QueryPlanner:
         self._llm = llm
         self._entity_lexicon = entity_lexicon
 
+    def has_known_entity(self, query: str, category: str | None = None) -> bool:
+        """Check corpus membership without calling a model or retrieving data."""
+        return self._entity_lexicon is not None and self._entity_lexicon.match(
+            query, _category_entity_type_hint(category)
+        ) is not None
+
     def plan(
         self,
         query: str,

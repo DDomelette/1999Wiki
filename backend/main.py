@@ -804,6 +804,16 @@ async def voice_page(cursor: str) -> VoicePanelPage:
     return VoicePanelPage.model_validate(sanitize_transport_value(page))
 
 
+def _milvus_category_filter(category: str) -> str:
+    aliases = {"人物": "character", "心相": "psychube", "剧情": "story",
+               "世界": "world", "阵营": "faction", "日历": "calendar"}
+    original = _milvus_string_expr("category", category)
+    canonical = aliases.get(category)
+    if canonical:
+        return f'({original} or {_milvus_string_expr("category", canonical)})'
+    return original
+
+
 def _count_by_category(vs: Any, category: str) -> int:
     if _is_milvus_vectorstore(vs):
         try:
@@ -811,7 +821,7 @@ def _count_by_category(vs: Any, category: str) -> int:
                 collection_name=vs.collection_name,
                 batch_size=1000,
                 limit=-1,
-                filter=_milvus_string_expr("category", category),
+                filter=_milvus_category_filter(category),
                 output_fields=["id"],
             )
             try:
@@ -886,14 +896,14 @@ async def category_docs(key: str, limit: int = 50):
             try:
                 rows = vs.client.query(
                     collection_name=vs.collection_name,
-                    filter=_milvus_string_expr("category", key),
-                    output_fields=["text", "name", "source"],
+                    filter=_milvus_category_filter(key),
+                    output_fields=["text", "name", "source", "entity_name", "title", "source_ref"],
                     limit=limit,
                 )
                 for row in rows:
                     docs_out.append({
-                        "name": row.get("name", ""),
-                        "source": row.get("source", ""),
+                        "name": row.get("name") or row.get("entity_name") or row.get("title", ""),
+                        "source": row.get("source") or row.get("source_ref", ""),
                         "snippet": _make_display_snippet(row.get("text") or ""),
                     })
             except Exception as e:
