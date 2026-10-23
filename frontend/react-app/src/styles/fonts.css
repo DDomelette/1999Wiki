@@ -27,7 +27,7 @@
   src: url('/fonts/noto-serif-sc-regular.woff2') format('woff2');
   font-style: normal;
   font-weight: 400;
-  font-display: optional;
+  font-display: swap;
 }
 
 @font-face {
@@ -35,5 +35,5 @@
   src: url('/fonts/noto-serif-sc-bold.woff2') format('woff2');
   font-style: normal;
   font-weight: 700;
-  font-display: optional;
+  font-display: swap;
 }
