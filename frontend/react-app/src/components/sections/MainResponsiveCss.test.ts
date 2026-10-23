@@ -12,7 +12,7 @@ const indexHtml = readFileSync(new URL('../../../index.html', import.meta.url), 
 describe('main page responsive CSS contract', () => {
   it('uses dynamic viewport units and mobile-safe snap behavior', () => {
     expect(indexHtml).toMatch(/name="viewport"[^>]*content="[^"]*viewport-fit=cover[^"]*"/)
-    expect(globalCss).toContain('--main-nav-mobile-offset: 56px')
+    expect(globalCss).toContain('--main-nav-mobile-offset: 64px')
     expect(globalCss).toContain('--main-page-bottom-safe: env(safe-area-inset-bottom, 0px)')
     expect(globalCss).toMatch(/\.snap-container\s*\{[^}]*height:\s*100vh[^}]*height:\s*100dvh/s)
     expect(globalCss).toMatch(/\.snap-section\s*\{[^}]*height:\s*100vh[^}]*height:\s*100dvh/s)
@@ -27,8 +27,12 @@ describe('main page responsive CSS contract', () => {
   it('compacts only the main Card Nav on phones', () => {
     expect(navCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.card-nav--main \.card-nav__bar/)
     expect(navCss).toMatch(/\.card-nav--main\s*\{[^}]*top:\s*calc\(env\(safe-area-inset-top, 0px\) \+ 6px\)/s)
-    expect(navCss).toMatch(/\.card-nav--main \.card-nav__bar\s*\{[^}]*min-height:\s*40px/s)
-    expect(navCss).toMatch(/\.card-nav--main \.card-nav__toggle[\s\S]*width:\s*36px[\s\S]*height:\s*36px/)
+    expect(navCss).toMatch(/\.card-nav--main \.card-nav__bar\s*\{[^}]*min-height:\s*52px/s)
+    expect(navCss).toMatch(/\.card-nav__toggle, \.theme-toggle\s*\{[^}]*width:\s*44px[^}]*height:\s*44px[^}]*flex:\s*none/s)
+    expect(navCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.card-nav__brand\s*\{[^}]*min-width:\s*0/s)
+    expect(navCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.card-nav__actions\s*\{[^}]*flex:\s*none[^}]*gap:\s*2px/s)
+    expect(navCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.card-nav__primary\s*\{[^}]*min-width:\s*58px/s)
+    expect(navCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.card-nav__back\s*\{[^}]*min-width:\s*52px/s)
     expect(navCss).toMatch(/\.card-nav--main \.card-nav__brand\s*\{[^}]*font-size:\s*\.68rem[^}]*white-space:\s*nowrap/s)
     expect(navCss).toMatch(/\.card-nav--main \.card-nav__actions\s*\{[^}]*gap:\s*2px/s)
     expect(navCss).toMatch(/\.card-nav--main \.card-nav__primary\s*\{[^}]*font-size:\s*\.76rem/s)

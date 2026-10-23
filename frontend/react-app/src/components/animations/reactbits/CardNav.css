@@ -64,20 +64,31 @@
   }
   .card-nav--main .card-nav__brand { font-size: .68rem; white-space: nowrap; }
   .card-nav--main .card-nav__actions { gap: 2px; }
-  .card-nav__brand { font-size: .7rem; }
+  .card-nav__bar { gap: 8px; padding: 4px 6px; }
+  .card-nav__brand { min-width: 0; font-size: .7rem; }
+  .card-nav__actions { flex: none; gap: 2px; }
+  .card-nav__toggle, .theme-toggle { width: 44px; height: 44px; flex: none; }
+  .card-nav__primary, .card-nav__back {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+  }
+  .card-nav__primary { min-width: 58px; padding: 8px; }
+  .card-nav__back { min-width: 52px; padding: 8px; }
   .card-nav__menu { grid-template-columns: 1fr; max-height: calc(100dvh - 86px); overflow-y: auto; scrollbar-width: none; }
   .card-nav__group { border-top: 1px solid var(--border-subtle); border-left: 0; }
   .card-nav__group:first-child { border-top: 0; }
   .card-nav__menu::-webkit-scrollbar { display: none; }
   .card-nav--main .card-nav__bar {
-    min-height: 40px;
+    min-height: 52px;
     gap: 8px;
     padding: 2px 6px 2px 8px;
   }
   .card-nav--main .card-nav__toggle,
   .card-nav--main .theme-toggle {
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
   }
   .card-nav--main .card-nav__primary {
     min-width: 58px;

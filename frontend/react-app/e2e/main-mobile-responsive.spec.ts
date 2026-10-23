@@ -171,7 +171,10 @@ test('main pages remain usable across approved mobile and tablet viewports', asy
     const navBar = page.locator('.card-nav--main .card-nav__bar')
     await expect(navBar).toBeVisible()
     if (viewport.width <= 720) {
-      expect((await navBar.boundingBox())!.height).toBeLessThanOrEqual(42)
+      expect((await navBar.boundingBox())!.height).toBeGreaterThanOrEqual(52)
+      for (const selector of ['.card-nav__toggle', '.theme-toggle', '.card-nav__primary']) {
+        expect((await page.locator(selector).boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      }
     }
     await expectNoDocumentOverflow(page)
 
