@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatSection } from './ChatSection'
 import { useChatStore } from '../../store/chatStore'
@@ -64,6 +64,44 @@ describe('ChatSection', () => {
     render(<ChatSection />)
 
     expect(screen.getByRole('group', { name: '推荐问题' })).toBeInTheDocument()
+  })
+
+  it('preserves the reading position when new messages arrive away from the bottom', () => {
+    render(<ChatSection />)
+    const scroller = screen.getByTestId('chat-message-scroll')
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 300 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    })
+
+    fireEvent.scroll(scroller)
+    act(() => {
+      useChatStore.setState({
+        messages: [{ id: 'user-1', role: 'user', content: '测试问题' }],
+      })
+    })
+
+    expect(scroller.scrollTop).toBe(100)
+  })
+
+  it('keeps following new messages when the reader is near the bottom', () => {
+    render(<ChatSection />)
+    const scroller = screen.getByTestId('chat-message-scroll')
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 300 },
+      scrollTop: { configurable: true, writable: true, value: 650 },
+    })
+
+    fireEvent.scroll(scroller)
+    act(() => {
+      useChatStore.setState({
+        messages: [{ id: 'user-1', role: 'user', content: '测试问题' }],
+      })
+    })
+
+    expect(scroller.scrollTop).toBe(1000)
   })
 
   it('renders an accessible stable clear icon button', () => {

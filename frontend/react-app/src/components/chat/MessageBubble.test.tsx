@@ -78,7 +78,7 @@ function stubAudio() {
   audio.removeAttribute.mockImplementation((name: string) => {
     if (name === 'src') audio.src = ''
   })
-  const constructor = vi.fn().mockImplementation(() => audio)
+  const constructor = vi.fn(function AudioMock() { return audio })
   vi.stubGlobal('Audio', constructor)
   return { audio, constructor }
 }

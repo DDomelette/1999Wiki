@@ -13,13 +13,27 @@ export function ChatSection() {
   const messages = useChatStore((s) => s.messages)
   const clear = useChatStore((s) => s.clear)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
   useChatPageBoundaryNavigation(scrollRef)
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && stickToBottomRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [messages])
+
+  const precedingQuestions = new Map<string, string | undefined>()
+  let latestQuestion: string | undefined
+  for (const message of messages) {
+    if (message.role === 'user') latestQuestion = message.content
+    else precedingQuestions.set(message.id, latestQuestion)
+  }
+
+  const handleMessageScroll = () => {
+    const element = scrollRef.current
+    if (!element) return
+    stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
+  }
 
   const jumpHome = () => {
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
@@ -58,6 +72,7 @@ export function ChatSection() {
           className="native-scrollbar-hidden chat-section__messages"
           data-page-wheel-lock="true"
           data-testid="chat-message-scroll"
+          onScroll={handleMessageScroll}
         >
           {messages.length === 0 && (
             <div className="chat-section__empty">
@@ -66,7 +81,11 @@ export function ChatSection() {
             </div>
           )}
           {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} />
+            <MessageBubble
+              key={message.id}
+              message={message}
+              precedingQuestion={message.role === 'assistant' ? precedingQuestions.get(message.id) : undefined}
+            />
           ))}
         </div>
         <AutoHideScrollbar targetRef={scrollRef} testId="chat-message-scrollbar" variant="local" />

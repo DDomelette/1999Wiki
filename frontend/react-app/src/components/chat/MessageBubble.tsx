@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { memo } from 'react'
 import type { AssetItem, MediaItem, Message, StreamPhase } from '../../types'
 import { MarkdownContent } from './MarkdownContent'
 import { MessageAssets } from './MessageAssets'
@@ -14,12 +15,23 @@ const STREAM_PHASE_LABELS: Partial<Record<StreamPhase, string>> = {
   failed: '回答生成失败',
 }
 
-export function MessageBubble({ message }: { message: Message }) {
+interface MessageBubbleProps {
+  message: Message
+  precedingQuestion?: string
+}
+
+export const MessageBubble = memo(function MessageBubble({ message, precedingQuestion: suppliedQuestion }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const phaseLabel = message.phase ? STREAM_PHASE_LABELS[message.phase] : undefined
   const statusText = phaseLabel ?? message.status
   const runAction = useChatStore((s) => s.runAction)
-  const messages = useChatStore((s) => s.messages)
+  const storePrecedingQuestion = useChatStore((state) => {
+    if (suppliedQuestion !== undefined) return undefined
+    const messageIndex = state.messages.findIndex((item) => item.id === message.id)
+    return messageIndex > 0
+      ? state.messages.slice(0, messageIndex).reverse().find((item) => item.role === 'user')?.content
+      : undefined
+  })
   const send = useChatStore((s) => s.send)
   const mediaPanels = !isUser ? (message.mediaPanels ?? []) : []
   const hasStructuredVoice = mediaPanels.some((panel) => panel.type === 'voice')
@@ -34,10 +46,7 @@ export function MessageBubble({ message }: { message: Message }) {
       })
     : compatibilityAttachments
   const hasMessageMedia = attachments.length > 0 || mediaPanels.length > 0
-  const messageIndex = messages.findIndex((item) => item.id === message.id)
-  const precedingQuestion = messageIndex > 0
-    ? messages.slice(0, messageIndex).reverse().find((item) => item.role === 'user')?.content
-    : undefined
+  const precedingQuestion = suppliedQuestion ?? storePrecedingQuestion
   const reloadVoiceFirstPage = precedingQuestion
     ? () => {
         if (!useChatStore.getState().sending) void send(precedingQuestion)
@@ -139,4 +148,4 @@ export function MessageBubble({ message }: { message: Message }) {
       ) : null}
     </motion.div>
   )
-}
+})

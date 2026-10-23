@@ -8,7 +8,7 @@ describe('global project background', () => {
   it('uses the official home background as the body-level base layer', () => {
     const cssText = readFileSync(resolve(__dirname, 'global.css'), 'utf-8')
 
-    expect(cssText).toContain('--global-background-image: url("/images/global-background.png")')
+    expect(cssText).toContain('--global-background-image: url("/images/global-background.webp")')
     expect(cssText).toContain('background-image:')
     expect(cssText).toContain('var(--global-background-image)')
     expect(cssText).toContain('background-attachment: fixed')

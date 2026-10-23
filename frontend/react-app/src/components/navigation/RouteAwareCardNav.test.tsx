@@ -9,6 +9,7 @@ describe('RouteAwareCardNav', () => {
     document.querySelectorAll('.snap-container').forEach((el) => el.remove())
     window.history.pushState({}, '', '/')
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
   it('renders route-specific primary actions and three menu groups', async () => {
     const { rerender } = render(<RouteAwareCardNav mode="main" />)
@@ -73,7 +74,7 @@ describe('RouteAwareCardNav', () => {
   })
 
   it('keeps the menu visible and operable with reduced motion', () => {
-    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query) => ({
       matches: query === '(prefers-reduced-motion: reduce)',
       media: query,
       onchange: null,
@@ -82,7 +83,7 @@ describe('RouteAwareCardNav', () => {
       addListener: vi.fn(),
       removeListener: vi.fn(),
       dispatchEvent: vi.fn(),
-    }))
+    })))
     const onSelect = vi.fn()
     render(<RouteAwareCardNav mode="wiki" categories={[{ key: 'character', label: '角色', count: 30 }]} onCategorySelect={onSelect} />)
 
