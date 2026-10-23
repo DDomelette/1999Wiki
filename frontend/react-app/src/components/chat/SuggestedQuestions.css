@@ -3,10 +3,10 @@
   align-items: center;
   min-width: 0;
   gap: 12px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--bg-elevated) 74%, transparent);
+  padding: 7px 0;
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
 }
 
 .suggested-questions__label {
@@ -34,7 +34,7 @@
   min-height: 34px;
   padding: 6px 12px;
   border: 1px solid var(--border-card);
-  border-radius: 999px;
+  border-radius: 1px;
   background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
   color: var(--text-secondary);
   font-size: 0.86rem;

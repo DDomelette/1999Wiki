@@ -48,6 +48,8 @@ describe('ChatSection', () => {
     render(<ChatSection />)
 
     expect(screen.getByText('神秘学问答')).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: '可检索档案类别' })).toBeInTheDocument()
+    expect(screen.getByText('QUERY_ENTRY')).toBeInTheDocument()
     expect(screen.getByRole('combobox')).toHaveValue('')
     expect(screen.getByTestId('chat-message-scroll')).toHaveAttribute('data-page-wheel-lock', 'true')
     expect(screen.getByPlaceholderText('输入问题...')).toBeInTheDocument()

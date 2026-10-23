@@ -15,6 +15,8 @@
   --archive-panel: rgba(28, 17, 11, 0.82);
   --archive-panel-strong: rgba(20, 11, 7, 0.94);
   --archive-line: rgba(226, 97, 11, 0.42);
+  --archive-texture: repeating-linear-gradient(112deg, rgb(255 255 255 / 2%) 0 1px, transparent 1px 6px);
+  --archive-shadow: rgb(0 0 0 / 48%);
   --link-accent: #77a9d6;
   --status-success: #7fa37d;
   --status-warning: #ed9b45;
@@ -39,6 +41,8 @@
   --archive-panel: rgba(248, 240, 226, 0.86);
   --archive-panel-strong: rgba(248, 240, 226, 0.97);
   --archive-line: rgba(169, 71, 10, 0.4);
+  --archive-texture: repeating-linear-gradient(8deg, rgb(72 48 28 / 3%) 0 1px, transparent 1px 5px), repeating-linear-gradient(96deg, rgb(255 255 255 / 16%) 0 1px, transparent 1px 7px);
+  --archive-shadow: rgb(76 45 24 / 18%);
   --link-accent: #1d5f99;
   --status-success: #3f7147;
   --status-warning: #a85d13;
@@ -63,6 +67,9 @@
   --archive-panel: rgba(17, 25, 26, 0.84);
   --archive-panel-strong: rgba(12, 19, 20, 0.95);
   --archive-line: rgba(198, 93, 32, 0.4);
+  --archive-texture: linear-gradient(rgb(111 143 138 / 3%) 1px, transparent 1px), linear-gradient(90deg, rgb(111 143 138 / 3%) 1px, transparent 1px);
+  --archive-grid-size: 28px 28px;
+  --archive-shadow: rgb(0 0 0 / 46%);
   --link-accent: #76a8d2;
   --status-success: #78a487;
   --status-warning: #d59448;
@@ -74,4 +81,7 @@
   --font-body: 'Noto Serif SC', 'Songti SC', serif;
   --font-display: 'Libre Caslon Text', 'Noto Serif SC', Georgia, serif;
   --font-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, monospace;
+  --on-media-primary: #f6ded4;
+  --on-media-secondary: #d8c4ba;
+  --on-media-accent: #f08a3c;
 }

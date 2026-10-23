@@ -33,7 +33,7 @@
   font-family: var(--font-body);
   font-weight: 700;
   font-size: clamp(2.5rem, 6vw, 4.5rem);
-  color: var(--text-primary);
+  color: var(--on-media-primary);
   text-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
 }
 
@@ -41,7 +41,7 @@
   font-family: var(--font-display);
   font-weight: 700;
   font-size: clamp(1.5rem, 4vw, 3rem);
-  color: var(--accent-gold);
+  color: var(--on-media-accent);
   letter-spacing: 0.1em;
 }
 
@@ -49,7 +49,7 @@
   font-family: var(--font-display);
   font-weight: 500;
   font-size: 1.25rem;
-  color: var(--accent-gold);
+  color: var(--on-media-secondary);
   opacity: 0.9;
 }
 
@@ -59,10 +59,10 @@
 
 .home-section__cta {
   padding: 12px 48px;
-  border: 1px solid var(--accent-gold);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--accent-gold);
+  border: 1px solid var(--on-media-accent);
+  border-radius: 2px;
+  background: rgb(0 0 0 / 18%);
+  color: var(--on-media-primary);
   font-family: var(--font-body);
   font-size: 1.1rem;
   letter-spacing: 0.1em;
@@ -85,7 +85,7 @@
   bottom: 32px;
   left: 50%;
   transform: translateX(-50%);
-  color: var(--text-muted);
+  color: var(--on-media-secondary);
   font-size: 1.5rem;
 }
 
