@@ -14,10 +14,10 @@
   gap: 16px;
   padding: 8px 10px 8px 14px;
   background: var(--archive-panel-strong);
-  border: 1px solid var(--archive-line);
-  border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--archive-line) 65%, transparent);
+  border-radius: 14px;
   backdrop-filter: blur(16px);
-  box-shadow: var(--shadow-card);
+  box-shadow: 0 12px 32px -18px var(--archive-shadow);
 }
 .card-nav__toggle, .theme-toggle {
   width: 42px;
@@ -26,13 +26,14 @@
   place-items: center;
   color: var(--text-primary);
   border: 1px solid transparent;
+  border-radius: 9px;
 }
 .card-nav__toggle:hover, .theme-toggle:hover { border-color: var(--border-card); }
 .card-nav__brand { flex: 1; font-family: var(--font-mono); font-size: .82rem; letter-spacing: 0; }
 .card-nav__actions { display: flex; align-items: center; gap: 6px; }
-.card-nav__primary { min-width: 86px; padding: 10px 16px; color: var(--accent-rust); font-family: var(--font-mono); text-align: center; text-decoration: none; border-left: 1px solid var(--archive-line); }
-.card-nav__back { min-width: 72px; padding: 10px 14px; color: var(--text-primary); font-family: var(--font-mono); text-align: center; border-left: 1px solid var(--archive-line); background: transparent; }
-.card-nav__back:hover { color: var(--accent-rust); }
+.card-nav__primary { min-width: 86px; padding: 10px 16px; color: var(--accent-rust); font-family: var(--font-mono); text-align: center; text-decoration: none; border: 1px solid color-mix(in srgb, var(--archive-line) 65%, transparent); border-radius: 8px; }
+.card-nav__back { min-width: 72px; padding: 10px 14px; color: var(--text-primary); font-family: var(--font-mono); text-align: center; border: 1px solid var(--border-subtle); border-radius: 8px; background: transparent; }
+.card-nav__back:hover { color: var(--accent-rust); background: color-mix(in srgb, var(--accent-gold) 7%, transparent); }
 .card-nav__menu {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -42,9 +43,10 @@
   max-height: calc(100dvh - 92px);
   overflow-y: auto;
   background: var(--archive-panel-strong);
-  border: 1px solid var(--archive-line);
-  border-radius: 2px;
+  border: 1px solid color-mix(in srgb, var(--archive-line) 65%, transparent);
+  border-radius: 14px;
   backdrop-filter: blur(18px);
+  box-shadow: 0 16px 36px -20px var(--archive-shadow);
 }
 .card-nav__group { min-width: 0; padding: 16px; border-left: 1px solid var(--border-subtle); }
 .card-nav__group:first-child { border-left: 0; }

@@ -168,10 +168,33 @@ describe('MessageBubble', () => {
     }
     useChatStore.setState({ messages: [message] })
 
-    render(<MessageBubble message={message} />)
+    const { container } = render(<MessageBubble message={message} />)
 
     expect(screen.getByText('[S07] Source seven')).toBeInTheDocument()
     expect(screen.queryByText('[S01] Source seven')).not.toBeInTheDocument()
+    expect(container.querySelector('.message-sources')).toHaveAttribute('open')
+  })
+
+  it('collapses long source lists into a compact count and preserves every citation', () => {
+    const sources = Array.from({ length: 20 }, (_, index) => ({
+      citation_id: `S${String(index + 1).padStart(2, '0')}`,
+      name: '十四行诗',
+      category: '人物',
+      source: `source-${index + 1}`,
+      score: 1,
+    }))
+
+    const { container } = render(<MessageBubble message={{
+      id: 'many-citations',
+      role: 'assistant',
+      content: 'Answer [S01]',
+      sources,
+    }} />)
+
+    expect(screen.getByText('20 条')).toBeInTheDocument()
+    expect(container.querySelector('.message-sources')).not.toHaveAttribute('open')
+    expect(container.querySelectorAll('.message-sources__list li')).toHaveLength(20)
+    expect(screen.getByText('[S20] 十四行诗')).toBeInTheDocument()
   })
 
   beforeEach(() => {

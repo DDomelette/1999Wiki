@@ -25,6 +25,8 @@ describe('main page responsive CSS contract', () => {
   })
 
   it('compacts only the main Card Nav on phones', () => {
+    expect(navCss).toMatch(/\.card-nav__bar\s*\{[^}]*border-radius:\s*14px/s)
+    expect(navCss).toMatch(/\.card-nav__toggle, \.theme-toggle\s*\{[^}]*border-radius:\s*9px/s)
     expect(navCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.card-nav--main \.card-nav__bar/)
     expect(navCss).toMatch(/\.card-nav--main\s*\{[^}]*top:\s*calc\(env\(safe-area-inset-top, 0px\) \+ 6px\)/s)
     expect(navCss).toMatch(/\.card-nav--main \.card-nav__bar\s*\{[^}]*min-height:\s*52px/s)
@@ -76,6 +78,9 @@ describe('main page responsive CSS contract', () => {
     expect(chatCss).toContain('@media (max-width: 720px)')
     expect(chatCss).toMatch(/\.chat-section\s*\{[^}]*background:\s*linear-gradient[^}]*backdrop-filter:\s*blur\(2px\)/s)
     expect(chatCss).toMatch(/\.chat-section__empty\s*\{[^}]*flex:\s*0 0 auto/s)
+    expect(chatCss).toMatch(/\.chat-section__empty\s*\{[^}]*border-radius:\s*16px/s)
+    expect(chatCss).toMatch(/\.chat-section__empty-register\s*\{[^}]*color:\s*var\(--text-muted\)[^}]*opacity:\s*0\.72/s)
+    expect(chatCss).toMatch(/\.chat-section__empty-register span\s*\{[^}]*padding:\s*0/s)
     expect(chatCss).toContain('background-image: var(--archive-texture)')
     expect(chatCss).toMatch(/\.chat-section__clear\s*\{[^}]*width:\s*36px[^}]*height:\s*36px/s)
     const baseToolbar = chatCss.match(/\.chat-section__toolbar\s*\{([^}]*)\}/)?.[1] ?? ''
