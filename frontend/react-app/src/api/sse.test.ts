@@ -127,6 +127,32 @@ describe('streamAsk SSE 解析', () => {
     expect(done).toBe(false)
   })
 
+  it.each([
+    { event: 'done', data: '{"answer":"ok","sources":[]}' },
+    { event: 'error', data: '{"message":"failed","partial":false}' },
+  ])('resolves and cancels the reader after $event without waiting for network EOF', async ({ event, data }) => {
+    const encoder = new TextEncoder()
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(`event: ${event}\ndata: ${data}\n\n`))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, body: stream, status: 200 } as Response)
+
+    await streamAsk('q', null, {
+      onSources: () => {},
+      onToken: () => {},
+      onDone: () => {},
+      onError: () => {},
+    })
+
+    expect(cancelled).toBe(true)
+  })
+
   it('HTTP 错误抛异常', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503 } as Response)
     await expect(streamAsk('q', null, {

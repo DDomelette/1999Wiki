@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 VIDEO = ROOT / "frontend" / "react-app" / "public" / "videos" / "pv.mp4"
 FONT_DIR = ROOT / "frontend" / "react-app" / "public" / "fonts"
 FONTS_CSS = ROOT / "frontend" / "react-app" / "src" / "styles" / "fonts.css"
+FONT_CORPUS = ROOT / "frontend" / "react-app" / "font-corpus.txt"
 CADDYFILE = ROOT / "docker" / "frontend.Caddyfile"
 ORIGINAL_NOTO_OTF_BYTES = 50_064_540
 
@@ -58,11 +59,28 @@ def test_chinese_fonts_use_smaller_woff2_payloads() -> None:
     assert all(name in css for name in font_names)
     assert "noto-serif-sc-regular.otf" not in css
     assert "noto-serif-sc-bold.otf" not in css
-    assert css.count("font-display: optional") == 2
+    assert css.count("font-display: swap") == 5
+    assert "font-display: optional" not in css
 
     font_payloads = [(FONT_DIR / name).read_bytes() for name in font_names]
     assert all(payload[:4] == b"wOF2" for payload in font_payloads)
     assert sum(len(payload) for payload in font_payloads) < ORIGINAL_NOTO_OTF_BYTES
+
+
+def test_chinese_fonts_cover_dynamic_wiki_corpus() -> None:
+    from fontTools.ttLib import TTFont
+
+    characters = {
+        char for char in FONT_CORPUS.read_text(encoding="utf-8")
+        if char == " " or not char.isspace()
+    }
+    assert set("尼克·波顿弄臣铅玻璃") <= characters
+
+    for weight in ("regular", "bold"):
+        font = TTFont(FONT_DIR / f"noto-serif-sc-{weight}.woff2")
+        cmap = font.getBestCmap() or {}
+        missing = characters - {chr(codepoint) for codepoint in cmap}
+        assert not missing, f"{weight} font lacks {len(missing)} Wiki characters: {''.join(sorted(missing))}"
 
 
 def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:

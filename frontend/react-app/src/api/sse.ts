@@ -163,6 +163,10 @@ export async function streamAsk(
         terminal = true
       }
     }
+    if (terminal) {
+      if (!done) await reader.cancel().catch(() => {})
+      break
+    }
     if (done) break
   }
 }
