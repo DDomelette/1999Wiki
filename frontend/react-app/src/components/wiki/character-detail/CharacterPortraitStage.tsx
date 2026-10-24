@@ -81,40 +81,44 @@ export function CharacterPortraitStage({ viewModel, mode }: CharacterPortraitSta
         </div>
       </div>
       <div className="character-portrait-stage__wardrobe" aria-label="立绘切换">
-        <p>MODE_SELECT</p>
-        <div role="group" aria-label="舞台模式">
-          <button
-            type="button"
-            aria-label="切换到Live2D"
-            aria-pressed={effectiveMode === 'live2d'}
-            disabled={!active?.live2dMedia}
-            onClick={() => setPortraitMode('live2d')}
-          >
-            LIVE2D
-          </button>
-          <button
-            type="button"
-            aria-label="切换到立绘"
-            aria-pressed={effectiveMode === 'portrait'}
-            disabled={!active?.portraitMedia}
-            onClick={() => setPortraitMode('portrait')}
-          >
-            立绘
-          </button>
-        </div>
-        <p>SKIN_SELECT</p>
-        <div role="group" aria-label="角色立绘">
-          {viewModel.portraitStates.map((state) => (
+        <div className="character-portrait-stage__wardrobe-group">
+          <p>MODE_SELECT</p>
+          <div role="group" aria-label="舞台模式">
             <button
-              key={state.id}
               type="button"
-              aria-label={`切换到${state.label}`}
-              aria-pressed={state.id === active?.id}
-              onClick={() => setActiveId(state.id)}
+              aria-label="切换到Live2D"
+              aria-pressed={effectiveMode === 'live2d'}
+              disabled={!active?.live2dMedia}
+              onClick={() => setPortraitMode('live2d')}
             >
-              {state.label}
+              LIVE2D
             </button>
-          ))}
+            <button
+              type="button"
+              aria-label="切换到立绘"
+              aria-pressed={effectiveMode === 'portrait'}
+              disabled={!active?.portraitMedia}
+              onClick={() => setPortraitMode('portrait')}
+            >
+              立绘
+            </button>
+          </div>
+        </div>
+        <div className="character-portrait-stage__wardrobe-group">
+          <p>SKIN_SELECT</p>
+          <div role="group" aria-label="角色立绘">
+            {viewModel.portraitStates.map((state) => (
+              <button
+                key={state.id}
+                type="button"
+                aria-label={`切换到${state.label}`}
+                aria-pressed={state.id === active?.id}
+                onClick={() => setActiveId(state.id)}
+              >
+                {state.label}
+              </button>
+            ))}
+          </div>
         </div>
         <span>{active?.variant === 'insight' ? 'INSIGHT_V2' : active?.variant === 'initial' ? 'INIT_V1' : active?.label}</span>
         {!viewModel.live2dAvailable ? (

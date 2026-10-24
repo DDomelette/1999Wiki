@@ -1,6 +1,8 @@
 import { ChevronDown, ChevronUp, Pause, Play } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CharacterVoiceViewModel } from '../characterDetailViewModel'
+
+const VOICE_PAGE_SIZE = 5
 
 export function CharacterVoiceRecords({
   voices,
@@ -15,9 +17,46 @@ export function CharacterVoiceRecords({
   ])), [voices])
   const [languageByVoice, setLanguageByVoice] = useState<Record<string, string>>(defaults)
   const [playing, setPlaying] = useState('')
-  const [expanded, setExpanded] = useState(false)
-  const hasToggle = initialVisibleCount !== undefined && voices.length > initialVisibleCount
-  const visibleVoices = hasToggle && !expanded ? voices.slice(0, initialVisibleCount) : voices
+  const [visibleCount, setVisibleCount] = useState(initialVisibleCount ?? voices.length)
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
+  const canCollapse = initialVisibleCount !== undefined && voices.length > initialVisibleCount
+  const allVisible = visibleCount >= voices.length
+  const visibleVoices = voices.slice(0, visibleCount)
+
+  useEffect(() => () => {
+    Object.values(audioRefs.current).forEach((audio) => audio?.pause())
+  }, [])
+
+  const togglePlayback = (voiceId: string) => {
+    const audio = audioRefs.current[voiceId]
+    if (!audio) return
+    if (playing === voiceId) {
+      audio.pause()
+      setPlaying('')
+      return
+    }
+    if (playing) audioRefs.current[playing]?.pause()
+    setPlaying(voiceId)
+    void audio.play().catch(() => {
+      setPlaying((current) => current === voiceId ? '' : current)
+    })
+  }
+
+  const selectLanguage = (voiceId: string, code: string) => {
+    audioRefs.current[voiceId]?.pause()
+    setPlaying((current) => current === voiceId ? '' : current)
+    setLanguageByVoice((current) => ({ ...current, [voiceId]: code }))
+  }
+
+  const toggleVisibleVoices = () => {
+    if (allVisible) {
+      if (playing) audioRefs.current[playing]?.pause()
+      setPlaying('')
+      setVisibleCount(initialVisibleCount ?? voices.length)
+      return
+    }
+    setVisibleCount((current) => Math.min(current + VOICE_PAGE_SIZE, voices.length))
+  }
 
   if (voices.length === 0) return null
   return (
@@ -46,7 +85,7 @@ export function CharacterVoiceRecords({
                   <button
                     type="button"
                     aria-label={`${playing === voice.id ? '暂停' : '播放'}${voice.title}`}
-                    onClick={() => setPlaying((current) => current === voice.id ? '' : voice.id)}
+                    onClick={() => togglePlayback(voice.id)}
                   >
                     {playing === voice.id ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
                   </button>
@@ -58,7 +97,7 @@ export function CharacterVoiceRecords({
                     key={language.code}
                     type="button"
                     aria-pressed={language.code === selected?.code}
-                    onClick={() => setLanguageByVoice((current) => ({ ...current, [voice.id]: language.code }))}
+                    onClick={() => selectLanguage(voice.id, language.code)}
                   >
                     {language.label}
                   </button>
@@ -68,28 +107,30 @@ export function CharacterVoiceRecords({
               {selected?.audio ? (
                 <audio
                   key={selected.audio.id}
+                  ref={(node) => { audioRefs.current[voice.id] = node }}
                   src={selected.audio.url}
                   preload="none"
                   controls={playing === voice.id}
+                  onPlay={() => setPlaying(voice.id)}
+                  onPause={() => setPlaying((current) => current === voice.id ? '' : current)}
+                  onEnded={() => setPlaying((current) => current === voice.id ? '' : current)}
+                  onError={() => setPlaying((current) => current === voice.id ? '' : current)}
                 />
               ) : null}
             </article>
           )
         })}
       </div>
-      {hasToggle ? (
+      {canCollapse ? (
         <button
           type="button"
           className="character-voice-records__toggle"
-          aria-expanded={expanded}
+          aria-expanded={visibleCount > (initialVisibleCount ?? voices.length)}
           aria-controls="character-voice-list"
-          onClick={() => {
-            if (expanded) setPlaying('')
-            setExpanded((current) => !current)
-          }}
+          onClick={toggleVisibleVoices}
         >
-          {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
-          <span>{expanded ? '收起语音' : `展开全部语音（${voices.length}）`}</span>
+          {allVisible ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+          <span>{allVisible ? '收起语音' : '查看更多'}</span>
         </button>
       ) : null}
     </section>

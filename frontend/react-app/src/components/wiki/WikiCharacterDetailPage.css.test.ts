@@ -22,7 +22,9 @@ describe('Stitch character dossier visual contract', () => {
     expect(detailCss).toMatch(/\.character-profile-data\s*\{[^}]*min-height:\s*258px/s)
     expect(detailCss).toMatch(/\.character-profile-data\s*\+\s*\.profile-skill-rail__skills\s*\{[^}]*margin-top:\s*53px/s)
     expect(detailCss).toMatch(/\.inheritance-voice-rail\s*\{[^}]*grid-template-rows:\s*220px\s+190px\s+minmax\(0,\s*1fr\)/s)
-    expect(detailCss).toMatch(/\.character-portrait-stage--desktop \.character-portrait-stage__wardrobe\s*\{[^}]*bottom:\s*-44px[^}]*left:\s*60%[^}]*width:\s*min\(264px,\s*70%\)/s)
+    expect(detailCss).toMatch(/\.character-portrait-stage--desktop \.character-portrait-stage__wardrobe\s*\{[^}]*bottom:\s*-28px[^}]*left:\s*60%[^}]*width:\s*min\(264px,\s*70%\)/s)
+    expect(detailCss).toMatch(/\.character-portrait-stage__wardrobe-group\s*\{[^}]*display:\s*grid[^}]*gap:\s*8px/s)
+    expect(detailCss).toMatch(/\.profile-skill-rail\s*\{[^}]*mask-image:\s*linear-gradient\(to bottom/s)
     expect(detailCss).toMatch(/\.character-portrait-stage__deploy\s*\{[^}]*display:\s*none/s)
     expect(detailCss).toContain("[data-profile-key='medium']")
     expect(detailCss).toContain("[data-profile-key='damageType']")
@@ -41,7 +43,7 @@ describe('Stitch character dossier visual contract', () => {
     expect(detailCss).toMatch(/\.character-portrait-stage--mobile\s*\{[^}]*height:\s*auto/s)
     expect(detailCss).toMatch(/\.character-portrait-stage--mobile \.character-portrait-stage__visual\s*\{[^}]*position:\s*relative[^}]*height:\s*clamp\(360px,\s*50dvh,\s*480px\)/s)
     expect(detailCss).toMatch(/\.character-portrait-stage--mobile \.character-portrait-stage__images img\s*\{[^}]*scale:\s*1\.0[0-5]/s)
-    expect(detailCss).toMatch(/\.character-portrait-stage__identity\s*\{[^}]*width:\s*min\(72%,\s*240px\)/s)
+    expect(detailCss).toMatch(/\.character-portrait-stage__identity\s*\{[^}]*width:\s*min\(62%,\s*210px\)[^}]*padding:\s*12px/s)
     expect(detailCss).toMatch(/\.character-portrait-stage--mobile \.character-portrait-stage__wardrobe\s*\{[^}]*position:\s*relative[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s)
     expect(detailCss).toMatch(/@media \(max-width: 760px\)[\s\S]*\.character-voice-records__scroll\s*\{[^}]*max-height:\s*none[^}]*overflow:\s*visible/s)
     expect(detailCss).toMatch(/\.character-summary__udimo\s*\{[^}]*background:/s)
@@ -53,6 +55,12 @@ describe('Stitch character dossier visual contract', () => {
   it('lets the whole desktop rail scroll on short screens instead of collapsing voice records', () => {
     expect(detailCss).toMatch(/@media \(min-width: 761px\) and \(max-height: 760px\)[\s\S]*\.inheritance-voice-rail\s*\{[^}]*display:\s*flex[^}]*overflow-y:\s*auto/s)
     expect(detailCss).toMatch(/@media \(min-width: 761px\) and \(max-height: 760px\)[\s\S]*\.inheritance-voice-rail \.character-voice-records\s*\{[^}]*min-height:\s*320px/s)
+  })
+
+  it('uses one soft card shadow while preserving the dossier inset texture', () => {
+    expect(detailCss).toContain('--dossier-card-shadow: 7px 9px 16px rgb(0 0 0 / 42%)')
+    expect(detailCss).toMatch(/\.wiki-character-detail :is\([\s\S]*?\.character-skill-card,[\s\S]*?\.character-collection-item[\s\S]*?\)\s*,?\s*\.wiki-character-detail \.mobile-character-dossier \.character-progression li\s*\{[^}]*box-shadow:\s*var\(--dossier-card-shadow\)/s)
+    expect(detailCss).toMatch(/\.wiki-character-detail :is\(\.character-identity-card, \.character-portrait-stage__wardrobe\)\s*\{[^}]*box-shadow:\s*var\(--dossier-card-shadow\), inset/s)
   })
 
   it('self-hosts the approved fonts and uses code-native paper texture', () => {

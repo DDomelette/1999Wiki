@@ -253,10 +253,10 @@ describe('WikiCharacterDetailPage', () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
   })
 
-  it('collapses long mobile voice archives into the normal document flow with an expansion control', () => {
+  it('reveals five more mobile voice records at a time and collapses back to three', () => {
     setMobile(true)
     const view = detailView()
-    view.voices = Array.from({ length: 5 }, (_, index) => ({
+    view.voices = Array.from({ length: 12 }, (_, index) => ({
       ...view.voices[0],
       id: `voice-${index + 1}`,
       title: `语音 ${index + 1}`,
@@ -264,16 +264,20 @@ describe('WikiCharacterDetailPage', () => {
     render(<WikiCharacterDetailPage viewModel={view} onBack={() => undefined} />)
 
     expect(document.querySelectorAll('.character-voice-record')).toHaveLength(3)
-    const toggle = screen.getByRole('button', { name: '展开全部语音（5）' })
+    const toggle = screen.getByRole('button', { name: '查看更多' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(toggle).toHaveAttribute('aria-controls', 'character-voice-list')
 
     fireEvent.click(toggle)
-    expect(document.querySelectorAll('.character-voice-record')).toHaveLength(5)
+    expect(document.querySelectorAll('.character-voice-record')).toHaveLength(8)
+    fireEvent.click(screen.getByRole('button', { name: '查看更多' }))
+    expect(document.querySelectorAll('.character-voice-record')).toHaveLength(12)
+    expect(screen.queryByRole('button', { name: '查看更多' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '收起语音' })).toHaveAttribute('aria-expanded', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: '收起语音' }))
     expect(document.querySelectorAll('.character-voice-record')).toHaveLength(3)
+    expect(screen.getByRole('button', { name: '查看更多' })).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('toggles stage mode independently of skin selection and keeps the chosen mode across skins', () => {
