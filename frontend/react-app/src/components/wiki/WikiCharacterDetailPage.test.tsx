@@ -150,6 +150,13 @@ function detailView(): CharacterDetailViewModel {
   }
 }
 
+function activePortrait() {
+  const visible = screen.getAllByTestId('character-portrait-image')
+    .filter((portrait) => portrait.getAttribute('aria-hidden') === 'false')
+  expect(visible).toHaveLength(1)
+  return visible[0]
+}
+
 function setMobile(matches: boolean) {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
     matches,
@@ -194,19 +201,18 @@ describe('WikiCharacterDetailPage', () => {
     expect(screen.getByRole('link', { name: 'DEPLOY UNIT' })).toHaveAttribute('href', '#combat')
     expect(document.querySelector('#combat')).toBeInTheDocument()
 
-    const portrait = screen.getByTestId('character-portrait-image')
     const stage = screen.getByTestId('character-portrait-stage')
     expect(stage).toHaveStyle({ backgroundImage: 'url("https://cdn.test/backdrop-initial.webp")' })
-    expect(portrait).toHaveAttribute('aria-hidden', 'false')
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/initial-live2d.webp')
-    expect(portrait).toHaveAttribute('data-portrait-mode', 'live2d')
+    expect(activePortrait()).toHaveAttribute('aria-hidden', 'false')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/initial-live2d.webp')
+    expect(activePortrait()).toHaveAttribute('data-portrait-mode', 'live2d')
     const insight = screen.getByRole('button', { name: '切换到洞悉' })
     expect(insight).toHaveAttribute('aria-pressed', 'false')
     fireEvent.click(insight)
     expect(insight).toHaveAttribute('aria-pressed', 'true')
     expect(stage).toHaveStyle({ backgroundImage: 'url("https://cdn.test/backdrop-insight.webp")' })
-    expect(portrait).toHaveAttribute('aria-hidden', 'false')
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/insight-live2d.webp')
+    expect(activePortrait()).toHaveAttribute('aria-hidden', 'false')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/insight-live2d.webp')
 
     fireEvent.click(screen.getByRole('button', { name: '返回角色索引' }))
     expect(onBack).toHaveBeenCalledTimes(1)
@@ -238,6 +244,10 @@ describe('WikiCharacterDetailPage', () => {
     expect(screen.getByTestId('character-udimo-media')).toHaveAttribute('src', 'https://cdn.test/udimo.png')
     expect(screen.getByTestId('character-udimo-archive')).toHaveTextContent('20th Century Early')
     expect(screen.getByTestId('character-udimo-archive')).toHaveTextContent('Oct 23 (Autumn)')
+    const visual = mobile.querySelector('.character-portrait-stage__visual')
+    const wardrobe = mobile.querySelector('.character-portrait-stage__wardrobe')
+    expect(visual).toContainElement(screen.getAllByTestId('character-portrait-image')[0])
+    expect(visual).not.toContainElement(wardrobe as HTMLElement)
 
     const navigation = screen.getByRole('navigation', { name: '移动档案导航' })
     expect(within(navigation).getByRole('button', { name: 'DOSSIER' })).toHaveAttribute('aria-current', 'page')
@@ -247,23 +257,49 @@ describe('WikiCharacterDetailPage', () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
   })
 
+  it('reveals five more mobile voice records at a time and collapses back to three', () => {
+    setMobile(true)
+    const view = detailView()
+    view.voices = Array.from({ length: 12 }, (_, index) => ({
+      ...view.voices[0],
+      id: `voice-${index + 1}`,
+      title: `语音 ${index + 1}`,
+    }))
+    render(<WikiCharacterDetailPage viewModel={view} onBack={() => undefined} />)
+
+    expect(document.querySelectorAll('.character-voice-record')).toHaveLength(3)
+    const toggle = screen.getByRole('button', { name: '查看更多' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveAttribute('aria-controls', 'character-voice-list')
+
+    fireEvent.click(toggle)
+    expect(document.querySelectorAll('.character-voice-record')).toHaveLength(8)
+    fireEvent.click(screen.getByRole('button', { name: '查看更多' }))
+    expect(document.querySelectorAll('.character-voice-record')).toHaveLength(12)
+    expect(screen.queryByRole('button', { name: '查看更多' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '收起语音' })).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: '收起语音' }))
+    expect(document.querySelectorAll('.character-voice-record')).toHaveLength(3)
+    expect(screen.getByRole('button', { name: '查看更多' })).toHaveAttribute('aria-expanded', 'false')
+  })
+
   it('toggles stage mode independently of skin selection and keeps the chosen mode across skins', () => {
     const onBack = vi.fn()
     render(<WikiCharacterDetailPage viewModel={detailView()} onBack={onBack} />)
 
-    const portrait = screen.getByTestId('character-portrait-image')
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: '切换到立绘' })).toHaveAttribute('aria-pressed', 'false')
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/initial-live2d.webp')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/initial-live2d.webp')
 
     fireEvent.click(screen.getByRole('button', { name: '切换到立绘' }))
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByRole('button', { name: '切换到立绘' })).toHaveAttribute('aria-pressed', 'true')
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/initial-portrait.webp')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/initial-portrait.webp')
 
     fireEvent.click(screen.getByRole('button', { name: '切换到洞悉' }))
-    expect(portrait).toHaveAttribute('aria-hidden', 'false')
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/insight-portrait.webp')
+    expect(activePortrait()).toHaveAttribute('aria-hidden', 'false')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/insight-portrait.webp')
     expect(screen.getByRole('button', { name: '切换到立绘' })).toHaveAttribute('aria-pressed', 'true')
   })
 
@@ -276,24 +312,23 @@ describe('WikiCharacterDetailPage', () => {
     const onBack = vi.fn()
     render(<WikiCharacterDetailPage viewModel={view} onBack={onBack} />)
 
-    const portrait = screen.getByTestId('character-portrait-image')
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/initial-portrait.webp')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/initial-portrait.webp')
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByRole('button', { name: '切换到立绘' })).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: '切换到洞悉' }))
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/insight-live2d.webp')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/insight-live2d.webp')
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: '切换到立绘' })).toHaveAttribute('aria-pressed', 'false')
 
     fireEvent.click(screen.getByRole('button', { name: '切换到立绘' }))
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/insight-portrait.webp')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/insight-portrait.webp')
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByRole('button', { name: '切换到立绘' })).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: '切换到初始' }))
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/initial-portrait.webp')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/initial-portrait.webp')
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByRole('button', { name: '切换到立绘' })).toHaveAttribute('aria-pressed', 'true')
@@ -308,22 +343,21 @@ describe('WikiCharacterDetailPage', () => {
     const onBack = vi.fn()
     render(<WikiCharacterDetailPage viewModel={view} onBack={onBack} />)
 
-    const portrait = screen.getByTestId('character-portrait-image')
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/initial-live2d.webp')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/initial-live2d.webp')
     expect(screen.getByRole('button', { name: '切换到立绘' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '切换到立绘' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: '切换到洞悉' }))
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/insight-live2d.webp')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/insight-live2d.webp')
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: '切换到立绘' }))
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/insight-portrait.webp')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/insight-portrait.webp')
     expect(screen.getByRole('button', { name: '切换到立绘' })).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: '切换到初始' }))
-    expect(portrait).toHaveAttribute('src', 'https://cdn.test/initial-live2d.webp')
+    expect(activePortrait()).toHaveAttribute('src', 'https://cdn.test/initial-live2d.webp')
     expect(screen.getByRole('button', { name: '切换到立绘' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '切换到立绘' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByRole('button', { name: '切换到Live2D' })).toHaveAttribute('aria-pressed', 'true')

@@ -47,68 +47,78 @@ export function CharacterPortraitStage({ viewModel, mode }: CharacterPortraitSta
       data-testid="character-portrait-stage"
       style={backdropStyle}
     >
-      <span className="character-portrait-stage__watermark" aria-hidden="true">
-        {viewModel.identity.exonym || viewModel.identity.name}
-      </span>
-      <span className="character-portrait-stage__ribbon">SOPHISTICATED</span>
-      <div className="character-portrait-stage__images">
-        {active && activeMedia ? (
-          <img
-            src={activeMedia.url}
-            alt={`${viewModel.identity.name} - ${active.label}`}
-            aria-hidden="false"
-            data-testid="character-portrait-image"
-            data-portrait-mode={effectiveMode}
-            className="is-active"
-            decoding="async"
-          />
-        ) : null}
-        {(!activeMedia || viewModel.portraitStates.length === 0) ? (
-          <div className="character-portrait-stage__fallback" aria-label="暂无可用立绘">
-            <ImageIcon aria-hidden="true" />
-          </div>
-        ) : null}
-      </div>
-      <div className="character-portrait-stage__identity">
-        <p>SUBJECT_EXONYM</p>
-        <strong>{viewModel.identity.exonym || viewModel.identity.name}</strong>
-        {viewModel.identity.exonym ? <span>{viewModel.identity.name}</span> : null}
+      <div className="character-portrait-stage__visual">
+        <span className="character-portrait-stage__watermark" aria-hidden="true">
+          {viewModel.identity.exonym || viewModel.identity.name}
+        </span>
+        <span className="character-portrait-stage__ribbon">SOPHISTICATED</span>
+        <div className="character-portrait-stage__images">
+          {viewModel.portraitStates.map((state) => {
+            const selected = state.id === active?.id
+            const media = resolveModeMedia(state, effectiveMode)
+            return (
+              <img
+                key={state.id}
+                src={media?.url}
+                alt={selected ? `${viewModel.identity.name} - ${state.label}` : ''}
+                aria-hidden={selected ? 'false' : 'true'}
+                data-testid="character-portrait-image"
+                data-portrait-mode={effectiveMode}
+                className={selected ? 'is-active' : 'is-inactive'}
+              />
+            )
+          })}
+          {(!activeMedia || viewModel.portraitStates.length === 0) ? (
+            <div className="character-portrait-stage__fallback" aria-label="暂无可用立绘">
+              <ImageIcon aria-hidden="true" />
+            </div>
+          ) : null}
+        </div>
+        <div className="character-portrait-stage__identity">
+          <p>SUBJECT_EXONYM</p>
+          <strong>{viewModel.identity.exonym || viewModel.identity.name}</strong>
+          {viewModel.identity.exonym ? <span>{viewModel.identity.name}</span> : null}
+        </div>
       </div>
       <div className="character-portrait-stage__wardrobe" aria-label="立绘切换">
-        <p>MODE_SELECT</p>
-        <div role="group" aria-label="舞台模式">
-          <button
-            type="button"
-            aria-label="切换到Live2D"
-            aria-pressed={effectiveMode === 'live2d'}
-            disabled={!active?.live2dMedia}
-            onClick={() => setPortraitMode('live2d')}
-          >
-            LIVE2D
-          </button>
-          <button
-            type="button"
-            aria-label="切换到立绘"
-            aria-pressed={effectiveMode === 'portrait'}
-            disabled={!active?.portraitMedia}
-            onClick={() => setPortraitMode('portrait')}
-          >
-            立绘
-          </button>
-        </div>
-        <p>SKIN_SELECT</p>
-        <div role="group" aria-label="角色立绘">
-          {viewModel.portraitStates.map((state) => (
+        <div className="character-portrait-stage__wardrobe-group">
+          <p>MODE_SELECT</p>
+          <div role="group" aria-label="舞台模式">
             <button
-              key={state.id}
               type="button"
-              aria-label={`切换到${state.label}`}
-              aria-pressed={state.id === active?.id}
-              onClick={() => setActiveId(state.id)}
+              aria-label="切换到Live2D"
+              aria-pressed={effectiveMode === 'live2d'}
+              disabled={!active?.live2dMedia}
+              onClick={() => setPortraitMode('live2d')}
             >
-              {state.label}
+              LIVE2D
             </button>
-          ))}
+            <button
+              type="button"
+              aria-label="切换到立绘"
+              aria-pressed={effectiveMode === 'portrait'}
+              disabled={!active?.portraitMedia}
+              onClick={() => setPortraitMode('portrait')}
+            >
+              立绘
+            </button>
+          </div>
+        </div>
+        <div className="character-portrait-stage__wardrobe-group">
+          <p>SKIN_SELECT</p>
+          <div role="group" aria-label="角色立绘">
+            {viewModel.portraitStates.map((state) => (
+              <button
+                key={state.id}
+                type="button"
+                aria-label={`切换到${state.label}`}
+                aria-pressed={state.id === active?.id}
+                onClick={() => setActiveId(state.id)}
+              >
+                {state.label}
+              </button>
+            ))}
+          </div>
         </div>
         <span>{active?.variant === 'insight' ? 'INSIGHT_V2' : active?.variant === 'initial' ? 'INIT_V1' : active?.label}</span>
         {!viewModel.live2dAvailable ? (
