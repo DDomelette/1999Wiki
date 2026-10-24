@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useChatStore } from '../../store/chatStore'
+import { useChatPageBoundaryNavigation } from '../../hooks/useChatPageBoundaryNavigation'
+import { navigateToMainSection } from '../../navigation/mainSectionNavigation'
 import { MessageBubble } from '../chat/MessageBubble'
 import { ChatInput } from '../chat/ChatInput'
 import { AutoHideScrollbar } from '../ui/AutoHideScrollbar'
@@ -11,17 +13,31 @@ export function ChatSection() {
   const messages = useChatStore((s) => s.messages)
   const clear = useChatStore((s) => s.clear)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
+  useChatPageBoundaryNavigation(scrollRef)
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && stickToBottomRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [messages])
 
+  const precedingQuestions = new Map<string, string | undefined>()
+  let latestQuestion: string | undefined
+  for (const message of messages) {
+    if (message.role === 'user') latestQuestion = message.content
+    else precedingQuestions.set(message.id, latestQuestion)
+  }
+
+  const handleMessageScroll = () => {
+    const element = scrollRef.current
+    if (!element) return
+    stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
+  }
+
   const jumpHome = () => {
-    document
-      .querySelector('[data-snap-section="home"]')
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+    navigateToMainSection({ kind: 'home' }, { behavior: reducedMotion ? 'auto' : 'smooth', history: 'push' })
   }
 
   return (
@@ -30,6 +46,7 @@ export function ChatSection() {
       className="snap-section chat-section"
     >
       <div className="chat-section__toolbar">
+        <span className="chat-section__archive-id" aria-hidden="true">INQUIRY_DESK / 04</span>
         <span className="chat-section__toolbar-label">检索范围:</span>
         <CategorySelect />
         <button
@@ -56,15 +73,26 @@ export function ChatSection() {
           className="native-scrollbar-hidden chat-section__messages"
           data-page-wheel-lock="true"
           data-testid="chat-message-scroll"
+          onScroll={handleMessageScroll}
         >
           {messages.length === 0 && (
             <div className="chat-section__empty">
-              <p className="chat-section__empty-title">神秘学问答</p>
-              <p>问问关于人物、心相、剧情、世界、阵营或日历的任何问题</p>
+              <span className="chat-section__empty-index" aria-hidden="true">04</span>
+              <p className="chat-section__empty-eyebrow">ARCANUM_INQUIRY / RAG ARCHIVE</p>
+              <h2 className="chat-section__empty-title">神秘学问答</h2>
+              <p className="chat-section__empty-description">检索人物、心相、剧情与世界档案。每一次提问，都会留下可追溯的资料来源。</p>
+              <div className="chat-section__empty-register" role="group" aria-label="可检索档案类别">
+                <span>人物</span><span>心相</span><span>剧情</span><span>世界</span><span>阵营</span><span>日历</span>
+              </div>
+              <p className="chat-section__empty-hint">从下方选择一条档案索引，或输入你的问题。</p>
             </div>
           )}
           {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} />
+            <MessageBubble
+              key={message.id}
+              message={message}
+              precedingQuestion={message.role === 'assistant' ? precedingQuestions.get(message.id) : undefined}
+            />
           ))}
         </div>
         <AutoHideScrollbar targetRef={scrollRef} testId="chat-message-scrollbar" variant="local" />

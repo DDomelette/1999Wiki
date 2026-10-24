@@ -1,16 +1,22 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useUIStore } from './store/uiStore'
 import { useScrollSpy } from './hooks/useScrollSpy'
 import { useWheelSnapNavigation } from './hooks/useWheelSnapNavigation'
+import { useMainViewportAlignment } from './hooks/useMainViewportAlignment'
+import type { MainSnapId } from './navigation/mainSectionNavigation'
+import { navigateToMainSection, parseMainHash } from './navigation/mainSectionNavigation'
 import { fetchCategories } from './api/http'
 import { RouteAwareCardNav } from './components/navigation/RouteAwareCardNav'
 import { HomeSection } from './components/sections/HomeSection'
 import { DataSection } from './components/sections/DataSection'
 import { ChatSection } from './components/sections/ChatSection'
 import { AutoHideScrollbar } from './components/ui/AutoHideScrollbar'
-import { WikiShell } from './components/wiki/WikiShell'
 import { FALLBACK_CATEGORIES, filterVisibleCategories } from './data/fallbackCategories'
 import { MotionPreview } from './components/dev/MotionPreview'
+
+const WikiShell = lazy(() =>
+  import('./components/wiki/WikiShell').then((module) => ({ default: module.WikiShell })),
+)
 
 export default function App() {
   const [pathname, setPathname] = useState(() => window.location.pathname)
@@ -25,7 +31,11 @@ export default function App() {
     return <MotionPreview />
   }
   if (pathname === '/wiki' || pathname.startsWith('/wiki/')) {
-    return <WikiShell />
+    return (
+      <Suspense fallback={<div className="route-loading" role="status">正在加载 Wiki 档案...</div>}>
+        <WikiShell />
+      </Suspense>
+    )
   }
 
   return <MainApp />
@@ -33,9 +43,20 @@ export default function App() {
 
 function MainApp() {
   const setCategoriesMeta = useUIStore((s) => s.setCategoriesMeta)
+  const categoriesMeta = useUIStore((s) => s.categoriesMeta)
+  const currentSection = useUIStore((s) => s.currentSection)
+  const currentCategory = useUIStore((s) => s.currentCategory)
   const snapContainerRef = useRef<HTMLElement>(null)
   useScrollSpy()
   useWheelSnapNavigation()
+
+  const activeSnapId: MainSnapId =
+    currentSection === 'data'
+      ? currentCategory
+        ? `data:${currentCategory}`
+        : 'data:loading'
+      : currentSection
+  useMainViewportAlignment(snapContainerRef, activeSnapId)
 
   useEffect(() => {
     fetchCategories()
@@ -48,6 +69,17 @@ function MainApp() {
         setCategoriesMeta(filterVisibleCategories(FALLBACK_CATEGORIES))
       })
   }, [setCategoriesMeta])
+
+  // 挂载与 hashchange 时恢复 hash 对应的语义页面;分类异步返回后重试,且不写入历史
+  useEffect(() => {
+    const restoreMainHash = () => {
+      const target = parseMainHash(window.location.hash)
+      if (target) navigateToMainSection(target, { behavior: 'auto', history: 'none' })
+    }
+    restoreMainHash()
+    window.addEventListener('hashchange', restoreMainHash)
+    return () => window.removeEventListener('hashchange', restoreMainHash)
+  }, [categoriesMeta])
 
   return (
     <>

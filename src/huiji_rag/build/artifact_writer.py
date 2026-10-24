@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -11,7 +12,8 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
 from src.huiji_rag.io import CorpusCandidatePaths, corpus_candidate_paths
-from src.rag.sparse import canonical_child_corpus_sha256
+from src.rag.chinese_analyzer import AnalyzerIdentity, ChineseBM25Analyzer
+from src.rag.sparse import LocalBM25SparseIndex, canonical_child_corpus_sha256
 
 from .contracts import (
     CHILD_BLOCK_SCHEMA_VERSION,
@@ -21,6 +23,7 @@ from .contracts import (
     MEDIA_V3_SCHEMA_VERSION,
     PARENT_BLOCK_SCHEMA_VERSION,
     BuildState,
+    DIAGNOSTIC_ONLY_NEXT_GATE,
     CorpusSourceInventory,
     VoiceBindingResult,
     canonical_json_bytes,
@@ -35,6 +38,17 @@ from .projection import CorpusProjection
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _SELF_MANIFEST_PATH = "build_manifest.json"
+_BM25_PROBES = (
+    "槲寄生的基础资料",
+    "十四行诗的技能是什么",
+    "Data:Story/304502",
+    "Skill-30410111",
+    "Banner_今夜星光灿烂.png",
+)
+
+
+def _default_bm25_analyzer_identity() -> AnalyzerIdentity:
+    return ChineseBM25Analyzer().identity
 
 
 @dataclass(frozen=True)
@@ -50,7 +64,13 @@ class CandidateArtifactInput:
     config_fingerprint_sha256: str
     fidelity_baseline_path: str
     fidelity_baseline_sha256: str
+    bm25_analyzer_identity: AnalyzerIdentity = field(
+        default_factory=_default_bm25_analyzer_identity
+    )
+    bm25_k1: float = 1.5
+    bm25_b: float = 0.75
     blockers: tuple[str, ...] = ()
+    diagnostic_reasons: tuple[str, ...] = ()
     protected_state_references: Mapping[str, Any] = field(default_factory=dict)
     embedding_config_fingerprint_sha256: str = ""
     forbidden_collection_names: tuple[str, ...] = ()
@@ -60,6 +80,11 @@ class CandidateArtifactInput:
         object.__setattr__(self, "media_rows", tuple(self.media_rows))
         object.__setattr__(self, "binding_inventory", tuple(self.binding_inventory))
         object.__setattr__(self, "blockers", tuple(sorted(set(self.blockers))))
+        object.__setattr__(
+            self,
+            "diagnostic_reasons",
+            tuple(sorted(set(self.diagnostic_reasons))),
+        )
         object.__setattr__(
             self,
             "protected_state_references",
@@ -93,6 +118,14 @@ class CandidateWriteResult:
         )
 
 
+@dataclass(frozen=True)
+class _Bm25Snapshot:
+    analyzer: ChineseBM25Analyzer
+    analyzer_payload: Mapping[str, object]
+    bm25_payload: Mapping[str, float]
+    analyzer_probe_sha256: str
+
+
 def write_candidate_artifacts(
     processed_root: str | Path,
     request: CandidateArtifactInput,
@@ -109,6 +142,11 @@ def write_candidate_artifacts(
             request.embedding_config_fingerprint_sha256,
             "embedding config fingerprint",
         )
+    bm25_snapshot = _validated_bm25_snapshot(
+        request.bm25_analyzer_identity,
+        request.bm25_k1,
+        request.bm25_b,
+    )
 
     parent_rows = sorted(
         (parent.to_json() for parent in request.projection.parents),
@@ -160,7 +198,15 @@ def write_candidate_artifacts(
             )
         )
     )
-    state = BuildState.BLOCKED if blockers else BuildState.READY_FOR_EMBEDDING
+    state = (
+        BuildState.BLOCKED
+        if blockers
+        else (
+            BuildState.DIAGNOSTIC_ONLY
+            if request.diagnostic_reasons
+            else BuildState.READY_FOR_EMBEDDING
+        )
+    )
     paths.build_root.mkdir(parents=True, exist_ok=False)
 
     files: dict[str, dict[str, Any]] = {}
@@ -218,6 +264,7 @@ def write_candidate_artifacts(
         id_field="child_id",
         record_kind="child",
         semantic_sha256=canonical_child_corpus_sha256(child_rows),
+        snapshot=bm25_snapshot,
     )
     media_semantic_sha256 = _canonical_rows_sha256(media_rows)
     media_bm25, media_metrics = _bm25_payload(
@@ -225,12 +272,13 @@ def write_candidate_artifacts(
         id_field="binding_id",
         record_kind="media_binding",
         semantic_sha256=media_semantic_sha256,
+        snapshot=bm25_snapshot,
     )
     _write_json_artifact(
         paths,
         paths.child_bm25,
         child_bm25,
-        "huiji.bm25-index/v2",
+        "huiji.bm25-index/v3",
         len(child_rows),
         files,
         semantic_hashes,
@@ -239,7 +287,7 @@ def write_candidate_artifacts(
         paths,
         paths.media_bm25_v3,
         media_bm25,
-        "huiji.media-binding-bm25/v3",
+        "huiji.media-binding-bm25/v4",
         len(media_rows),
         files,
         semantic_hashes,
@@ -356,6 +404,9 @@ def write_candidate_artifacts(
             "child_semantic_corpus_sha256": child_metrics[
                 "semantic_corpus_sha256"
             ],
+            "child_analyzer_fingerprint_sha256": child_metrics[
+                "analyzer_fingerprint_sha256"
+            ],
             "embedding_config_fingerprint_sha256": request.embedding_config_fingerprint_sha256,
             "target_requirements": {
                 "must_be_new": True,
@@ -383,11 +434,16 @@ def write_candidate_artifacts(
         "row_counts": row_counts,
         "voice_status_counts": dict(request.voice_result.status_counts),
         "blockers": blockers,
+        "diagnostic_reasons": list(request.diagnostic_reasons),
         "handoff_created": handoff_created,
         "next_gate": (
             "user_run_embedding"
             if handoff_created
-            else "resolve_blockers_and_rebuild_under_new_version"
+            else (
+                DIAGNOSTIC_ONLY_NEXT_GATE
+                if state is BuildState.DIAGNOSTIC_ONLY
+                else "resolve_blockers_and_rebuild_under_new_version"
+            )
         ),
     }
     _write_json_artifact(
@@ -405,6 +461,7 @@ def write_candidate_artifacts(
         "artifact_schema_version": MEDIA_V3_ROW_SCHEMA_VERSION,
         "build_version": request.build_version,
         "state": state.value,
+        "diagnostic_reasons": list(request.diagnostic_reasons),
         "source_inventory": request.source_inventory.to_json(),
         "code_fingerprint_sha256": request.code_fingerprint_sha256,
         "config_fingerprint_sha256": request.config_fingerprint_sha256,
@@ -524,10 +581,36 @@ def verify_candidate_manifest(
 
     state = str(manifest.get("state") or "")
     handoff_path = "handoff/embedding_handoff.v1.json"
-    if state == BuildState.BLOCKED.value and handoff_path in by_path:
-        raise ValueError("blocked candidate must not contain an embedding handoff")
+    allowed_states = {item.value for item in BuildState}
+    if state not in allowed_states:
+        raise ValueError("candidate manifest state is unsupported")
+    if state != BuildState.READY_FOR_EMBEDDING.value and handoff_path in by_path:
+        raise ValueError("non-ready candidate must not contain an embedding handoff")
     if state == BuildState.READY_FOR_EMBEDDING.value and handoff_path not in by_path:
         raise ValueError("ready candidate is missing its embedding handoff")
+    if state == BuildState.READY_FOR_EMBEDDING.value:
+        handoff = json.loads((root / handoff_path).read_text(encoding="utf-8"))
+        if (
+            not isinstance(handoff, dict)
+            or handoff.get("child_analyzer_fingerprint_sha256")
+            != bm25_metrics["child"]["analyzer_fingerprint_sha256"]
+        ):
+            raise ValueError("candidate embedding handoff BM25 identity mismatch")
+    report_path = root / "build_report.json"
+    report = json.loads(report_path.read_bytes())
+    if str(report.get("state") or "") != state:
+        raise ValueError("candidate manifest and report states differ")
+    manifest_diagnostics = manifest.get("diagnostic_reasons")
+    report_diagnostics = report.get("diagnostic_reasons")
+    if (
+        not isinstance(manifest_diagnostics, list)
+        or not isinstance(report_diagnostics, list)
+        or manifest_diagnostics != sorted(set(str(item) for item in manifest_diagnostics))
+        or report_diagnostics != manifest_diagnostics
+    ):
+        raise ValueError("candidate manifest and report diagnostic reasons differ")
+    if bool(report.get("handoff_created")) != (handoff_path in by_path):
+        raise ValueError("candidate report handoff state is inconsistent")
     return manifest
 
 
@@ -586,19 +669,45 @@ def _verify_bm25_parity(
     root: Path, entries: Mapping[str, Mapping[str, Any]]
 ) -> dict[str, dict[str, Any]]:
     pairs = (
-        ("child_blocks.jsonl", "indexes/child_text_bm25.json", "child_id"),
+        (
+            "child_blocks.jsonl",
+            "indexes/child_text_bm25.json",
+            "child_id",
+            "child",
+            "huiji.bm25-index/v3",
+        ),
         (
             "runtime/media_assets.v3.jsonl",
             "indexes/media_binding_bm25.v3.json",
             "binding_id",
+            "media_binding",
+            "huiji.media-binding-bm25/v4",
         ),
     )
     metrics: dict[str, dict[str, Any]] = {}
-    for artifact_path, index_path, id_field in pairs:
+    shared_identity: tuple[dict[str, object], dict[str, float], str] | None = None
+    for artifact_path, index_path, id_field, record_kind, schema_version in pairs:
         if artifact_path not in entries or index_path not in entries:
             raise ValueError(f"candidate BM25 pair is missing: {artifact_path}")
         artifact_rows = _read_jsonl(root / artifact_path)
         payload = json.loads((root / index_path).read_text(encoding="utf-8"))
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != schema_version
+            or payload.get("record_kind") != record_kind
+        ):
+            raise ValueError(f"candidate BM25 schema differs from {artifact_path}")
+        loaded = LocalBM25SparseIndex.load(root / index_path)
+        if not isinstance(loaded.analyzer, ChineseBM25Analyzer):
+            raise ValueError(f"candidate BM25 analyzer differs from {artifact_path}")
+        analyzer_payload = loaded.analyzer.identity.to_dict()
+        bm25_payload = {"k1": loaded.k1, "b": loaded.b}
+        analyzer_probe_sha256 = _analyzer_probe_sha256(loaded.analyzer)
+        identity = (analyzer_payload, bm25_payload, analyzer_probe_sha256)
+        if shared_identity is None:
+            shared_identity = identity
+        elif identity != shared_identity:
+            raise ValueError("candidate child/media BM25 identity differs")
         records = payload.get("records") if isinstance(payload, dict) else None
         if not isinstance(records, list) or records != artifact_rows:
             raise ValueError(f"candidate BM25 records differ from {artifact_path}")
@@ -614,12 +723,21 @@ def _verify_bm25_parity(
         )
         if payload.get("semantic_corpus_sha256") != semantic_sha256:
             raise ValueError(f"candidate BM25 semantic corpus differs from {artifact_path}")
-        metrics["child" if id_field == "child_id" else "media_binding"] = {
+        metric = {
             "id_field": id_field,
             "row_count": len(artifact_rows),
             "ordered_ids_sha256": _sha256_lines(ids),
             "semantic_corpus_sha256": semantic_sha256,
+            "analyzer_fingerprint_sha256": analyzer_payload[
+                "fingerprint_sha256"
+            ],
+            "analyzer_probe_sha256": analyzer_probe_sha256,
+            "bm25": bm25_payload,
         }
+        for key, expected in metric.items():
+            if payload.get(key) != expected:
+                raise ValueError(f"candidate BM25 metrics differ from {artifact_path}")
+        metrics[record_kind] = metric
     return metrics
 
 
@@ -629,6 +747,7 @@ def _bm25_payload(
     id_field: str,
     record_kind: str,
     semantic_sha256: str,
+    snapshot: _Bm25Snapshot,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     ids = [str(row.get(id_field) or "") for row in rows]
     if any(not value for value in ids) or len(set(ids)) != len(ids):
@@ -638,20 +757,54 @@ def _bm25_payload(
         "row_count": len(rows),
         "ordered_ids_sha256": _sha256_lines(ids),
         "semantic_corpus_sha256": semantic_sha256,
+        "analyzer_fingerprint_sha256": snapshot.analyzer_payload[
+            "fingerprint_sha256"
+        ],
+        "analyzer_probe_sha256": snapshot.analyzer_probe_sha256,
+        "bm25": dict(snapshot.bm25_payload),
     }
     return (
         {
             "schema_version": (
-                "huiji.media-binding-bm25/v3"
+                "huiji.media-binding-bm25/v4"
                 if record_kind == "media_binding"
-                else "huiji.bm25-index/v2"
+                else "huiji.bm25-index/v3"
             ),
             "record_kind": record_kind,
+            "analyzer": dict(snapshot.analyzer_payload),
             **metrics,
             "records": [dict(row) for row in rows],
         },
         metrics,
     )
+
+
+def _validated_bm25_snapshot(
+    identity: AnalyzerIdentity,
+    k1: float,
+    b: float,
+) -> _Bm25Snapshot:
+    if not isinstance(identity, AnalyzerIdentity):
+        raise ValueError("BM25 analyzer identity is invalid")
+    analyzer = ChineseBM25Analyzer(
+        dictionary_path=os.devnull,
+        extra_terms=identity.dictionary_terms,
+        config=identity.config,
+    )
+    if analyzer.identity != identity:
+        raise ValueError("BM25 analyzer identity mismatch")
+    index = LocalBM25SparseIndex(analyzer=analyzer, k1=k1, b=b)
+    return _Bm25Snapshot(
+        analyzer=analyzer,
+        analyzer_payload=MappingProxyType(identity.to_dict()),
+        bm25_payload=MappingProxyType({"k1": index.k1, "b": index.b}),
+        analyzer_probe_sha256=_analyzer_probe_sha256(analyzer),
+    )
+
+
+def _analyzer_probe_sha256(analyzer: ChineseBM25Analyzer) -> str:
+    token_arrays = [analyzer.analyze(probe) for probe in _BM25_PROBES]
+    return _sha256(canonical_json_bytes(token_arrays))
 
 
 def _voice_diagnostics(

@@ -1,9 +1,9 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --main-nav-mobile-offset: 56px;
+  --main-nav-mobile-offset: 64px;
   --main-page-bottom-safe: env(safe-area-inset-bottom, 0px);
-  --global-background-image: url("/images/global-background.png");
+  --global-background-image: url("/images/global-background.webp");
   --global-background-tint:
     linear-gradient(180deg, rgba(10, 13, 12, 0.48), rgba(18, 12, 8, 0.78)),
     radial-gradient(circle at 72% 22%, rgba(212, 175, 55, 0.12), transparent 32%),
@@ -59,13 +59,22 @@ button {
 a { color: var(--link-accent); text-decoration: none; }
 a:hover { text-shadow: 0 0 8px var(--border-glow); }
 
-/* scroll-snap 主容器 */
+.route-loading {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  background: var(--bg-base);
+  font-family: var(--font-body);
+}
+
+/* scroll-snap 主容器:页面级纵向滚动的唯一所有者 */
 .snap-container {
   height: 100vh;
   height: 100dvh;
   overflow-y: scroll;
   scroll-snap-type: y mandatory;
-  scroll-behavior: smooth;
 }
 
 .native-scrollbar-hidden {
@@ -257,15 +266,6 @@ a:hover { text-shadow: 0 0 8px var(--border-glow); }
   scroll-snap-align: start;
   scroll-snap-stop: always;
   position: relative;
-}
-
-@media (max-width: 720px) {
-  .snap-container {
-    scroll-snap-type: y proximity;
-  }
-  .snap-section {
-    scroll-snap-stop: normal;
-  }
 }
 
 /* 卡片基础样式 */

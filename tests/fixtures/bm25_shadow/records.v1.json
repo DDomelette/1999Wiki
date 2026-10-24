@@ -1,0 +1,60 @@
+{
+  "schema_version": "rag.bm25-shadow-records/v1",
+  "fixture_id": "thread-b-shadow-v1",
+  "records": [
+    {
+      "child_id": "char:3074/profile:1",
+      "parent_id": "char:3074/profile",
+      "text": "槲寄生的基础资料",
+      "search_text": "槲寄生 基础资料 神秘学家"
+    },
+    {
+      "child_id": "char:3041/skill:30410111",
+      "parent_id": "char:3041/skill",
+      "text": "十四行诗的技能介绍",
+      "search_text": "十四行诗 技能 神秘学家 Skill-30410111"
+    },
+    {
+      "child_id": "event:star-voyage:1",
+      "parent_id": "event:star-voyage",
+      "text": "星海远航活动",
+      "search_text": "星海 远航活动 限时"
+    },
+    {
+      "child_id": "english:matilda:1",
+      "parent_id": "english:matilda",
+      "text": "Matilda portrait profile",
+      "search_text": "Matilda portrait profile"
+    },
+    {
+      "child_id": "number:304502:1",
+      "parent_id": "number:304502",
+      "text": "304502 chapter archive",
+      "search_text": "304502 chapter archive"
+    },
+    {
+      "child_id": "story:304502:1",
+      "parent_id": "story:304502",
+      "text": "Data story internal identifier",
+      "search_text": "Data:Story/304502 chapter archive"
+    },
+    {
+      "child_id": "media:banner:1",
+      "parent_id": "media:banner",
+      "text": "Banner media filename",
+      "search_text": "Banner_今夜星光灿烂.png media artwork"
+    },
+    {
+      "child_id": "common:box:1",
+      "parent_id": "common:box",
+      "text": "Common box construction material",
+      "search_text": "000-box-construction common material"
+    },
+    {
+      "child_id": "ranking:alpha:1",
+      "parent_id": "ranking:alpha",
+      "text": "Alpha",
+      "search_text": "Alpha"
+    }
+  ]
+}

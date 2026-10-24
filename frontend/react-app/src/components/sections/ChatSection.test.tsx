@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatSection } from './ChatSection'
 import { useChatStore } from '../../store/chatStore'
@@ -15,18 +15,25 @@ describe('ChatSection', () => {
     })
   })
 
-  it('provides a return-home button that scrolls to the home section', () => {
-    const homeSection = document.createElement('section')
-    homeSection.setAttribute('data-snap-section', 'home')
-    const scrollIntoView = vi.fn()
-    homeSection.scrollIntoView = scrollIntoView
-    document.body.appendChild(homeSection)
-
-    render(<ChatSection />)
+  it('provides a return-home button that uses semantic main navigation', () => {
+    const { container } = render(
+      <main className="snap-container">
+        <section data-snap-section="home" />
+        <ChatSection />
+      </main>,
+    )
+    const scroller = container.querySelector('.snap-container') as HTMLElement
+    const homeSection = container.querySelector('[data-snap-section="home"]') as HTMLElement
+    const scrollTo = vi.fn()
+    scroller.scrollTo = scrollTo
+    Object.defineProperty(scroller, 'scrollTop', { configurable: true, value: 400 })
+    scroller.getBoundingClientRect = vi.fn(() => ({ top: 20 }) as DOMRect)
+    homeSection.getBoundingClientRect = vi.fn(() => ({ top: -380 }) as DOMRect)
 
     fireEvent.click(screen.getByRole('button', { name: '返回首页' }))
 
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: 'smooth', top: 0 })
+    expect(window.location.hash).toBe('#home')
   })
 
   it('does not cover the global background with a solid section fill', () => {
@@ -41,6 +48,8 @@ describe('ChatSection', () => {
     render(<ChatSection />)
 
     expect(screen.getByText('神秘学问答')).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: '可检索档案类别' })).toBeInTheDocument()
+    expect(screen.getByText('QUERY_ENTRY')).toBeInTheDocument()
     expect(screen.getByRole('combobox')).toHaveValue('')
     expect(screen.getByTestId('chat-message-scroll')).toHaveAttribute('data-page-wheel-lock', 'true')
     expect(screen.getByPlaceholderText('输入问题...')).toBeInTheDocument()
@@ -57,6 +66,44 @@ describe('ChatSection', () => {
     render(<ChatSection />)
 
     expect(screen.getByRole('group', { name: '推荐问题' })).toBeInTheDocument()
+  })
+
+  it('preserves the reading position when new messages arrive away from the bottom', () => {
+    render(<ChatSection />)
+    const scroller = screen.getByTestId('chat-message-scroll')
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 300 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    })
+
+    fireEvent.scroll(scroller)
+    act(() => {
+      useChatStore.setState({
+        messages: [{ id: 'user-1', role: 'user', content: '测试问题' }],
+      })
+    })
+
+    expect(scroller.scrollTop).toBe(100)
+  })
+
+  it('keeps following new messages when the reader is near the bottom', () => {
+    render(<ChatSection />)
+    const scroller = screen.getByTestId('chat-message-scroll')
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 300 },
+      scrollTop: { configurable: true, writable: true, value: 650 },
+    })
+
+    fireEvent.scroll(scroller)
+    act(() => {
+      useChatStore.setState({
+        messages: [{ id: 'user-1', role: 'user', content: '测试问题' }],
+      })
+    })
+
+    expect(scroller.scrollTop).toBe(1000)
   })
 
   it('renders an accessible stable clear icon button', () => {

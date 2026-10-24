@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -14,9 +15,14 @@ DEV_INPUT = ROOT / "requirements" / "dev.in"
 RUNTIME_LOCK = ROOT / "requirements" / "runtime.lock.txt"
 DEV_LOCK = ROOT / "requirements" / "dev.lock.txt"
 ROOT_REQUIREMENTS = ROOT / "requirements.txt"
+LOCK_WITHOUT_JIEBA_SHA256 = {
+    RUNTIME_LOCK: "b0f131f2ef206fafeec2a442014390e8117fdcd8714de54b982be601452f49a5",
+    DEV_LOCK: "fc1d06a6ccf46bf92e1396023d307cf63477d56bd3f14ea4984627d61843c02e",
+}
 
 ALLOWED_RUNTIME_DIRECT = {
     "fastapi",
+    "jieba",
     "langchain-core",
     "langchain-openai",
     "minio",
@@ -126,6 +132,13 @@ def _parse_lock(path: Path) -> dict[str, Requirement]:
     return locked
 
 
+def _lock_without_jieba(path: Path) -> bytes:
+    data = path.read_bytes()
+    entry = b"jieba==0.42.1\n    # via -r requirements/runtime.in\n"
+    assert data.count(entry) == 1, f"Expected one canonical Jieba lock entry in {path}"
+    return data.replace(entry, b"")
+
+
 def test_input_parser_normalizes_names_and_extras(tmp_path: Path) -> None:
     requirements = tmp_path / "requirements.in"
     requirements.write_text(
@@ -174,6 +187,7 @@ def test_runtime_input_is_the_exact_direct_linux_boundary() -> None:
     assert not includes
     for requirement in direct.values():
         _exact_pin(requirement)
+    assert _exact_pin(direct["jieba"]) == "0.42.1"
 
 
 def test_development_input_has_one_runtime_include_and_exact_tool_pins() -> None:
@@ -201,6 +215,7 @@ def test_linux_runtime_lock_is_pinned_and_excludes_non_runtime_packages() -> Non
     assert "watchfiles" in locked
     assert "pip" not in locked
     assert "pip-tools" not in locked
+    assert _exact_pin(locked["jieba"]) == "0.42.1"
 
 
 def test_linux_development_lock_contains_the_pinned_compiler() -> None:
@@ -208,7 +223,13 @@ def test_linux_development_lock_contains_the_pinned_compiler() -> None:
 
     assert _exact_pin(locked["pip"]) == "25.2"
     assert _exact_pin(locked["pip-tools"]) == "7.5.1"
+    assert _exact_pin(locked["jieba"]) == "0.42.1"
     assert "setuptools" in locked
+
+
+def test_jieba_is_the_only_runtime_and_development_lock_delta() -> None:
+    for path, expected_sha256 in LOCK_WITHOUT_JIEBA_SHA256.items():
+        assert hashlib.sha256(_lock_without_jieba(path)).hexdigest() == expected_sha256
 
 
 def test_root_requirements_includes_only_the_development_lock() -> None:

@@ -29,7 +29,7 @@ export function StreamingDescription({ text, start }: { text: string; start: boo
         fontFamily: 'var(--font-body)',
         fontSize: '1.125rem',
         lineHeight: 1.9,
-        color: 'var(--text-secondary)',
+        color: 'var(--on-media-secondary)',
       }}
     >
       {chars.map((ch, i) => (

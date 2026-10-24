@@ -1,0 +1,137 @@
+{
+  "schema_version": "rag.bm25-shadow-queries/v1",
+  "fixture_id": "thread-b-shadow-v1",
+  "queries": [
+    {
+      "query_id": "core-mistletoe-profile",
+      "kind": "core_chinese",
+      "text": "槲寄生的基础资料",
+      "classification": "improvement",
+      "target_id": "char:3074/profile:1",
+      "top_k": 3,
+      "hard_gate": true
+    },
+    {
+      "query_id": "core-sonetto-skill",
+      "kind": "core_chinese",
+      "text": "十四行诗的技能是什么",
+      "classification": "improvement",
+      "target_id": "char:3041/skill:30410111",
+      "top_k": 3,
+      "hard_gate": true
+    },
+    {
+      "query_id": "oov-star-voyage",
+      "kind": "oov_chinese",
+      "text": "星海远航",
+      "classification": "oov_bigram_recovery",
+      "target_id": "event:star-voyage:1",
+      "top_k": 3,
+      "hard_gate": true
+    },
+    {
+      "query_id": "no-improvement-english",
+      "kind": "no_improvement",
+      "text": "Matilda portrait",
+      "classification": "no_improvement",
+      "target_id": "english:matilda:1",
+      "top_k": 3,
+      "hard_gate": false
+    },
+    {
+      "query_id": "ranking-change-mistletoe",
+      "kind": "ranking_change",
+      "text": "槲寄生 Alpha",
+      "classification": "ranking_change",
+      "target_id": "char:3074/profile:1",
+      "top_k": 3,
+      "hard_gate": false
+    },
+    {
+      "query_id": "technical-english",
+      "kind": "english",
+      "text": "Matilda",
+      "classification": "technical_non_regression",
+      "target_id": "english:matilda:1",
+      "top_k": 3,
+      "hard_gate": true
+    },
+    {
+      "query_id": "technical-numeric",
+      "kind": "numeric",
+      "text": "304502",
+      "classification": "technical_non_regression",
+      "target_id": "number:304502:1",
+      "top_k": 3,
+      "hard_gate": true
+    },
+    {
+      "query_id": "technical-story-id",
+      "kind": "internal_id",
+      "text": "Data:Story/304502",
+      "classification": "technical_non_regression",
+      "target_id": "story:304502:1",
+      "top_k": 3,
+      "hard_gate": true
+    },
+    {
+      "query_id": "technical-skill-id",
+      "kind": "internal_id",
+      "text": "Skill-30410111",
+      "classification": "technical_non_regression",
+      "target_id": "char:3041/skill:30410111",
+      "top_k": 3,
+      "hard_gate": true
+    },
+    {
+      "query_id": "technical-box-id",
+      "kind": "internal_id",
+      "text": "000-box-construction",
+      "classification": "technical_non_regression",
+      "target_id": "common:box:1",
+      "top_k": 3,
+      "hard_gate": true
+    },
+    {
+      "query_id": "technical-filename",
+      "kind": "filename",
+      "text": "Banner_今夜星光灿烂.png",
+      "classification": "technical_non_regression",
+      "target_id": "media:banner:1",
+      "top_k": 3,
+      "hard_gate": true
+    },
+    {
+      "query_id": "multi-segment-sonetto",
+      "kind": "multi_segment",
+      "text": "",
+      "segments": [
+        "十四行诗",
+        "技能"
+      ],
+      "forbidden_cross_token": "诗技",
+      "classification": "multi_segment",
+      "target_id": "char:3041/skill:30410111",
+      "top_k": 3,
+      "hard_gate": false
+    },
+    {
+      "query_id": "zero-result",
+      "kind": "zero_result",
+      "text": "火星量子猫",
+      "classification": "zero_result",
+      "target_id": "",
+      "top_k": 3,
+      "hard_gate": false
+    },
+    {
+      "query_id": "punctuation-only",
+      "kind": "punctuation",
+      "text": "？！…",
+      "classification": "punctuation",
+      "target_id": "",
+      "top_k": 3,
+      "hard_gate": false
+    }
+  ]
+}

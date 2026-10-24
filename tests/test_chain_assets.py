@@ -9,6 +9,8 @@ from src.assets.huiji_registry import HuijiMediaRegistry, MediaRetrievalBundle
 from src.rag.chain import RAGChain
 from src.rag.conversation import build_conversation_turn, project_turns
 from src.rag.ownership import OwnershipViolation
+from src.rag.query_plan import QueryPlan
+from src.rag.request_plan import PlannedSubtask, RequestPlan
 
 
 class FakePlanner:
@@ -101,6 +103,101 @@ def test_chain_retrieve_returns_actions_and_route(tmp_path):
     assert result["omitted_actions"][0]["target_parent_id"] == "char:3041/skills"
     assert result["failure_actions"] == []
     assert result["media_panels"] == []
+
+
+class ParentTargetingRetriever:
+    last_route_debug = {}
+    last_omitted_actions = []
+
+    def __init__(self):
+        self.plans = {}
+
+    def search(self, query, category=None, query_plan=None, trace=None):
+        del query, category, trace
+        self.plans[query_plan.entity_id] = query_plan
+        if (
+            query_plan.entity_id == "character:first"
+            and query_plan.target_parent_id is not None
+        ):
+            raise OwnershipViolation("non-target owner was mutated")
+        return [{
+            "name": query_plan.entity,
+            "category": "character",
+            "source": query_plan.entity_id,
+            "score": 1.0,
+            "content": query_plan.entity,
+            "heading_path": query_plan.entity,
+            "child_id": f"{query_plan.entity_id}/child",
+            "parent_id": query_plan.target_parent_id or f"{query_plan.entity_id}/profile",
+            "entity_type": query_plan.entity_type,
+            "entity_id": query_plan.entity_id,
+        }]
+
+
+def _target_plan(entity, entity_id):
+    return QueryPlan(
+        original_query=f"{entity}资料",
+        normalized_query=f"{entity} 资料",
+        entity=entity,
+        aliases=(),
+        intent="profile_fact",
+        section_hints=("profile",),
+        scatter_terms=(entity,),
+        confidence=1.0,
+        entity_type="character",
+        entity_id=entity_id,
+    )
+
+
+def test_expand_parent_action_mutates_only_its_bound_kb_subtask(tmp_path):
+    first = PlannedSubtask(
+        subtask_id="T01",
+        order=1,
+        task_type="knowledge_base",
+        query="第一角色资料",
+        query_plan=_target_plan("第一角色", "character:first"),
+    )
+    second = PlannedSubtask(
+        subtask_id="T02",
+        order=2,
+        task_type="knowledge_base",
+        query="第二角色资料",
+        query_plan=_target_plan("第二角色", "character:second"),
+    )
+    request_plan = RequestPlan("两个角色", (first, second))
+    action = {
+        "subtask_id": "T02",
+        "label": "展开第二角色页面",
+        "query": second.query,
+        "action_type": "expand_parent",
+        "entity_type": "character",
+        "entity_id": "character:second",
+        "target_parent_id": "character:second/skills",
+    }
+    retriever = ParentTargetingRetriever()
+    chain = RAGChain(_chain_cfg(tmp_path), retriever)
+    chain._asset_registry = FakeRegistry()
+
+    first_result = chain.retrieve(
+        first.query,
+        action_payload=action,
+        _request_plan=request_plan,
+        _subtask=first,
+        _allocate_citations=False,
+    )
+    second_result = chain.retrieve(
+        second.query,
+        action_payload=action,
+        _request_plan=request_plan,
+        _subtask=second,
+        _allocate_citations=False,
+    )
+
+    assert retriever.plans["character:first"].target_parent_id is None
+    assert retriever.plans["character:first"].entity_id == "character:first"
+    assert first_result["route_decision"].effective_route == "rag_grounded"
+    assert retriever.plans["character:second"].target_parent_id == "character:second/skills"
+    assert second_result["route_decision"].effective_route == "rag_grounded"
 
 
 class BundleRegistry:

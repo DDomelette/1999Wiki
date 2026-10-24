@@ -11,9 +11,9 @@ const LEGACY_THEMES: Record<string, Theme> = {
 }
 
 export function migrateTheme(value: unknown): Theme {
-  if (typeof value !== 'string') return 'storm-dark'
+  if (typeof value !== 'string') return 'manuscript-gold'
   if ((THEME_ORDER as readonly string[]).includes(value)) return value as Theme
-  return LEGACY_THEMES[value] ?? 'storm-dark'
+  return LEGACY_THEMES[value] ?? 'manuscript-gold'
 }
 
 interface ThemeState {
@@ -29,7 +29,7 @@ function applyTheme(value: unknown) {
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set, get) => ({
-      theme: 'storm-dark',
+      theme: 'manuscript-gold',
       cycle: () => {
         const current = migrateTheme(get().theme)
         const next = THEME_ORDER[(THEME_ORDER.indexOf(current) + 1) % THEME_ORDER.length]

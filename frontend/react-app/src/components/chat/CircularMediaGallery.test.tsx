@@ -32,6 +32,7 @@ describe('CircularMediaGallery', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open current image' }))
     const dialog = screen.getByRole('dialog', { name: '图片一' })
+    expect(dialog.parentElement).toBe(document.body)
     expect(within(dialog).getByRole('img', { name: '图片一' })).toHaveAttribute('src', images[0].url)
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close image viewer' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()

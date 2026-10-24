@@ -7,7 +7,7 @@ const themes = readFileSync(new URL('./themes.css', import.meta.url), 'utf8')
 describe('theme tokens', () => {
   it.each(['storm-dark', 'manuscript-gold', 'cold-archive'])('defines complete %s semantic tokens', (theme) => {
     const block = themes.split(`[data-theme="${theme}"] {`)[1]?.split('}')[0] ?? ''
-    for (const token of ['--bg-base', '--bg-elevated', '--bg-overlay', '--text-primary', '--text-secondary', '--accent-gold', '--accent-rust', '--border-subtle']) expect(block).toContain(token)
+    for (const token of ['--bg-base', '--bg-elevated', '--bg-overlay', '--text-primary', '--text-secondary', '--accent-gold', '--accent-rust', '--border-subtle', '--archive-texture', '--archive-shadow']) expect(block).toContain(token)
   })
 
   it('does not retain legacy theme selectors', () => {
@@ -29,6 +29,14 @@ describe('theme tokens', () => {
       '--status-error',
     ]) {
       expect(dark).toContain(token)
+    }
+  })
+
+  it('defines shared readable text roles for dark media backgrounds', () => {
+    const shared = themes.split('[data-theme] {')[1]?.split('}')[0] ?? ''
+
+    for (const token of ['--on-media-primary', '--on-media-secondary', '--on-media-accent']) {
+      expect(shared).toContain(token)
     }
   })
 

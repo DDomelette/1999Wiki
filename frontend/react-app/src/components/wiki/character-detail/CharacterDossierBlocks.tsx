@@ -67,6 +67,8 @@ export function CharacterSummary({ viewModel }: { viewModel: CharacterDetailView
             src={viewModel.udimoMedia.url}
             alt={viewModel.udimoMedia.title}
             data-testid="character-udimo-media"
+            loading="lazy"
+            decoding="async"
           />
           <figcaption>
             <span>UDIMO_ARCHIVE</span>

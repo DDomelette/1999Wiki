@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { useMemo } from 'react'
 import type { ReactNode } from 'react'
 
 type MarkdownContentProps = {
@@ -22,7 +23,7 @@ const orderedListPattern = /^\s*\d+[.)]\s+(.+)$/
 const blockquotePattern = /^>\s?(.*)$/
 
 export function MarkdownContent({ text, streaming = false }: MarkdownContentProps) {
-  const blocks = parseMarkdownBlocks(text)
+  const blocks = useMemo(() => parseMarkdownBlocks(text), [text])
 
   return (
     <div className="markdown-message">
@@ -337,6 +338,7 @@ function parseImage(text: string, from: number) {
           src={src}
           alt={alt}
           loading="lazy"
+          decoding="async"
           style={{
             display: 'block',
             maxWidth: '100%',

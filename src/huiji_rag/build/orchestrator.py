@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from . import media_v3 as media_stage
+from . import wikitext_projection as wikitext_stage
 from .artifact_writer import (
     CandidateArtifactInput,
     verify_candidate_manifest,
@@ -15,14 +16,37 @@ from .artifact_writer import (
 )
 from .contracts import (
     BuildState,
+    CAPACITY_MARGIN_RATIO,
+    CLOUD_CAPACITY_MARGIN_MINIMUM_BYTES,
     CorpusBuildRequest,
     CorpusBuildResult,
+    DIAGNOSTIC_ONLY_NEXT_GATE,
+    LOCAL_CAPACITY_MARGIN_MINIMUM_BYTES,
+    MIN_FREE_AFTER_COMMIT_BYTES,
+    P0_MEDIA_NEW_BYTES_MAX,
+    P1_MEDIA_CUMULATIVE_NEW_BYTES_MAX,
     VoiceBindingInput,
     canonical_json_bytes,
     fixture_contract_fingerprint,
 )
 from .fidelity import build_fidelity_ledger
-from .projection import project_crawler_semantics
+from .media_download_plan import (
+    MEDIA_SELECTION_POLICY_SHA256,
+    MediaCapacityEvidence,
+    MediaDownloadPlanRequest,
+    build_media_download_plan,
+    media_selection_priority,
+)
+from .page_sources import (
+    CrawlerSemanticInputs,
+    build_page_revision_join,
+    validate_recovery_gate,
+)
+from .projection import (
+    compose_corpus_projection,
+    project_crawler_semantics,
+    project_page_semantics,
+)
 from .source_inventory import (
     capture_code_fingerprint,
     capture_corpus_source_inventory,
@@ -42,7 +66,12 @@ _SOURCE_FILES = (
 _PARTICIPATING_CODE_PATHS = (
     Path("src/huiji_rag/build/contracts.py"),
     Path("src/huiji_rag/build/source_inventory.py"),
+    Path("src/huiji_rag/build/page_sources.py"),
     Path("src/huiji_rag/build/projection.py"),
+    Path("src/huiji_rag/build/wikitext_projection.py"),
+    Path("src/huiji_rag/build/story_projection.py"),
+    Path("src/huiji_rag/build/topic_projection.py"),
+    Path("src/huiji_rag/build/media_download_plan.py"),
     Path("src/huiji_rag/build/voice_stage.py"),
     Path("src/huiji_rag/build/media_v3.py"),
     Path("src/huiji_rag/build/fidelity.py"),
@@ -50,6 +79,7 @@ _PARTICIPATING_CODE_PATHS = (
     Path("src/huiji_rag/build/orchestrator.py"),
     Path("src/huiji_rag/media.py"),
     Path("src/huiji_rag/models.py"),
+    Path("src/huiji_rag/resources/topic_catalog.v1.json"),
     Path("src/rag/sparse.py"),
 )
 _ACTIVE_FILE_NAMES = {
@@ -133,6 +163,38 @@ class HuijiCorpusBuilder:
         run_dir: Path,
     ) -> CorpusBuildResult:
         project_root = _project_root(request)
+        if (
+            request.recovery_manifest_path is None
+            or request.recovery_audit_receipt_path is None
+            or request.recovery_apply_receipt_path is None
+        ):
+            raise _ExpectedGateFailure(
+                "source_recovery_invalid",
+                "recovery manifest, audit receipt, and apply receipt are required",
+            )
+        try:
+            recovery = validate_recovery_gate(
+                request.raw_root,
+                manifest_path=request.recovery_manifest_path,
+                audit_receipt_path=request.recovery_audit_receipt_path,
+                apply_receipt_path=request.recovery_apply_receipt_path,
+            )
+        except (FileNotFoundError, OSError, ValueError):
+            raise _ExpectedGateFailure(
+                "source_recovery_invalid",
+                "recovery evidence is unavailable or invalid",
+            ) from None
+        _write_create_new(
+            run_dir / "source_recovery_gate.v1.json",
+            {
+                "schema_version": "huiji.source-recovery-gate/v1",
+                "snapshot_id": recovery.snapshot_id,
+                "invalid_payload_rows": recovery.invalid_payload_rows,
+                "sqlite_quick_check": recovery.sqlite_quick_check,
+                "data_pages_sha256": recovery.data_pages_sha256,
+                "crawl_state_sha256": recovery.crawl_state_sha256,
+            },
+        )
         baseline, baseline_path, baseline_sha256 = _load_fidelity_baseline(
             request, project_root
         )
@@ -150,13 +212,56 @@ class HuijiCorpusBuilder:
         )
 
         try:
-            data_rows = _read_jsonl(Path(request.raw_root) / "data_pages.jsonl")
-            resource_rows = _read_jsonl(
-                Path(request.raw_root) / "resources_manifest.jsonl"
+            semantic_inputs = CrawlerSemanticInputs.from_root(request.raw_root)
+            page_stream = semantic_inputs.pages()
+            revision_stream = semantic_inputs.revisions()
+            source_join = build_page_revision_join(page_stream, revision_stream)
+            data_stream = semantic_inputs.data_pages()
+            resource_stream = semantic_inputs.resources()
+            data_projection = project_crawler_semantics(
+                item.projection_row() for item in data_stream
             )
-            projection = project_crawler_semantics(data_rows)
+            page_projection = project_page_semantics(
+                source_join, semantic_inputs.revisions()
+            )
+            projection = compose_corpus_projection(
+                data_projection, page_projection
+            )
+            resource_rows = tuple(
+                item.projection_row() for item in resource_stream
+            )
         except (FileNotFoundError, OSError, ValueError) as error:
             raise _ExpectedGateFailure("semantic_projection_invalid", str(error)) from error
+        _write_create_new(
+            run_dir / "semantic_source_diagnostics.v1.json",
+            {
+                "schema_version": "huiji.semantic-source-diagnostics/v1",
+                "source_filenames": list(semantic_inputs.source_filenames),
+                "metrics": {
+                    stream.source_name: {
+                        "read_rows": stream.metrics.read_rows,
+                        "accepted_rows": stream.metrics.accepted_rows,
+                        "excluded_rows": stream.metrics.excluded_rows,
+                        "peak_rss_bytes": stream.metrics.peak_rss_bytes,
+                        "elapsed_seconds": stream.metrics.elapsed_seconds,
+                        "reason_counts": dict(stream.metrics.reason_counts),
+                    }
+                    for stream in (
+                        page_stream,
+                        revision_stream,
+                        data_stream,
+                        resource_stream,
+                    )
+                },
+                "page_revision_join": {
+                    "joined_count": len(source_join.joined),
+                    "diagnostics": [
+                        item.to_json() for item in source_join.diagnostics
+                    ],
+                    "blockers": list(source_join.blockers),
+                },
+            },
+        )
 
         media_config = media_stage.MediaV3Config(
             raw_root=request.raw_root,
@@ -180,7 +285,25 @@ class HuijiCorpusBuilder:
         except (FileNotFoundError, OSError, ValueError) as error:
             raise _ExpectedGateFailure("media_assembly_invalid", str(error)) from error
 
-        blockers: list[str] = [*voice_resources.blockers, *media.blockers]
+        blockers: list[str] = [
+            *source_join.blockers,
+            *voice_resources.blockers,
+            *media.blockers,
+        ]
+        diagnostic_reason_set = {
+            str(item.get("reason_code") or "")
+            for item in media.unresolved_intents
+            if str(item.get("reason_code") or "")
+            in {
+                "referenced_resource_missing",
+                "referenced_resource_not_downloaded",
+            }
+        }
+        if any(
+            str(item.get("planning_shortfall_reason") or "")
+            for item in media.unresolved_intents
+        ):
+            diagnostic_reason_set.add("capacity_planning_incomplete")
         protected_references: dict[str, Any] = {
             "fidelity_baseline": _reference(
                 baseline_path, baseline_sha256, project_root
@@ -196,6 +319,7 @@ class HuijiCorpusBuilder:
 
         reconciled_rows = media.runtime_rows
         inventory = _load_media_inventory(request, build_root, run_dir)
+        reconciliation = None
         if inventory is None:
             blockers.append("minio_inventory_missing")
         else:
@@ -214,6 +338,107 @@ class HuijiCorpusBuilder:
                 inventory[1], inventory[2], project_root
             ) | {"inventory_sha256": reconciliation.inventory_sha256}
 
+        capacity_summary: dict[str, Any] = {"status": "not_requested"}
+        capacity_evidence = request.capacity_planning
+        if capacity_evidence is None:
+            diagnostic_reason_set.add("capacity_not_requested")
+        elif inventory is None or reconciliation is None:
+            capacity_summary = {"status": "capacity_inventory_missing"}
+        elif inventory is not None and reconciliation is not None:
+            if (
+                capacity_evidence.selection_policy_sha256
+                != MEDIA_SELECTION_POLICY_SHA256
+                or capacity_evidence.media_budget_baseline_inventory_sha256
+                != reconciliation.inventory_sha256
+            ):
+                blockers.append("capacity_evidence_mismatch")
+                capacity_summary = {"status": "capacity_evidence_mismatch"}
+            else:
+                try:
+                    capacity_result = build_media_download_plan(
+                        MediaDownloadPlanRequest(
+                            media_rows=_capacity_planning_rows(media),
+                            minio_inventory_rows=_capacity_inventory_rows(inventory[0]),
+                            source_inventory_fingerprint=(
+                                source_inventory.source_inventory_sha256
+                            ),
+                            projection_fingerprint=_projection_fingerprint(projection),
+                            phase=capacity_evidence.phase,
+                            selection_policy_sha256=(
+                                capacity_evidence.selection_policy_sha256
+                            ),
+                            media_budget_baseline_inventory_sha256=(
+                                capacity_evidence.media_budget_baseline_inventory_sha256
+                            ),
+                            workers=capacity_evidence.workers,
+                            capacity=MediaCapacityEvidence(
+                                free_local_bytes=capacity_evidence.free_local_bytes,
+                                known_cloud_free_or_quota_bytes=(
+                                    capacity_evidence.known_cloud_free_or_quota_bytes
+                                ),
+                                other_storage_growth_bytes=(
+                                    capacity_evidence.other_storage_growth_bytes
+                                ),
+                                candidate_artifact_estimate_bytes=(
+                                    capacity_evidence.candidate_artifact_estimate_bytes
+                                ),
+                                actual_free_after_commit_bytes=(
+                                    capacity_evidence.actual_free_after_commit_bytes
+                                ),
+                                overflow_storage_overhead_bytes=(
+                                    capacity_evidence.overflow_storage_overhead_bytes
+                                ),
+                                overflow_candidate_index_growth_bytes=(
+                                    capacity_evidence.overflow_candidate_index_growth_bytes
+                                ),
+                            ),
+                        )
+                    )
+                except ValueError as error:
+                    raise _ExpectedGateFailure(
+                        "capacity_planning_invalid", str(error)
+                    ) from error
+                capacity_paths: dict[str, Path] = {}
+                for filename, data in capacity_result.artifact_bytes().items():
+                    path = run_dir / filename
+                    _write_bytes_create_new(path, data)
+                    capacity_paths[filename] = path
+                protected_references["referenced_media_capacity"] = {
+                    filename: _reference(
+                        path, _file_sha256(path), project_root
+                    )
+                    for filename, path in sorted(capacity_paths.items())
+                }
+                capacity_summary = {
+                    "status": capacity_result.state,
+                    "allowlist_sha256": capacity_result.allowlist_sha256,
+                    "resource_count": len(capacity_result.allowlist_rows),
+                }
+                if capacity_result.state == "capacity_blocked":
+                    blockers.append("capacity_blocked")
+                elif capacity_result.state == "unknown_capacity":
+                    diagnostic_reason_set.add("unknown_capacity")
+
+        diagnostic_reasons = tuple(sorted(diagnostic_reason_set))
+        _write_create_new(
+            run_dir / "projection_diagnostics.v1.json",
+            {
+                "schema_version": "huiji.projection-diagnostics/v1",
+                "projection_exclusions": [
+                    _sanitized_exclusion(item.to_json())
+                    for item in projection.exclusions
+                ],
+                "identity_fallbacks": [
+                    item.to_json() for item in projection.identity_fallbacks
+                ],
+                "media_diagnostics": [
+                    _sanitized_media_diagnostic(item)
+                    for item in media.unresolved_intents
+                ],
+                "capacity": capacity_summary,
+            },
+        )
+
         try:
             legacy_media = media_stage.reconcile_active_media_occurrences(
                 active["media"],
@@ -221,6 +446,7 @@ class HuijiCorpusBuilder:
                 projection,
                 voice_result,
                 raw_root=request.raw_root,
+                resource_manifest_rows=resource_rows,
             )
             fidelity = build_fidelity_ledger(
                 active_parent_rows=active["parents"],
@@ -262,6 +488,7 @@ class HuijiCorpusBuilder:
                     fidelity_baseline_path=_display_path(baseline_path, project_root),
                     fidelity_baseline_sha256=baseline_sha256,
                     blockers=tuple(blockers),
+                    diagnostic_reasons=diagnostic_reasons,
                     protected_state_references=protected_references,
                     embedding_config_fingerprint_sha256=embedding_fingerprint,
                     forbidden_collection_names=request.forbidden_collection_names,
@@ -280,10 +507,15 @@ class HuijiCorpusBuilder:
             "build_manifest": _display_path(written.paths.build_manifest, project_root),
             "build_manifest_sha256": written.build_manifest_sha256,
             "blockers": list(written.blockers),
+            "diagnostics": list(diagnostic_reasons),
             "next_gate": (
                 "user_run_embedding"
                 if written.state is BuildState.READY_FOR_EMBEDDING
-                else "resolve_blockers_and_rebuild_under_new_version"
+                else (
+                    DIAGNOSTIC_ONLY_NEXT_GATE
+                    if written.state is BuildState.DIAGNOSTIC_ONLY
+                    else "resolve_blockers_and_rebuild_under_new_version"
+                )
             ),
         }
         _write_create_new(run_dir / "candidate_result.v1.json", payload)
@@ -311,11 +543,16 @@ class HuijiCorpusBuilder:
             "row_counts": dict(manifest["row_counts"]),
             "semantic_corpus": dict(manifest["semantic_corpus"]),
             "blockers": list(manifest.get("blockers") or []),
+            "diagnostic_reasons": list(manifest.get("diagnostic_reasons") or []),
             "build_manifest_sha256": expected_manifest_sha256,
             "next_gate": (
                 "user_run_embedding"
                 if manifest["state"] == BuildState.READY_FOR_EMBEDDING.value
-                else "resolve_blockers_and_rebuild_under_new_version"
+                else (
+                    DIAGNOSTIC_ONLY_NEXT_GATE
+                    if manifest["state"] == BuildState.DIAGNOSTIC_ONLY.value
+                    else "resolve_blockers_and_rebuild_under_new_version"
+                )
             ),
         }
 
@@ -470,10 +707,195 @@ def _config_fingerprint(request: CorpusBuildRequest) -> str:
         "public_base_url": request.public_base_url,
         "bucket_name": request.bucket_name,
         "object_prefix": request.object_prefix,
+        "wikitext_parser_config_sha256": wikitext_stage._PARSER_CONFIG_SHA256,
+        "decorative_minimum_dimension_px": (
+            wikitext_stage._DECORATIVE_MINIMUM_DIMENSION_PX
+        ),
+        "media_selection_policy": {
+            "sha256": MEDIA_SELECTION_POLICY_SHA256,
+        },
+        "media_capacity_constants": {
+            "p0_new_bytes_max": P0_MEDIA_NEW_BYTES_MAX,
+            "p1_cumulative_new_bytes_max": P1_MEDIA_CUMULATIVE_NEW_BYTES_MAX,
+            "minimum_free_after_commit_bytes": MIN_FREE_AFTER_COMMIT_BYTES,
+            "local_margin_minimum_bytes": LOCAL_CAPACITY_MARGIN_MINIMUM_BYTES,
+            "cloud_margin_minimum_bytes": CLOUD_CAPACITY_MARGIN_MINIMUM_BYTES,
+            "margin_ratio": CAPACITY_MARGIN_RATIO,
+        },
+        "capacity_planning": (
+            None
+            if request.capacity_planning is None
+            else {
+                "phase": request.capacity_planning.phase,
+                "workers": request.capacity_planning.workers,
+                "free_local_bytes": request.capacity_planning.free_local_bytes,
+                "known_cloud_free_or_quota_bytes": (
+                    request.capacity_planning.known_cloud_free_or_quota_bytes
+                ),
+                "other_storage_growth_bytes": (
+                    request.capacity_planning.other_storage_growth_bytes
+                ),
+                "candidate_artifact_estimate_bytes": (
+                    request.capacity_planning.candidate_artifact_estimate_bytes
+                ),
+                "selection_policy_sha256": (
+                    request.capacity_planning.selection_policy_sha256
+                ),
+                "media_budget_baseline_inventory_sha256": (
+                    request.capacity_planning.media_budget_baseline_inventory_sha256
+                ),
+                "actual_free_after_commit_bytes": (
+                    request.capacity_planning.actual_free_after_commit_bytes
+                ),
+                "overflow_storage_overhead_bytes": (
+                    request.capacity_planning.overflow_storage_overhead_bytes
+                ),
+                "overflow_candidate_index_growth_bytes": (
+                    request.capacity_planning.overflow_candidate_index_growth_bytes
+                ),
+            }
+        ),
     }
     return hashlib.sha256(
         canonical_json_bytes(payload, trailing_newline=False)
     ).hexdigest()
+
+
+def _sanitized_exclusion(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "reason_code": str(row.get("reason_code") or ""),
+        "source_title": str(row.get("source_title") or ""),
+        "source_identity": str(row.get("source_identity") or ""),
+        "source_content_sha256": str(row.get("source_content_sha256") or ""),
+        "entity_id": str(row.get("entity_id") or ""),
+        "json_path": str(row.get("json_path") or "$"),
+        "details": _sanitized_mapping(row.get("details")),
+    }
+
+
+def _sanitized_media_diagnostic(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "reason_code": str(row.get("reason_code") or ""),
+        "source_binding_token": str(row.get("source_binding_token") or ""),
+        "filename": Path(str(row.get("filename") or "")).name,
+    }
+
+
+def _capacity_planning_rows(media: media_stage.MediaV3Assembly) -> tuple[dict[str, Any], ...]:
+    rows: list[dict[str, Any]] = []
+    inventory_by_binding = {
+        str(item.get("binding_id") or ""): item for item in media.binding_inventory
+    }
+    for item in media.runtime_rows:
+        binding_id = str(item.get("binding_id") or "")
+        inventory = inventory_by_binding.get(binding_id, {})
+        rows.append(
+            {
+                "resource_id": str(item.get("resource_id") or ""),
+                "binding_id": binding_id,
+                "owner_id": str(item.get("owner_page_id") or ""),
+                "owner_type": _capacity_owner_type(item.get("owner_page_id")),
+                "category": str(item.get("entity_type") or ""),
+                "parent_id": str(item.get("parent_id") or ""),
+                "child_id": str(item.get("child_id") or ""),
+                "section": str(item.get("section") or ""),
+                "media_role": str(item.get("media_role") or ""),
+                "selection_priority": media_selection_priority(
+                    str(item.get("media_role") or "")
+                ),
+                "eligible": True,
+                "filename": str(item.get("filename") or ""),
+                "url": str(item.get("source_url") or ""),
+                "mime": str(item.get("mime") or ""),
+                "sha1": str(item.get("sha1") or ""),
+                "content_sha256": str(item.get("content_sha256") or ""),
+                "size": item.get("size"),
+                "local_relpath": str(inventory.get("local_relpath") or ""),
+                "object_key": str(item.get("object_key") or ""),
+                "download_status": "downloaded",
+                "local_present": True,
+                "source_refs": [dict(ref) for ref in item.get("source_refs") or ()],
+            }
+        )
+    for item in media.unresolved_intents:
+        planning = item.get("planning_evidence")
+        if isinstance(planning, Mapping):
+            rows.append(dict(planning))
+        elif str(item.get("planning_shortfall_reason") or ""):
+            source_binding_token = str(item.get("source_binding_token") or "")
+            rows.append(
+                {
+                    "resource_id": "",
+                    "binding_id": "planning-incomplete:sha256:"
+                    + hashlib.sha256(source_binding_token.encode("utf-8")).hexdigest(),
+                    "owner_id": str(item.get("owner_page_id") or ""),
+                    "owner_type": _capacity_owner_type(item.get("owner_page_id")),
+                    "media_role": str(item.get("media_role") or ""),
+                    "capacity_planning_incomplete": True,
+                    "planning_shortfall_reason": str(
+                        item.get("planning_shortfall_reason") or ""
+                    ),
+                }
+            )
+    return tuple(
+        sorted(
+            rows,
+            key=lambda item: (
+                str(item.get("resource_id") or ""),
+                str(item.get("binding_id") or ""),
+            ),
+        )
+    )
+
+
+def _capacity_inventory_rows(payload: Mapping[str, Any]) -> tuple[dict[str, Any], ...]:
+    objects = payload.get("objects")
+    if not isinstance(objects, list):
+        raise ValueError("MinIO inventory objects are missing")
+    return tuple(
+        {
+            "object_key": str(item.get("object_key") or ""),
+            "sha1": str(item.get("sha1") or ""),
+            "content_sha256": str(item.get("sha256") or ""),
+            "size": item.get("size"),
+        }
+        for item in objects
+        if isinstance(item, Mapping)
+    )
+
+
+def _projection_fingerprint(projection: Any) -> str:
+    payload = {
+        "parents": [item.to_json() for item in projection.parents],
+        "children": [item.to_json() for item in projection.children],
+        "media_intents": [item.to_json() for item in projection.media_intents],
+        "exclusions": [item.to_json() for item in projection.exclusions],
+        "record_links": [item.to_json() for item in projection.record_links],
+    }
+    return hashlib.sha256(
+        canonical_json_bytes(payload, trailing_newline=False)
+    ).hexdigest()
+
+
+def _capacity_owner_type(value: object) -> str:
+    return str(value or "").split(":", 1)[0].casefold() or "unknown"
+
+
+def _sanitized_mapping(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    allowed = {
+        "declared_width",
+        "declared_height",
+        "minimum_dimension_px",
+        "occurrence",
+        "heading_depth",
+        "selector_count",
+        "pageid",
+        "revid",
+        "source_line_number",
+    }
+    return {key: value[key] for key in sorted(value) if key in allowed}
 
 
 def _embedding_fingerprint(request: CorpusBuildRequest) -> str:
@@ -511,7 +933,7 @@ def _write_prebuild_blocked_result(
             _file_sha256(build_manifest) if build_manifest.is_file() else None
         ),
         "blockers": [blocker],
-        "failure_detail": detail,
+        "failure_detail": _public_failure_detail(blocker),
         "next_gate": "resolve_blockers_and_rebuild_under_new_version",
     }
     _write_create_new(run_dir / "candidate_result.v1.json", payload)
@@ -524,6 +946,12 @@ def _write_prebuild_blocked_result(
         blockers=(blocker,),
         row_counts={},
     )
+
+
+def _public_failure_detail(blocker: str) -> str:
+    if blocker == "source_recovery_invalid":
+        return "recovery evidence is unavailable or invalid"
+    return f"candidate gate did not pass: {_code(blocker)}"
 
 
 def _verified_file(path: Path, expected_sha256: str, label: str) -> tuple[Path, str]:
@@ -596,6 +1024,12 @@ def _write_create_new(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("xb") as handle:
         handle.write(canonical_json_bytes(payload))
+
+
+def _write_bytes_create_new(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("xb") as handle:
+        handle.write(data)
 
 
 def _reference(path: Path, digest: str, project_root: Path) -> dict[str, str]:

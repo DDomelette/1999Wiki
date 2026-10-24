@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 
 from src.rag.contracts import RetrievalOutcome, RouteAuthorization, RouteDecision
 from src.rag.query_plan import QueryPlan, requested_intents
+from src.rag.request_plan import PlannedSubtask
 
 
 def normalize_action_type(action_payload: Mapping[str, object] | None) -> str:
@@ -57,6 +58,59 @@ def authorize_route(
         semantic_intents=requested_intents(plan),
         proposed_route=proposed_route,
         allow_free_supplement_after_empty=allow_after_empty,
+        force_free_supplement=force,
+        authorization_reason=reason,
+    )
+
+
+def authorize_subtask(
+    subtask: PlannedSubtask,
+    route_options: Mapping[str, object] | None,
+    action_payload: Mapping[str, object] | None,
+) -> RouteAuthorization:
+    targeted_action = action_payload
+    target_id = str((action_payload or {}).get("subtask_id") or "").strip()
+    if target_id and target_id != subtask.subtask_id:
+        targeted_action = None
+
+    if subtask.task_type == "knowledge_base":
+        if subtask.query_plan is None:
+            raise ValueError("knowledge task requires QueryPlan")
+        return authorize_route(subtask.query_plan, route_options, targeted_action)
+
+    if subtask.task_type in {"assistant_meta", "social_smalltalk", "out_of_scope"}:
+        reason = {
+            "assistant_meta": "local_assistant_meta",
+            "social_smalltalk": "local_social_smalltalk",
+            "out_of_scope": "local_out_of_scope",
+        }[subtask.task_type]
+        return RouteAuthorization(
+            semantic_intents=(subtask.task_type,),
+            proposed_route="local_response",
+            allow_free_supplement_after_empty=False,
+            force_free_supplement=False,
+            authorization_reason=reason,
+        )
+
+    if subtask.task_type != "general_open":
+        raise ValueError("unsupported task type")
+    options = route_options or {}
+    force = normalize_action_type(targeted_action) == "force_free_supplement"
+    toggle = options.get("free_supplement") is True or options.get(
+        "freeSupplement"
+    ) is True
+    authorized = force or toggle
+    reason = (
+        "explicit_recovery_action"
+        if force
+        else "toggle_allows_empty_fallback"
+        if toggle
+        else "general_open_denied"
+    )
+    return RouteAuthorization(
+        semantic_intents=("general_open",),
+        proposed_route="llm_general" if authorized else "local_response",
+        allow_free_supplement_after_empty=False,
         force_free_supplement=force,
         authorization_reason=reason,
     )
@@ -115,9 +169,37 @@ def finalize_route(
     )
 
 
+def finalize_subtask_route(
+    authorization: RouteAuthorization,
+    outcome: RetrievalOutcome,
+) -> RouteDecision:
+    if authorization.proposed_route == "local_response":
+        return RouteDecision(
+            authorization,
+            "not_applicable",
+            "local_response",
+            authorization.authorization_reason,
+        )
+    if (
+        authorization.semantic_intents == ("general_open",)
+        and authorization.proposed_route == "llm_general"
+    ):
+        return RouteDecision(
+            authorization,
+            "not_applicable",
+            "llm_general",
+            authorization.authorization_reason,
+        )
+    if outcome == "not_applicable":
+        raise ValueError("knowledge task requires a retrieval outcome")
+    return finalize_route(authorization, outcome)
+
+
 __all__ = [
+    "authorize_subtask",
     "authorize_route",
     "classify_retrieval_outcome",
+    "finalize_subtask_route",
     "finalize_route",
     "normalize_action_type",
 ]

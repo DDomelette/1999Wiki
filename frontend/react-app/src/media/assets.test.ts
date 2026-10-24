@@ -38,6 +38,6 @@ describe('crawler category cover assets', () => {
   })
 
   it('falls back to the crawler-proven global background', () => {
-    expect(getCategoryCoverSrc('\u4e16\u754c')).toBe('/images/global-background.png')
+    expect(getCategoryCoverSrc('\u4e16\u754c')).toBe('/images/global-background.webp')
   })
 })

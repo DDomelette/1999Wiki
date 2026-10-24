@@ -1,4 +1,5 @@
 import { useUIStore } from '../../store/uiStore'
+import { navigateToMainSection } from '../../navigation/mainSectionNavigation'
 import { CategoryPanel } from './CategoryPanel'
 import './DataSection.css'
 
@@ -7,37 +8,50 @@ export function DataSection() {
   const currentCategory = useUIStore((s) => s.currentCategory)
 
   return (
-    <section data-snap-section="data" className="snap-section data-section">
-      {/* 内嵌 6 板块的滚动容器 */}
-      <div
-        className="native-scrollbar-hidden data-section__scroll"
-        data-testid="data-section-scroll"
-      >
-        {categoriesMeta.map((c) => (
-          <CategoryPanel key={c.key} meta={c} />
-        ))}
+    <section className="data-section" data-main-data-sequence>
+      {/* 覆盖整个资料序列的粘性分类导航 */}
+      <div className="data-section__nav-shell">
+        <nav className="data-section__nav" aria-label="资料分类">
+          {categoriesMeta.map((c) => {
+            const isActive = currentCategory === c.key
+            return (
+              <button
+                key={c.key}
+                className="data-section__nav-button"
+                data-active={isActive ? 'true' : undefined}
+                aria-current={isActive ? 'page' : undefined}
+                onClick={() => {
+                  const behavior: ScrollBehavior =
+                    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+                      ? 'auto'
+                      : 'smooth'
+                  navigateToMainSection({ kind: 'data', categoryKey: c.key }, { behavior, history: 'push' })
+                }}
+              >
+                {c.title}
+              </button>
+            )
+          })}
+        </nav>
       </div>
 
-      {/* 左侧固定板块导航 */}
-      <nav className="data-section__nav" aria-label="资料分类">
-        {categoriesMeta.map((c) => {
-          const isActive = currentCategory === c.key
-          return (
-            <button
-              key={c.key}
-              className="data-section__nav-button"
-              data-active={isActive ? 'true' : undefined}
-              aria-current={isActive ? 'page' : undefined}
-              onClick={() => {
-                const el = document.querySelector(`[data-snap-section="data:${c.key}"]`)
-                el?.scrollIntoView({ behavior: 'smooth' })
-              }}
-            >
-              {c.title}
-            </button>
-          )
-        })}
-      </nav>
+      {/* 资料分类直接作为主容器的吸附叶目标,不再拥有独立纵向滚动 */}
+      <div
+        className="native-scrollbar-hidden data-section__panels"
+        data-testid="data-section-scroll"
+      >
+        {categoriesMeta.length === 0 ? (
+          <section
+            className="snap-section category-panel data-section__loading-panel"
+            data-snap-section="data:loading"
+            aria-label="资料加载中"
+          >
+            <p>资料加载中…</p>
+          </section>
+        ) : (
+          categoriesMeta.map((c) => <CategoryPanel key={c.key} meta={c} />)
+        )}
+      </div>
     </section>
   )
 }

@@ -1,4 +1,5 @@
 -r runtime.in
+fonttools[woff]==4.62.1
 httpx==0.28.1
 packaging==26.2
 pip==25.2

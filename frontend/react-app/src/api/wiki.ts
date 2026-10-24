@@ -13,8 +13,8 @@ export class WikiApiError extends Error {
   }
 }
 
-export async function fetchJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
+export async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const res = signal ? await fetch(url, { signal }) : await fetch(url)
   if (!res.ok) throw new WikiApiError(res.status, url)
   return res.json() as Promise<T>
 }
@@ -34,7 +34,7 @@ export async function fetchWikiPages(params: {
   type?: string
   limit?: number
   cursor?: string
-} = {}): Promise<WikiPageListResponse> {
+} = {}, signal?: AbortSignal): Promise<WikiPageListResponse> {
   const search = new URLSearchParams()
   if (params.category) search.set('category', params.category)
   if (params.q) search.set('q', params.q)
@@ -42,7 +42,7 @@ export async function fetchWikiPages(params: {
   if (params.limit) search.set('limit', String(params.limit))
   if (params.cursor) search.set('cursor', params.cursor)
   const suffix = search.toString()
-  return fetchJson<WikiPageListResponse>(`/api/wiki/pages${suffix ? `?${suffix}` : ''}`)
+  return fetchJson<WikiPageListResponse>(`/api/wiki/pages${suffix ? `?${suffix}` : ''}`, signal)
 }
 
 export async function fetchWikiPage(pageId: string): Promise<WikiPageDetail> {

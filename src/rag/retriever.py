@@ -1,6 +1,8 @@
 """Retrieval orchestration for Huiji v3 child blocks."""
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Iterable
 
 from langchain_core.documents import Document
@@ -33,6 +35,13 @@ from src.rag.tracing import NullTrace, RequestTrace
 
 
 _ENTITY_FREE_INTENTS = frozenset({"general"})
+_VALID_RETRIEVAL_SCOPES = frozenset(
+    {"entity_strict", "topic_strict", "corpus_topic"}
+)
+_CORPUS_ENTITY_TYPES = frozenset({"topic", "story", "page"})
+_CORPUS_ROUTE_TAGS = frozenset({"general_game", "story", "plot", "lore", "definition"})
+_INVALID_ROUTE_TAGS = frozenset({"invalid_source", "alias_unverified"})
+_SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 _HUJI_RETRIEVAL_STAGES = (
     "retrieval.structured",
     "retrieval.bm25",
@@ -73,22 +82,28 @@ def require_huiji_runtime_source(cfg: Any) -> None:
         )
 
 
-def _sparse_query_for_plan(query: str, query_plan: QueryPlan | None) -> str:
-    if query_plan is None:
-        return query
-    explicit = str(getattr(query_plan, "sparse_query", "") or "").strip()
-    if explicit:
-        return explicit
+def build_sparse_query_segments(query_plan: QueryPlan) -> tuple[str, ...]:
     parts: list[str] = []
+    parts.append(query_plan.original_query)
+    parts.append(str(getattr(query_plan, "sparse_query", "") or ""))
     if query_plan.entity:
         parts.append(query_plan.entity)
     parts.extend(query_plan.aliases)
     parts.extend(query_plan.scatter_terms)
     if query_plan.intent in {"profile", "profile_fact", "intro"}:
         parts.extend(("角色资料", "基础资料"))
+    elif getattr(query_plan, "retrieval_scope", "entity_strict") == "corpus_topic":
+        parts.extend(("story", "剧情", "故事"))
     else:
         parts.extend(INTENT_SECTION_HINTS.get(query_plan.intent, ()))
-    return " ".join(_dedupe_nonempty(parts)) or query
+    parts.extend(query_plan.section_hints)
+    return tuple(_dedupe_nonempty(parts))
+
+
+def _sparse_query_for_plan(query: str, query_plan: QueryPlan | None) -> str:
+    if query_plan is None:
+        return query
+    return " ".join(build_sparse_query_segments(query_plan)) or query
 
 
 def _plan_mentions_youtium(plan: QueryPlan | None) -> bool:
@@ -168,6 +183,11 @@ def _row_to_result(row: dict[str, Any], stage: str) -> dict[str, Any]:
         "section_kind": str(row.get("section_kind", "")),
         "entity_type": str(row.get("entity_type", "")),
         "entity_id": str(row.get("entity_id", "")),
+        "entity_aliases": tuple(row.get("entity_aliases") or ()),
+        "owner_entity_id": str(row.get("owner_entity_id", "")),
+        "owner_page_id": str(row.get("owner_page_id", "")),
+        "route_tags": tuple(row.get("route_tags") or ()),
+        "source_refs": tuple(row.get("source_refs") or ()),
         "media_policy": str(row.get("media_policy", "")),
         "media_ids": tuple(row.get("media_ids") or ()),
         "debug": metadata_debug,
@@ -178,7 +198,10 @@ def _entity_ref_for_plan(plan: QueryPlan) -> EntityRef | None:
     entity_type = str(getattr(plan, "entity_type", None) or "").strip()
     entity_id = str(getattr(plan, "entity_id", None) or "").strip()
     entity_name = str(getattr(plan, "entity", None) or "").strip()
-    if not (entity_type and entity_id and entity_name):
+    if not (entity_type and entity_id):
+        return None
+    retrieval_scope = str(getattr(plan, "retrieval_scope", "entity_strict") or "")
+    if not entity_name and retrieval_scope != "topic_strict":
         return None
     return EntityRef(
         entity_type=entity_type,
@@ -189,9 +212,28 @@ def _entity_ref_for_plan(plan: QueryPlan) -> EntityRef | None:
     )
 
 
+def _metadata_json_array(value: Any, item_type: type) -> tuple[Any, ...]:
+    if isinstance(value, str):
+        serialized = value.strip()
+        if not serialized:
+            return ()
+        try:
+            value = json.loads(serialized)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return ()
+    if not isinstance(value, (list, tuple)):
+        return ()
+    if any(not isinstance(item, item_type) for item in value):
+        return ()
+    return tuple(value)
+
+
 def _doc_to_huiji_row(doc: Document, score: float, rank: int) -> dict[str, Any]:
     metadata = dict(doc.metadata)
     child_id = str(metadata.get("child_id") or metadata.get("id") or "")
+    source_refs = metadata.get("source_refs")
+    if source_refs is None:
+        source_refs = metadata.get("source_ref")
     return {
         "child_id": child_id,
         "parent_id": str(metadata.get("parent_id", "")),
@@ -204,13 +246,18 @@ def _doc_to_huiji_row(doc: Document, score: float, rank: int) -> dict[str, Any]:
         "text": doc.page_content,
         "search_text": str(metadata.get("search_text") or doc.page_content),
         "chunk_index": int(metadata.get("chunk_index", 0) or 0),
-        "media_ids": tuple(metadata.get("media_ids") or ()),
+        "media_ids": _metadata_json_array(metadata.get("media_ids"), str),
         "media_policy": str(metadata.get("media_policy", "")),
         "source": str(metadata.get("source") or metadata.get("parent_id") or ""),
         "heading_path": str(metadata.get("heading_path") or metadata.get("title") or ""),
         "entity_type": str(metadata.get("entity_type", "")),
-        "quality_flags": tuple(metadata.get("quality_flags") or ()),
-        "route_tags": tuple(metadata.get("route_tags") or ()),
+        "entity_aliases": _metadata_json_array(metadata.get("entity_aliases"), str),
+        "owner_entity_id": str(metadata.get("owner_entity_id", "")),
+        "owner_page_id": str(metadata.get("owner_page_id", "")),
+        "ancestor_ids": _metadata_json_array(metadata.get("ancestor_ids"), str),
+        "quality_flags": _metadata_json_array(metadata.get("quality_flags"), str),
+        "route_tags": _metadata_json_array(metadata.get("route_tags"), str),
+        "source_refs": _metadata_json_array(source_refs, dict),
         "vector_score": float(score),
         "dense_rank": rank,
     }
@@ -266,11 +313,19 @@ class Retriever:
 
     def _normalize_child_row(self, row: dict[str, Any]) -> dict[str, Any]:
         item = dict(row)
+        item.setdefault("text", item.get("content", ""))
         item.setdefault("name", item.get("entity_name", ""))
         item.setdefault("source", item.get("parent_id", ""))
         item.setdefault("heading_path", item.get("title", ""))
         item.setdefault("search_text", item.get("text", ""))
-        for key in ("media_ids", "quality_flags", "route_tags", "ancestor_ids"):
+        for key in (
+            "media_ids",
+            "quality_flags",
+            "route_tags",
+            "ancestor_ids",
+            "entity_aliases",
+            "source_refs",
+        ):
             value = item.get(key, ())
             if isinstance(value, list):
                 item[key] = tuple(value)
@@ -294,6 +349,11 @@ class Retriever:
 
         if query_plan is None:
             raise RetrievalExecutionError("retrieval.plan", "MissingQueryPlan")
+        retrieval_scope = str(
+            getattr(query_plan, "retrieval_scope", "entity_strict") or ""
+        )
+        if retrieval_scope not in _VALID_RETRIEVAL_SCOPES:
+            raise RetrievalExecutionError("retrieval.plan", "InvalidRetrievalScope")
         return self._search_huiji(query, top_k, query_plan, active_trace)
 
     def _search_huiji(
@@ -320,8 +380,13 @@ class Retriever:
         max_sources = min(max(0, top_k), max(1, configured_max_sources))
 
         intents = requested_intents(plan)
+        retrieval_scope = str(
+            getattr(plan, "retrieval_scope", "entity_strict") or "entity_strict"
+        )
         owner = _entity_ref_for_plan(plan)
         ownership_checks: list[OwnershipDiagnostics] = []
+        invalid_source_ids: set[str] = set()
+        unresolved_title_ids: set[str] = set()
         artifact_capability = str(
             getattr(getattr(self, "artifact_snapshot", None), "capability", "v3")
         )
@@ -331,7 +396,11 @@ class Retriever:
             artifact_capability,
         )
 
-        if owner is None and any(intent not in _ENTITY_FREE_INTENTS for intent in intents):
+        if (
+            retrieval_scope in {"entity_strict", "topic_strict"}
+            and owner is None
+            and any(intent not in _ENTITY_FREE_INTENTS for intent in intents)
+        ):
             targets = {
                 intent: max(1, int(policy.source_target))
                 for intent, policy in zip(bundle.requested_intents, bundle.policies)
@@ -363,12 +432,32 @@ class Retriever:
                 "missing_owner_metadata": 0,
                 "owner_shortfall": 0,
                 "unresolved_owner": True,
+                "invalid_source_refs": 0,
+                "unresolved_titles": 0,
             }
             return []
 
-        def owner_gate(rows: Iterable[dict[str, Any]], stage: str) -> list[dict[str, Any]]:
-            kept, diagnostics = filter_owned_rows(rows, owner, stage)
-            ownership_checks.append(diagnostics)
+        def scope_gate(rows: Iterable[dict[str, Any]], stage: str) -> list[dict[str, Any]]:
+            materialized = list(rows)
+            if retrieval_scope in {"entity_strict", "topic_strict"}:
+                kept, diagnostics = filter_owned_rows(materialized, owner, stage)
+                ownership_checks.append(diagnostics)
+            else:
+                kept = [
+                    row for row in materialized if self._is_corpus_topic_candidate(row)
+                ]
+            if retrieval_scope in {"topic_strict", "corpus_topic"}:
+                valid_rows: list[dict[str, Any]] = []
+                for row in kept:
+                    if not self._has_valid_source_refs(row):
+                        invalid_source_ids.add(_row_child_id(row))
+                        continue
+                    if not str(row.get("entity_name") or "").strip() and not str(
+                        row.get("heading_path") or row.get("title") or ""
+                    ).strip():
+                        unresolved_title_ids.add(_row_child_id(row))
+                    valid_rows.append(row)
+                return valid_rows
             return kept
 
         validate_target_parent(
@@ -381,7 +470,7 @@ class Retriever:
         structured_by_id: dict[str, dict[str, Any]] = {}
         with trace.span("retrieval.structured"):
             for intent, policy in zip(bundle.requested_intents, bundle.policies):
-                exact_rows = owner_gate([
+                exact_rows = scope_gate([
                     _tag_row_intents(row, (intent,))
                     for row in self._structured_rows_for_plan(plan, policy)
                 ], f"structured.{intent}")
@@ -413,12 +502,12 @@ class Retriever:
         )
         bm25_rows = list(structured_by_id.values())
         with trace.span("retrieval.bm25", candidate_k=candidate_k):
-            bm25_rows.extend(owner_gate(
+            bm25_rows.extend(scope_gate(
                 self._bm25_rows_for_plan(query, plan, candidate_k),
                 "bm25",
             ))
         with trace.span("retrieval.dense", candidate_k=candidate_k):
-            dense_rows = owner_gate(
+            dense_rows = scope_gate(
                 self._dense_rows_for_plan(query, plan, candidate_k),
                 "dense",
             )
@@ -435,7 +524,7 @@ class Retriever:
                     for intent, policy in zip(bundle.requested_intents, bundle.policies)
                 },
             )
-            ranked = owner_gate(
+            ranked = scope_gate(
                 [self._infer_matched_intents(row, bundle) for row in ranked],
                 "rrf",
             )
@@ -445,9 +534,10 @@ class Retriever:
                 ranked,
                 limit=max(rerank_k, candidate_k, required_source_count),
             )
-            ranked = owner_gate(ranked, "rerank")
+            ranked = scope_gate(ranked, "rerank")
+            ranked = self._prioritize_topic_rows(ranked, retrieval_scope)
         with trace.span("retrieval.expand", candidate_k=candidate_k):
-            expansion_children = owner_gate(
+            expansion_children = scope_gate(
                 [self._infer_matched_intents(row, bundle) for row in self._huiji_children],
                 "expand.candidates",
             )
@@ -460,7 +550,10 @@ class Retriever:
                 owner=owner,
                 semantic_intents=intents,
             )
-            expanded_sources = owner_gate(expanded.sources, "expand")
+            expanded_sources = self._prioritize_topic_rows(
+                scope_gate(expanded.sources, "expand"),
+                retrieval_scope,
+            )
         with trace.span("retrieval.allocate", candidate_k=candidate_k):
             allocation = allocate_sources(
                 expanded_sources,
@@ -471,7 +564,7 @@ class Retriever:
                 voice_page_size=voice_page_size,
                 owner=owner,
             )
-            allocated_sources = owner_gate(allocation.sources, "allocate")
+            allocated_sources = scope_gate(allocation.sources, "allocate")
         coverage_by_intent = {item.intent: item for item in allocation.coverage}
         entity_name = plan.entity or (
             str(ranked[0].get("entity_name") or ranked[0].get("name") or "") if ranked else ""
@@ -530,6 +623,8 @@ class Retriever:
                 }
                 for item in ownership_checks
             },
+            "invalid_source_refs": len(invalid_source_ids),
+            "unresolved_titles": len(unresolved_title_ids),
         }
         results = [_row_to_result(row, "huiji_hybrid") for row in allocated_sources]
         assert_packet_ownership(owner, results, ())
@@ -554,14 +649,31 @@ class Retriever:
         return filter_owned_rows(ranked, _entity_ref_for_plan(plan), "filter")[0]
 
     def _structured_rows_for_plan(self, plan: QueryPlan, policy: PacketPolicy) -> list[dict[str, Any]]:
-        if not plan.entity:
+        retrieval_scope = str(
+            getattr(plan, "retrieval_scope", "entity_strict") or "entity_strict"
+        )
+        if retrieval_scope == "entity_strict" and not plan.entity:
             return []
         target_parent_id = getattr(plan, "target_parent_id", None)
         rows: list[dict[str, Any]] = []
         for row in self._huiji_children:
-            if str(row.get("entity_name", "")) != plan.entity:
-                continue
-            if str(row.get("category", "")) != "character" and getattr(plan, "entity_type", None) == "character":
+            if retrieval_scope == "entity_strict":
+                if str(row.get("entity_name", "")) != plan.entity:
+                    continue
+                if (
+                    str(row.get("category", "")) != "character"
+                    and getattr(plan, "entity_type", None) == "character"
+                ):
+                    continue
+            elif retrieval_scope == "topic_strict":
+                if (
+                    str(row.get("entity_type", ""))
+                    != str(getattr(plan, "entity_type", None) or "")
+                    or str(row.get("entity_id", ""))
+                    != str(getattr(plan, "entity_id", None) or "")
+                ):
+                    continue
+            elif not self._is_corpus_topic_candidate(row):
                 continue
             if target_parent_id and str(row.get("parent_id", "")) != target_parent_id:
                 continue
@@ -575,6 +687,87 @@ class Retriever:
             item["debug"] = debug
             rows.append(item)
         return rows
+
+    @staticmethod
+    def _is_corpus_topic_candidate(row: dict[str, Any]) -> bool:
+        entity_type = str(row.get("entity_type", "")).strip()
+        route_tags = {
+            str(tag).strip() for tag in tuple(row.get("route_tags") or ()) if str(tag).strip()
+        }
+        if route_tags & _INVALID_ROUTE_TAGS:
+            return False
+        return entity_type in _CORPUS_ENTITY_TYPES or bool(
+            route_tags & _CORPUS_ROUTE_TAGS
+        )
+
+    @staticmethod
+    def _has_valid_source_refs(row: dict[str, Any]) -> bool:
+        source_refs = row.get("source_refs")
+        if not isinstance(source_refs, (list, tuple)) or not source_refs:
+            return False
+        for source_ref in source_refs:
+            if not isinstance(source_ref, dict):
+                return False
+            required = (
+                "source_kind",
+                "source_title",
+                "source_row_id",
+                "source_content_sha256",
+            )
+            if any(not str(source_ref.get(key, "")).strip() for key in required):
+                return False
+            if _SHA256_PATTERN.fullmatch(
+                str(source_ref.get("source_content_sha256", "")).strip()
+            ) is None:
+                return False
+        return True
+
+    @staticmethod
+    def _prioritize_topic_rows(
+        rows: Iterable[dict[str, Any]],
+        retrieval_scope: str,
+    ) -> list[dict[str, Any]]:
+        materialized = list(rows)
+        if retrieval_scope not in {"topic_strict", "corpus_topic"}:
+            return materialized
+        ranked = sorted(
+            enumerate(materialized),
+            key=lambda item: (
+                0
+                if (
+                    str(item[1].get("entity_type", "")) in {"topic", "story"}
+                    or "definition" in tuple(item[1].get("route_tags") or ())
+                )
+                else 1,
+                item[0],
+            ),
+        )
+        retained: list[dict[str, Any]] = []
+        deferred: list[dict[str, Any]] = []
+        seen_parents: set[str] = set()
+        page_counts: dict[str, int] = {}
+        for _, row in ranked:
+            owner_page_id = str(
+                row.get("owner_page_id") or row.get("parent_id") or ""
+            )
+            if page_counts.get(owner_page_id, 0) >= 2:
+                continue
+            parent_id = str(row.get("parent_id") or "")
+            if parent_id and parent_id in seen_parents:
+                deferred.append(row)
+                continue
+            retained.append(row)
+            seen_parents.add(parent_id)
+            page_counts[owner_page_id] = page_counts.get(owner_page_id, 0) + 1
+        for row in deferred:
+            owner_page_id = str(
+                row.get("owner_page_id") or row.get("parent_id") or ""
+            )
+            if page_counts.get(owner_page_id, 0) >= 2:
+                continue
+            retained.append(row)
+            page_counts[owner_page_id] = page_counts.get(owner_page_id, 0) + 1
+        return retained
 
     def _bm25_rows_for_plan(self, query: str, plan: QueryPlan, limit: int) -> list[dict[str, Any]]:
         sparse_query = _sparse_query_for_plan(query, plan)

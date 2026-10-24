@@ -91,6 +91,15 @@ export interface MemoryInfo {
   rewrite_mode: 'none' | 'planner' | 'fallback'
 }
 
+export type StreamPhase =
+  | 'understanding'
+  | 'retrieving'
+  | 'generating'
+  | 'validating'
+  | 'corrected'
+  | 'cancelled'
+  | 'failed'
+
 export interface VoiceLineGroup {
   voice_line_id: string
   title: string
@@ -150,6 +159,15 @@ export interface Message {
   memory?: MemoryInfo
   streaming?: boolean
   status?: string
+  phase?: StreamPhase
+  finalized?: boolean
+  corrected?: boolean
+  correctionNotice?: boolean
+  partialError?: boolean
+  pendingSources?: SourceItem[]
+  pendingAssets?: AssetItem[]
+  pendingMedia?: MediaItem[]
+  pendingMediaPanels?: MediaPanel[]
 }
 
 export type Theme = 'storm-dark' | 'manuscript-gold' | 'cold-archive'

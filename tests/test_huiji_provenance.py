@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -25,7 +26,11 @@ from src.huiji_rag.provenance import (
     verify_runtime,
     safe_relative_path,
     write_hash_pinned_json,
+    _compare_bm25_fingerprint,
 )
+from src.huiji_rag.build.artifact_writer import _analyzer_probe_sha256
+from src.rag.chinese_analyzer import ChineseBM25Analyzer
+from src.rag.sparse import canonical_child_corpus_sha256
 from src.rag.vectorstore import HUIJI_BUSINESS_FIELDS, huiji_child_to_business_row
 from scripts.audit_huiji_provenance import main as audit_cli_main
 from scripts.verify_huiji_runtime import main as runtime_cli_main
@@ -158,6 +163,11 @@ def test_bm25_fingerprint_requires_semantic_equality_with_source_rows(tmp_path: 
 
     assert fingerprint.row_count == 2
     assert len(fingerprint.semantic_sha256) == 64
+    assert fingerprint.payload_schema == "records-only"
+    assert fingerprint.analyzer_schema == "legacy-regex/v1"
+    assert fingerprint.analyzer_name == "legacy-regex"
+    assert fingerprint.segmenter_name == "regex"
+    assert (fingerprint.k1, fingerprint.b) == (1.5, 0.75)
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["records"][0]["text"] = "changed"
@@ -188,6 +198,248 @@ def test_bm25_fingerprint_rejects_derived_id_mismatch(tmp_path: Path):
             source_id_field="child_id",
         )
     assert error.value.code == "bm25_id_mismatch"
+
+
+def _write_new_child_bm25(path: Path, rows, analyzer=None) -> dict:
+    selected = analyzer or ChineseBM25Analyzer()
+    ids = [row["child_id"] for row in rows]
+    payload = {
+        "schema_version": "huiji.bm25-index/v3",
+        "record_kind": "child",
+        "analyzer": selected.identity.to_dict(),
+        "bm25": {"k1": 1.2, "b": 0.4},
+        "id_field": "child_id",
+        "row_count": len(rows),
+        "ordered_ids_sha256": hashlib.sha256(
+            "".join(f"{value}\n" for value in sorted(ids)).encode("utf-8")
+        ).hexdigest(),
+        "semantic_corpus_sha256": canonical_child_corpus_sha256(rows),
+        "analyzer_fingerprint_sha256": selected.identity.fingerprint_sha256,
+        "analyzer_probe_sha256": _analyzer_probe_sha256(selected),
+        "records": [dict(row) for row in rows],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return payload
+
+
+def test_new_bm25_fingerprint_contains_complete_analyzer_and_parameters(tmp_path: Path):
+    rows = [
+        {
+            "child_id": "char:1/profile:1",
+            "parent_id": "char:1/profile",
+            "text": "槲寄生的基础资料",
+            "search_text": "槲寄生 基础资料",
+        }
+    ]
+    path = tmp_path / "child_bm25.json"
+    payload = _write_new_child_bm25(path, rows)
+
+    fingerprint = fingerprint_bm25(
+        path,
+        project_root=tmp_path,
+        source_rows=rows,
+        source_id_field="child_id",
+    )
+
+    assert fingerprint.payload_schema == "huiji.bm25-index/v3"
+    assert fingerprint.analyzer_schema == "rag.bm25-analyzer/v1"
+    assert fingerprint.analyzer_name == "zh-domain-word-bigram"
+    assert fingerprint.analyzer_version == "1"
+    assert fingerprint.analyzer_fingerprint_sha256 == payload["analyzer"][
+        "fingerprint_sha256"
+    ]
+    assert fingerprint.config_sha256 == payload["analyzer"]["config_sha256"]
+    assert fingerprint.dictionary_sha256 == payload["analyzer"]["dictionary_sha256"]
+    assert fingerprint.segmenter_name == "jieba"
+    assert fingerprint.segmenter_version == "0.42.1"
+    assert fingerprint.segmenter_hmm is False
+    assert fingerprint.analyzer_probe_sha256 == payload["analyzer_probe_sha256"]
+    assert (fingerprint.k1, fingerprint.b) == (1.2, 0.4)
+
+    changed_path = tmp_path / "changed_child_bm25.json"
+    changed_payload = _write_new_child_bm25(
+        changed_path,
+        rows,
+        analyzer=ChineseBM25Analyzer(extra_terms=("额外身份术语",)),
+    )
+    changed = fingerprint_bm25(
+        changed_path,
+        project_root=tmp_path,
+        source_rows=rows,
+        source_id_field="child_id",
+    )
+    assert changed.sha256 != fingerprint.sha256
+    assert changed.dictionary_sha256 != fingerprint.dictionary_sha256
+    assert changed.analyzer_fingerprint_sha256 != fingerprint.analyzer_fingerprint_sha256
+    assert (
+        changed_payload["semantic_corpus_sha256"]
+        == payload["semantic_corpus_sha256"]
+    )
+
+
+def test_media_v4_and_explicit_legacy_schemas_have_complete_frozen_identity(
+    tmp_path: Path,
+):
+    analyzer = ChineseBM25Analyzer()
+    media_rows = [{"binding_id": "binding:1", "search_text": "今夜星光灿烂"}]
+    media_path = tmp_path / "media.json"
+    media_semantic = hashlib.sha256(
+        canonical_json_bytes(media_rows[0])
+    ).hexdigest()
+    media_payload = {
+        "schema_version": "huiji.media-binding-bm25/v4",
+        "record_kind": "media_binding",
+        "analyzer": analyzer.identity.to_dict(),
+        "bm25": {"k1": 1.5, "b": 0.75},
+        "id_field": "binding_id",
+        "row_count": 1,
+        "ordered_ids_sha256": hashlib.sha256(b"binding:1\n").hexdigest(),
+        "semantic_corpus_sha256": media_semantic,
+        "analyzer_fingerprint_sha256": analyzer.identity.fingerprint_sha256,
+        "analyzer_probe_sha256": _analyzer_probe_sha256(analyzer),
+        "records": media_rows,
+    }
+    media_path.write_text(json.dumps(media_payload, ensure_ascii=False), encoding="utf-8")
+    media = fingerprint_bm25(
+        media_path,
+        project_root=tmp_path,
+        source_rows=media_rows,
+        source_id_field="media_id",
+    )
+    assert media.payload_schema == "huiji.media-binding-bm25/v4"
+    assert media.analyzer_schema == "rag.bm25-analyzer/v1"
+
+    for schema_version in (
+        "huiji.bm25-index/v2",
+        "huiji.media-binding-bm25/v3",
+    ):
+        legacy_path = tmp_path / f"{schema_version.rsplit('/', 1)[-1]}.json"
+        source = [{"source_id": "legacy:1", "text": "legacy"}]
+        legacy_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": schema_version,
+                    "records": [{"id": "legacy:1", **source[0]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        legacy = fingerprint_bm25(
+            legacy_path,
+            project_root=tmp_path,
+            source_rows=source,
+            source_id_field="source_id",
+        )
+        assert legacy.payload_schema == schema_version
+        assert legacy.analyzer_schema == "legacy-regex/v1"
+
+
+@pytest.mark.parametrize("mutation", ("missing_analyzer", "unknown_schema", "bad_hash"))
+def test_new_bm25_fingerprint_fails_closed_without_record_leakage(
+    tmp_path: Path,
+    mutation: str,
+):
+    rows = [{"child_id": "secret-id", "text": "private-query-text"}]
+    path = tmp_path / "child_bm25.json"
+    payload = _write_new_child_bm25(path, rows)
+    if mutation == "missing_analyzer":
+        payload.pop("analyzer")
+    elif mutation == "unknown_schema":
+        payload["schema_version"] = "huiji.bm25-index/v99"
+    else:
+        payload["analyzer"]["fingerprint_sha256"] = "0" * 64
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(ProvenanceValidationError) as error:
+        fingerprint_bm25(
+            path,
+            project_root=tmp_path,
+            source_rows=rows,
+            source_id_field="child_id",
+        )
+
+    assert error.value.code == "baseline_invalid"
+    assert "secret-id" not in str(error.value)
+    assert "private-query-text" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "issue_code"),
+    (
+        ("payload_schema", "other/v1", "bm25_schema_mismatch"),
+        ("analyzer_fingerprint_sha256", "0" * 64, "bm25_analyzer_mismatch"),
+        ("analyzer_name", "other", "bm25_analyzer_mismatch"),
+        ("config_sha256", "0" * 64, "bm25_config_mismatch"),
+        ("dictionary_sha256", "0" * 64, "bm25_dictionary_mismatch"),
+        ("segmenter_version", "99", "bm25_segmenter_mismatch"),
+        ("k1", 9.0, "bm25_parameters_mismatch"),
+        ("b", 0.0, "bm25_parameters_mismatch"),
+    ),
+)
+def test_bm25_identity_drift_has_distinct_issue_codes(
+    tmp_path: Path,
+    field: str,
+    value,
+    issue_code: str,
+):
+    rows = [{"child_id": "c1", "text": "十四行诗"}]
+    path = tmp_path / "child_bm25.json"
+    _write_new_child_bm25(path, rows)
+    actual = fingerprint_bm25(
+        path,
+        project_root=tmp_path,
+        source_rows=rows,
+        source_id_field="child_id",
+    )
+    expected = actual.to_json()
+    expected[field] = value
+
+    issues = _compare_bm25_fingerprint("child_bm25", expected, actual)
+
+    assert issue_code in {issue.code for issue in issues}
+
+
+def test_legacy_baseline_missing_new_identity_fields_is_synthesized_only_for_legacy(
+    tmp_path: Path,
+):
+    rows = [{"child_id": "c1", "text": "legacy"}]
+    legacy_path = tmp_path / "legacy.json"
+    legacy_path.write_text(
+        json.dumps({"records": [{"id": "c1", **rows[0]}]}),
+        encoding="utf-8",
+    )
+    legacy = fingerprint_bm25(
+        legacy_path,
+        project_root=tmp_path,
+        source_rows=rows,
+        source_id_field="child_id",
+    )
+    old_expected = {
+        key: value
+        for key, value in legacy.to_json().items()
+        if key in {
+            "relative_path",
+            "sha256",
+            "size_bytes",
+            "row_count",
+            "ids_sha256",
+            "semantic_sha256",
+        }
+    }
+    assert _compare_bm25_fingerprint("child_bm25", old_expected, legacy) == []
+
+    new_path = tmp_path / "new.json"
+    _write_new_child_bm25(new_path, rows)
+    new = fingerprint_bm25(
+        new_path,
+        project_root=tmp_path,
+        source_rows=rows,
+        source_id_field="child_id",
+    )
+    assert "bm25_schema_mismatch" in {
+        issue.code
+        for issue in _compare_bm25_fingerprint("child_bm25", old_expected, new)
+    }
 
 
 def test_public_verification_payload_sanitizes_paths_secrets_and_source_text():

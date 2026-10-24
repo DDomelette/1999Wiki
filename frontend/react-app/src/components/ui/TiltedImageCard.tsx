@@ -102,6 +102,7 @@ export function TiltedImageCard({
           src={src}
           alt={alt}
           loading="lazy"
+          decoding="async"
           style={{
             display: 'block',
             maxWidth: '100%',

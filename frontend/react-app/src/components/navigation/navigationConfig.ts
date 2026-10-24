@@ -1,13 +1,21 @@
 import type { CategoryMeta } from '../../types'
 import type { WikiCategoryItem } from '../../types/wiki'
 import type { CardNavGroup } from '../animations/reactbits/CardNav'
+import { navigateToMainSection } from '../../navigation/mainSectionNavigation'
+import type { MainRouteTarget } from '../../navigation/mainSectionNavigation'
 
-const jump = (target: string) => () => document.querySelector(`[data-snap-section="${target}"]`)?.scrollIntoView({ behavior: 'smooth' })
+const mainAction = (target: MainRouteTarget) => () => {
+  const behavior: ScrollBehavior =
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+      ? 'auto'
+      : 'smooth'
+  navigateToMainSection(target, { behavior, history: 'push' })
+}
 
 export function mainNavigation(categories: CategoryMeta[]): CardNavGroup[] {
   return [
-    { label: '页面', links: [{ label: '首页', action: jump('home') }, { label: '资料', action: jump('data') }, { label: '问答', action: jump('chat') }] },
-    { label: '资料', links: categories.map((item) => ({ label: `${item.title} ${item.doc_count}`, action: jump(`data:${item.key}`) })) },
+    { label: '页面', links: [{ label: '首页', action: mainAction({ kind: 'home' }) }, { label: '资料', action: mainAction({ kind: 'data' }) }, { label: '问答', action: mainAction({ kind: 'chat' }) }] },
+    { label: '资料', links: categories.map((item) => ({ label: `${item.title} ${item.doc_count}`, action: mainAction({ kind: 'data', categoryKey: item.key }) })) },
     { label: '项目', links: [{ label: '官方网站', href: 'https://re.bluepoch.com/home/' }, { label: '数据状态', href: '/health' }, { label: 'Wiki', href: '/wiki/character' }] },
   ]
 }

@@ -2,8 +2,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 
-from src.huiji_rag.build.projection import project_crawler_semantics
+import pytest
+
+from src.huiji_rag.build.projection import (
+    CorpusProjection,
+    compose_corpus_projection,
+    project_crawler_semantics,
+    validate_corpus_projection,
+)
+from src.huiji_rag.build.wikitext_projection import (
+    PageChildProjection,
+    PageDiagnostic,
+    PageParentProjection,
+    PageProjection,
+    PageSectionProjection,
+)
 
 
 def _row(title: str, content: dict[str, object], *, revid: int = 1) -> dict[str, object]:
@@ -96,6 +111,188 @@ def _character() -> dict[str, object]:
             }
         ],
     }
+
+
+def _empty_projection() -> CorpusProjection:
+    return CorpusProjection(
+        parents=(),
+        children=(),
+        voice_sources=(),
+        media_intents=(),
+        exclusions=(),
+        identity_fallbacks=(),
+        record_links=(),
+    )
+
+
+def _chunked_page_projection() -> PageProjection:
+    source_row_id = "wikitext:7:11:100:5100"
+    source_ref = {
+        "source_kind": "crawler_wikitext",
+        "source_title": "Chunk Fixture",
+        "source_content_sha256": "a" * 64,
+        "source_row_id": source_row_id,
+        "pageid": 7,
+        "revid": 11,
+        "char_start": 100,
+        "char_end": 5100,
+    }
+    child_ids = (
+        "page:7/section:lead/chunk:0000",
+        "page:7/section:lead/chunk:0001",
+    )
+    children = tuple(
+        PageChildProjection(
+            category="page",
+            entity_type="page",
+            entity_id="page:7",
+            entity_name="Chunk Fixture",
+            entity_aliases=(),
+            owner_entity_id="page:7",
+            owner_page_id="page:7",
+            route_tags=("page",),
+            parent_id="page:7/section:lead",
+            child_id=child_id,
+            heading_path=("lead",),
+            section_kind="lead",
+            content=f"Chunk {index}",
+            text=f"Chunk {index}",
+            search_text=f"Chunk Fixture Chunk {index}",
+            source_refs=(dict(source_ref),),
+            quality_flags=(),
+            content_hash=hashlib.sha256(f"Chunk {index}".encode()).hexdigest(),
+        )
+        for index, child_id in enumerate(child_ids)
+    )
+    return PageProjection(
+        pages=(
+            PageParentProjection(
+                parent_id="page:7",
+                entity_id="page:7",
+                entity_name="Chunk Fixture",
+                entity_aliases=(),
+                child_ids=(),
+                source_refs=(dict(source_ref),),
+                content_hash="b" * 64,
+            ),
+        ),
+        sections=(
+            PageSectionProjection(
+                parent_id="page:7/section:lead",
+                root_parent_id="page:7",
+                heading_path=("lead",),
+                child_ids=child_ids,
+                source_refs=(dict(source_ref),),
+            ),
+        ),
+        children=children,
+        image_references=(),
+        media_intents=(),
+        redirects=(),
+        diagnostics=(),
+        exclusions=(),
+    )
+
+
+def test_page_chunks_qualify_shared_source_span_with_stable_chunk_identity() -> None:
+    page_projection = _chunked_page_projection()
+
+    first = compose_corpus_projection(_empty_projection(), page_projection)
+    second = compose_corpus_projection(_empty_projection(), page_projection)
+
+    assert [child.stable_source_token for child in first.children] == [
+        "wikitext:7:11:100:5100:chunk:0000",
+        "wikitext:7:11:100:5100:chunk:0001",
+    ]
+    assert [child.source_token_kind for child in first.children] == [
+        "crawler_wikitext_span",
+        "crawler_wikitext_span",
+    ]
+    assert {
+        child.block.source_refs[0]["source_row_id"] for child in first.children
+    } == {"wikitext:7:11:100:5100"}
+    assert [child.stable_source_token for child in second.children] == [
+        child.stable_source_token for child in first.children
+    ]
+
+
+def test_true_duplicate_page_chunk_remains_fail_closed() -> None:
+    page_projection = _chunked_page_projection()
+    duplicate = page_projection.children[0]
+    invalid = replace(
+        page_projection,
+        children=(duplicate, duplicate),
+        sections=(
+            replace(
+                page_projection.sections[0],
+                child_ids=(duplicate.child_id, duplicate.child_id),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="duplicate child IDs"):
+        compose_corpus_projection(_empty_projection(), invalid)
+
+
+def test_repeated_heading_exclusions_use_deterministic_occurrence_source_identity() -> None:
+    page_projection = _chunked_page_projection()
+    source_hash = page_projection.children[0].source_refs[0]["source_content_sha256"]
+    diagnostics = (
+        PageDiagnostic(
+            reason_code="duplicate_heading_path_occurrence",
+            pageid=7,
+            source_title="Chunk Fixture",
+            revid=11,
+            source_content_sha256=source_hash,
+            char_start=120,
+            char_end=130,
+            heading_path=("lead",),
+        ),
+        PageDiagnostic(
+            reason_code="duplicate_heading_path_occurrence",
+            pageid=7,
+            source_title="Chunk Fixture",
+            revid=11,
+            source_content_sha256=source_hash,
+            char_start=220,
+            char_end=230,
+            heading_path=("lead",),
+        ),
+    )
+    diagnostic_projection = replace(page_projection, diagnostics=diagnostics)
+
+    first = compose_corpus_projection(_empty_projection(), diagnostic_projection)
+    second = compose_corpus_projection(_empty_projection(), diagnostic_projection)
+    exclusions = [
+        item
+        for item in first.exclusions
+        if item.reason_code == "duplicate_heading_path_occurrence"
+    ]
+
+    assert len(exclusions) == 2
+    assert len({item.source_identity for item in exclusions}) == 2
+    assert [item.source_identity for item in exclusions] == [
+        item.source_identity
+        for item in second.exclusions
+        if item.reason_code == "duplicate_heading_path_occurrence"
+    ]
+    assert {
+        (
+            item.source_title,
+            item.source_content_sha256,
+            item.details["pageid"],
+            item.details["revid"],
+            item.details["char_start"],
+            item.details["char_end"],
+            tuple(item.details["heading_path"]),
+        )
+        for item in exclusions
+    } == {
+        ("Chunk Fixture", source_hash, 7, 11, 120, 130, ("lead",)),
+        ("Chunk Fixture", source_hash, 7, 11, 220, 230, ("lead",)),
+    }
+    assert all("Chunk 0" not in str(item.to_json()) for item in exclusions)
+    assert all("Chunk 1" not in str(item.to_json()) for item in exclusions)
 
 
 def test_projection_builds_canonical_sections_ids_and_business_fields() -> None:
@@ -197,6 +394,84 @@ def test_skill_and_ultimate_ids_are_separate_namespaces() -> None:
     links = {item.legacy_id for item in projection.record_links}
     assert "char:7/skill:7131" in links
     assert "char:7/ultimate:7131" in links
+
+
+def _shared_skill_character(entity_id: int) -> dict[str, object]:
+    return {
+        "id": entity_id,
+        "name": f"Character {entity_id}",
+        "skill": {
+            "normal": {
+                "id": 30030111,
+                "icon": 30030111,
+                "name": "Shared Skill",
+                "skillRank": 1,
+                "desc_art": "Shared skill description.",
+            },
+            "ultimate": {
+                "id": 30030131,
+                "icon": 30030131,
+                "name": "Shared Ultimate",
+                "skillRank": 0,
+                "desc_art": "Shared ultimate description.",
+            },
+        },
+    }
+
+
+def test_shared_skill_assets_use_owner_qualified_relation_tokens() -> None:
+    rows = [
+        _row("Data:Char/3003.json", _shared_skill_character(3003), revid=30030),
+        _row("Data:Char/9999.json", _shared_skill_character(9999), revid=99990),
+    ]
+
+    first = project_crawler_semantics(rows)
+    second = project_crawler_semantics(rows)
+    validate_corpus_projection(first)
+
+    expected = {
+        "skill:char:3003:30030111:30030111",
+        "ultimate:char:3003:30030131:30030131",
+        "skill:char:9999:30030111:30030111",
+        "ultimate:char:9999:30030131:30030131",
+    }
+    skill_intents = [
+        intent for intent in first.media_intents if intent.media_role == "skill"
+    ]
+    assert {intent.source_binding_token for intent in skill_intents} == expected
+    assert {intent.resource_stem for intent in skill_intents} == {
+        "Skill-30030111",
+        "Skill-30030131",
+    }
+    children = {
+        child.block.child_id: child
+        for child in first.children
+        if child.block.section_kind == "skill"
+    }
+    assert all(
+        children[intent.child_id].media_binding_tokens
+        == (intent.source_binding_token,)
+        for intent in skill_intents
+    )
+    assert [
+        intent.source_binding_token
+        for intent in second.media_intents
+        if intent.media_role == "skill"
+    ] == [intent.source_binding_token for intent in skill_intents]
+
+
+def test_true_duplicate_skill_media_relation_remains_fail_closed() -> None:
+    projection = project_crawler_semantics(
+        [_row("Data:Char/3003.json", _shared_skill_character(3003))]
+    )
+    intent = next(
+        item for item in projection.media_intents if item.media_role == "skill"
+    )
+
+    with pytest.raises(ValueError, match="duplicate media source identities"):
+        validate_corpus_projection(
+            replace(projection, media_intents=(*projection.media_intents, intent))
+        )
 
 
 def test_voice_projection_groups_duplicate_event_occurrences_and_keeps_evidence() -> None:
@@ -323,3 +598,171 @@ def test_projection_dynamically_excludes_invalid_characters() -> None:
     }
     assert {item.entity_id for item in projection.parents if item.category == "character"} == {"4"}
     assert all(len(item.source_identity) == 64 for item in projection.exclusions)
+
+
+def test_json_valid_false_wrapper_emits_excluded_evidence_without_parsing_content(
+    monkeypatch,
+) -> None:
+    valid = _row(
+        "Data:Item/41.json",
+        {"id": 41, "name": "有效邻居", "description": "仍然投影。"},
+    )
+    invalid_content = '{"id":"must-not-project",'
+    invalid = {
+        "site": "res1999",
+        "pageid": 9001,
+        "revid": 9002,
+        "title": "Data:Story/invalid.json",
+        "content": invalid_content,
+        "content_sha256": hashlib.sha256(invalid_content.encode()).hexdigest(),
+        "json_valid": False,
+        "json_error": "fixture invalid payload",
+        "__source_file": "data_pages.jsonl",
+        "__source_line_number": 2,
+    }
+    real_loads = json.loads
+
+    def guarded_loads(value, *args, **kwargs):
+        if value == invalid_content:
+            raise AssertionError("invalid wrapper content must never be parsed")
+        return real_loads(value, *args, **kwargs)
+
+    monkeypatch.setattr(json, "loads", guarded_loads)
+
+    projection = project_crawler_semantics([valid, invalid])
+
+    assert [item.reason_code for item in projection.exclusions] == [
+        "invalid_data_wrapper"
+    ]
+    exclusion = projection.exclusions[0]
+    assert exclusion.source_title == "Data:Story/invalid.json"
+    assert exclusion.details == {
+        "json_error": "fixture invalid payload",
+        "pageid": 9001,
+        "revid": 9002,
+        "source_file": "data_pages.jsonl",
+        "source_line_number": 2,
+    }
+    assert all(item.entity_id != "must-not-project" for item in projection.parents)
+    assert all(
+        item.block.entity_id != "must-not-project" for item in projection.children
+    )
+    assert not projection.media_intents
+    assert any(item.entity_id == "41" for item in projection.parents)
+
+
+def test_story_stage_replaces_generic_story_profile_projection() -> None:
+    rows = [
+        _row(
+            "Data:Story/304502.json",
+            {
+                "info": {"title": "Natural Story Name"},
+                "steps": [
+                    {
+                        "id": "opening",
+                        "speaker": "Vertin",
+                        "text": "The story text survives.",
+                        "background": "missing/background.png",
+                    }
+                ]
+            },
+        ),
+    ]
+
+    projection = project_crawler_semantics(rows)
+    story_parent = next(
+        parent for parent in projection.parents if parent.entity_type == "story"
+    )
+    story_children = [
+        child for child in projection.children if child.block.entity_type == "story"
+    ]
+
+    assert story_parent.parent_id == "story:304502/story"
+    assert story_parent.entity_name == "Natural Story Name"
+    assert [child.block.child_id for child in story_children] == [
+        "story:304502/story/step-opening"
+    ]
+    assert story_children[0].block.content == "Vertin: The story text survives."
+    assert story_children[0].owner_entity_id == "story:304502"
+    assert story_children[0].block.source_refs[0]["json_path"] == "$.steps.0"
+    assert all(
+        parent.parent_id != "story:304502/profile" for parent in projection.parents
+    )
+
+
+@pytest.mark.parametrize(
+    ("story_id", "payload", "reason_code", "structure_kind"),
+    (
+        ("8100", {}, "empty_story", "empty_object"),
+        (
+            "8101",
+            {
+                "1": {
+                    "step": [],
+                    "type": 0,
+                    "name": ["Hidden narrator"],
+                    "show_name": False,
+                    "text": [""],
+                    "choice": [],
+                }
+            },
+            "control_only_story",
+            "control_only",
+        ),
+    ),
+    ids=("empty-object", "numeric-control-only"),
+)
+def test_control_only_story_emits_one_proven_exclusion_without_text_identity(
+    story_id: str,
+    payload: dict[str, object],
+    reason_code: str,
+    structure_kind: str,
+) -> None:
+    row = _row(f"Data:Story/{story_id}.json", payload, revid=81)
+
+    first = project_crawler_semantics([row])
+    second = project_crawler_semantics([row])
+
+    assert first.parents == ()
+    assert first.children == ()
+    assert first.record_links == ()
+    assert len(first.exclusions) == 1
+    exclusion = first.exclusions[0]
+    assert exclusion.reason_code == reason_code
+    assert exclusion.source_title == row["title"]
+    assert exclusion.source_content_sha256 == row["content_sha256"]
+    assert exclusion.entity_id == story_id
+    assert exclusion.json_path == "$"
+    assert exclusion.details["revid"] == 81
+    assert exclusion.details["story_structure_kind"] == structure_kind
+    assert exclusion.details["visible_story_atom_count"] == 0
+    assert first.exclusions == second.exclusions
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"1": {"dialogue": "Visible dialogue"}},
+        {"1": {"choices": ["Visible choice"]}},
+        {"1": {"scene": "Visible scene"}},
+        {"1": {"subtitle": ["Unsupported potential caption"]}},
+    ),
+    ids=("dialogue", "choice", "scene", "unsupported-potentially-visible"),
+)
+def test_visible_or_potentially_visible_story_cannot_emit_control_only_exclusion(
+    payload: dict[str, object],
+) -> None:
+    projection = project_crawler_semantics(
+        [_row("Data:Story/8102.json", payload, revid=82)]
+    )
+
+    assert all(
+        exclusion.reason_code not in {"empty_story", "control_only_story"}
+        for exclusion in projection.exclusions
+    )
+    if "subtitle" not in payload["1"]:
+        assert projection.parents
+        assert projection.children
+    else:
+        assert projection.parents == ()
+        assert projection.children == ()

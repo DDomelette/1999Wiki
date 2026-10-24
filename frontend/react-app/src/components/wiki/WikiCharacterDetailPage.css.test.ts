@@ -63,12 +63,25 @@ describe('Stitch character dossier visual contract', () => {
     expect(detailCss).toMatch(/\.wiki-character-detail :is\(\.character-identity-card, \.character-portrait-stage__wardrobe\)\s*\{[^}]*box-shadow:\s*var\(--dossier-card-shadow\), inset/s)
   })
 
+  it('keeps mobile controls touchable and compact labels readable', () => {
+    const contract = detailCss.slice(
+      detailCss.indexOf('/* Phone controls'),
+      detailCss.indexOf('@media (max-width: 359px)'),
+    )
+    expect(contract).toMatch(/\.character-portrait-stage__wardrobe button,[\s\S]*\.character-voice-record__languages button,[\s\S]*\.mobile-dossier-tabs button\s*\{[^}]*min-height:\s*44px/s)
+    expect(contract).toMatch(/\.character-voice-record__heading button\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/s)
+    expect(contract).toMatch(/\.character-voice-record__languages button\s*\{[^}]*min-width:\s*44px/s)
+    expect(contract).toMatch(/\.character-voice-record audio\s*\{[^}]*height:\s*44px/s)
+    expect(contract).toMatch(/\.character-portrait-stage__wardrobe > p,[\s\S]*\.mobile-dossier-tabs button\s*\{[^}]*font-size:\s*0\.75rem/s)
+    expect(contract).toMatch(/\.character-voice-record__text\s*\{[^}]*font-size:\s*0\.875rem/s)
+  })
+
   it('self-hosts the approved fonts and uses code-native paper texture', () => {
     expect(indexHtml).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com|cdn\.jsdelivr\.net/)
     expect(main).toMatch(/import '\.\/styles\/fonts\.css'[\s\S]*import '\.\/styles\/themes\.css'/)
     expect(fontsCss.match(/@font-face/g)).toHaveLength(5)
-    expect(fontsCss.match(/font-display:\s*swap/g)).toHaveLength(3)
-    expect(fontsCss.match(/font-display:\s*optional/g)).toHaveLength(2)
+    expect(fontsCss.match(/font-display:\s*swap/g)).toHaveLength(5)
+    expect(fontsCss).not.toContain('font-display: optional')
     expect(fontsCss).toContain("font-family: 'Libre Caslon Text'")
     expect(fontsCss).toContain("font-family: 'JetBrains Mono'")
     expect(fontsCss).toContain("font-family: 'Noto Serif SC'")

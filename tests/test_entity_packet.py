@@ -1,3 +1,5 @@
+import pytest
+
 from src.rag.entity_packet import EntityPacketRetriever
 from src.rag.packet_policy import get_packet_policy
 from src.rag.query_plan import QueryPlan
@@ -126,3 +128,18 @@ def test_character_voice_policy_uses_voice_panel():
     assert policy.panel == "voice"
     assert policy.auto_media_types == ()
     assert policy.intent_media_types == ("voice",)
+
+
+@pytest.mark.parametrize("entity_type", ["item", "psychube", "story", "topic", "page"])
+def test_non_character_entity_types_have_rag_packet_policies(entity_type):
+    policy = get_packet_policy(entity_type, "story")
+
+    assert policy.output_mode == "rag"
+    assert policy.name == "topic_story"
+
+
+def test_corpus_topic_policy_requests_cross_page_source_coverage():
+    policy = get_packet_policy(None, "general_game")
+
+    assert policy.name == "corpus_topic"
+    assert policy.source_target == 3

@@ -7,7 +7,7 @@ import { ChatInput } from './ChatInput'
 import { MessageActions } from './MessageActions'
 import { clearVoiceSessionPreferencesForTest, VoicePanel } from './VoicePanel'
 import { VideoPanel } from './VideoPanel'
-import type { MediaItem, Message, VoiceLineGroup, VoicePanelPage } from '../../types'
+import type { MediaItem, Message, StreamPhase, VoiceLineGroup, VoicePanelPage } from '../../types'
 import { useChatStore } from '../../store/chatStore'
 
 const originalSend = useChatStore.getState().send
@@ -78,12 +78,81 @@ function stubAudio() {
   audio.removeAttribute.mockImplementation((name: string) => {
     if (name === 'src') audio.src = ''
   })
-  const constructor = vi.fn().mockImplementation(() => audio)
+  const constructor = vi.fn(function AudioMock() { return audio })
   vi.stubGlobal('Audio', constructor)
   return { audio, constructor }
 }
 
 describe('MessageBubble', () => {
+  it.each([
+    ['understanding', '正在理解问题…'],
+    ['retrieving', '正在检索资料…'],
+    ['generating', '正在生成回答…'],
+    ['validating', '正在校验引用…'],
+  ] as Array<[StreamPhase, string]>)('renders the backend phase %s', (phase, label) => {
+    render(<MessageBubble message={{
+      id: 'phase',
+      role: 'assistant',
+      content: 'Draft',
+      streaming: true,
+      phase,
+    }} />)
+
+    expect(screen.getByRole('status')).toHaveTextContent(label)
+  })
+
+  it('shows the correction notice after finalization without hiding final media', () => {
+    render(<MessageBubble message={{
+      id: 'corrected',
+      role: 'assistant',
+      content: 'Final',
+      finalized: true,
+      correctionNotice: true,
+      media: [{
+        media_id: 'image-1',
+        asset_type: 'portrait',
+        alt: 'Final portrait',
+        url: '/media/final.webp',
+      }],
+    }} />)
+
+    expect(screen.getByText('已完成引用校验并修正')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Final portrait' })).toHaveAttribute(
+      'src',
+      '/media/final.webp',
+    )
+  })
+
+  it('labels a preserved partial answer as incomplete and unvalidated', () => {
+    render(<MessageBubble message={{
+      id: 'partial',
+      role: 'assistant',
+      content: 'Partial draft',
+      streaming: false,
+      partialError: true,
+    }} />)
+
+    expect(screen.getByText('Partial draft')).toBeInTheDocument()
+    expect(screen.getByText('回答未完成，未经过引用校验')).toBeInTheDocument()
+  })
+
+  it('does not render pending media before done', () => {
+    render(<MessageBubble message={{
+      id: 'pending',
+      role: 'assistant',
+      content: 'Draft',
+      streaming: true,
+      pendingMedia: [{
+        media_id: 'pending-1',
+        asset_type: 'portrait',
+        alt: 'Pending portrait',
+        url: '/media/pending.webp',
+      }],
+    }} />)
+
+    expect(screen.queryByRole('img', { name: 'Pending portrait' })).not.toBeInTheDocument()
+  })
+
   it('renders the server-provided citation ID without inferring array order', () => {
     const message: Message = {
       id: 'citation-message',
@@ -99,10 +168,33 @@ describe('MessageBubble', () => {
     }
     useChatStore.setState({ messages: [message] })
 
-    render(<MessageBubble message={message} />)
+    const { container } = render(<MessageBubble message={message} />)
 
     expect(screen.getByText('[S07] Source seven')).toBeInTheDocument()
     expect(screen.queryByText('[S01] Source seven')).not.toBeInTheDocument()
+    expect(container.querySelector('.message-sources')).toHaveAttribute('open')
+  })
+
+  it('collapses long source lists into a compact count and preserves every citation', () => {
+    const sources = Array.from({ length: 20 }, (_, index) => ({
+      citation_id: `S${String(index + 1).padStart(2, '0')}`,
+      name: '十四行诗',
+      category: '人物',
+      source: `source-${index + 1}`,
+      score: 1,
+    }))
+
+    const { container } = render(<MessageBubble message={{
+      id: 'many-citations',
+      role: 'assistant',
+      content: 'Answer [S01]',
+      sources,
+    }} />)
+
+    expect(screen.getByText('20 条')).toBeInTheDocument()
+    expect(container.querySelector('.message-sources')).not.toHaveAttribute('open')
+    expect(container.querySelectorAll('.message-sources__list li')).toHaveLength(20)
+    expect(screen.getByText('[S20] 十四行诗')).toBeInTheDocument()
   })
 
   beforeEach(() => {
@@ -698,7 +790,7 @@ describe('MessageBubble', () => {
     expect(screen.getByRole('button', { name: 'Pause Line B' })).toBeInTheDocument()
   })
 
-  it('keeps row columns shrinkable and wraps language controls within the panel width', () => {
+  it('exposes responsive hooks for the title, language row, and playback control', () => {
     render(
       <VoicePanel
         page={voicePage([{
@@ -706,22 +798,22 @@ describe('MessageBubble', () => {
           title: 'A line with a long title',
           variants: [
             voiceVariant('zh-1', 'zh'),
+            voiceVariant('zh-hant-1', 'zh-hant'),
             voiceVariant('en-1', 'en'),
             voiceVariant('jp-1', 'jp'),
             voiceVariant('kr-1', 'kr'),
+            voiceVariant('fr-1', 'fr'),
           ],
         }])}
       />,
     )
 
-    expect(screen.getByTestId('voice-line')).toHaveStyle({
-      gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
-    })
-    expect(screen.getByRole('group', { name: 'Languages for A line with a long title' })).toHaveStyle({
-      flexWrap: 'wrap',
-      minWidth: '0',
-      maxWidth: '100%',
-    })
+    expect(screen.getByTestId('voice-line')).toHaveClass('voice-line')
+    expect(screen.getByText('A line with a long title')).toHaveClass('voice-line__title')
+    expect(screen.getByRole('group', { name: 'Languages for A line with a long title' })).toHaveClass('voice-line__languages')
+    expect(screen.getAllByRole('button', { name: /Select .* for A line with a long title/ })).toHaveLength(6)
+    expect(screen.getByRole('button', { name: 'Play A line with a long title' })).toHaveClass('voice-line__play')
+    expect(screen.getByRole('button', { name: 'Play A line with a long title' }).querySelector('svg')).toBeInTheDocument()
   })
 
   it('resets rows, overrides, cursor, loading, and audio for a different first-page identity', async () => {

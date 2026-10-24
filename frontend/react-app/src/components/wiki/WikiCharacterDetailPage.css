@@ -1653,6 +1653,56 @@
     width: 14px;
     height: 14px;
   }
+
+  /* Phone controls keep a 44px target without changing the desktop dossier. */
+  .mobile-character-dossier .character-portrait-stage__wardrobe button,
+  .mobile-character-dossier .character-voice-record__languages button,
+  .mobile-dossier-tabs button {
+    min-height: 44px;
+  }
+
+  .mobile-character-dossier .character-portrait-stage__wardrobe button {
+    padding: 8px 6px;
+  }
+
+  .mobile-character-dossier .character-voice-record__heading button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .mobile-character-dossier .character-voice-record__languages button {
+    min-width: 44px;
+    padding: 8px;
+  }
+
+  .mobile-character-dossier .character-voice-record audio {
+    height: 44px;
+  }
+
+  .mobile-character-dossier .character-detail__eyebrow,
+  .mobile-character-dossier .character-summary-card p,
+  .mobile-character-dossier .character-portrait-stage__identity p,
+  .mobile-character-dossier .character-portrait-stage__wardrobe > p,
+  .mobile-character-dossier .character-portrait-stage__wardrobe button,
+  .mobile-character-dossier .character-progression h2,
+  .mobile-character-dossier .character-progression li > span,
+  .mobile-character-dossier .character-collection-item strong,
+  .mobile-character-dossier .character-collection-item > div > p:last-child,
+  .mobile-character-dossier__technical .character-technical-footer,
+  .mobile-character-dossier .character-voice-record__heading p,
+  .mobile-character-dossier .character-voice-record__languages button,
+  .mobile-dossier-tabs button {
+    font-size: 0.75rem;
+  }
+
+  .mobile-character-dossier .character-skill-card__body > p:not(.character-detail__eyebrow),
+  .mobile-character-dossier .character-skill-card__levels li {
+    font-size: 0.8rem;
+  }
+
+  .mobile-character-dossier .character-voice-record__text {
+    font-size: 0.875rem;
+  }
 }
 
 @media (max-width: 359px) {

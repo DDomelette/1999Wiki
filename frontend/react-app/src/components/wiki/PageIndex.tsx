@@ -152,7 +152,7 @@ function WikiIndexThumbnail({ src }: { src: string }) {
   return (
     <span className="wiki-index-item__media" aria-hidden="true">
       {src && !failed ? (
-        <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} />
+        <img src={src} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />
       ) : (
         <span className="wiki-index-item__placeholder" data-testid="wiki-index-placeholder">
           <FileImage aria-hidden="true" />

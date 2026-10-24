@@ -25,6 +25,73 @@
   border-radius: 999px;
 }
 
+.voice-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-elevated) 68%, transparent);
+  color: var(--text-primary);
+}
+
+.voice-line__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.voice-line__languages {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+}
+
+.voice-line__language {
+  min-width: 32px;
+  height: 30px;
+  padding: 0 7px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.voice-line__language:not(:last-child) {
+  border-right: 1px solid var(--border-subtle);
+}
+
+.voice-line__language[aria-pressed='true'] {
+  background: var(--accent-gold);
+  color: var(--bg-primary);
+}
+
+.voice-line__play {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.voice-line__play svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+  pointer-events: none;
+}
+
 .voice-progress-seek {
   grid-column: 1 / -1;
   width: 100%;
@@ -74,4 +141,42 @@
   border: 1px solid var(--accent-gold);
   border-radius: 50%;
   background: var(--bg-primary);
+}
+
+@media (max-width: 720px) {
+  .voice-line {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px 12px;
+    padding: 12px;
+  }
+
+  .voice-line__title {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .voice-line__languages {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: nowrap;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+  }
+
+  .voice-line__language {
+    flex: 1 0 auto;
+    min-width: 44px;
+    height: 36px;
+    padding: 0 8px;
+    white-space: nowrap;
+  }
+
+  .voice-line__play {
+    grid-column: 2;
+    grid-row: 1;
+    width: 38px;
+    height: 38px;
+  }
 }
