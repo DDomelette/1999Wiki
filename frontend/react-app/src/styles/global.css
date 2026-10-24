@@ -1,7 +1,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --main-nav-mobile-offset: 56px;
+  --main-nav-mobile-offset: 64px;
   --main-page-bottom-safe: env(safe-area-inset-bottom, 0px);
   --global-background-image: url("/images/global-background.webp");
   --global-background-tint:

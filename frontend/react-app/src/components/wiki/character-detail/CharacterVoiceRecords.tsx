@@ -1,5 +1,5 @@
 import { Pause, Play } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CharacterVoiceViewModel } from '../characterDetailViewModel'
 
 export function CharacterVoiceRecords({ voices }: { voices: CharacterVoiceViewModel[] }) {
@@ -9,6 +9,32 @@ export function CharacterVoiceRecords({ voices }: { voices: CharacterVoiceViewMo
   ])), [voices])
   const [languageByVoice, setLanguageByVoice] = useState<Record<string, string>>(defaults)
   const [playing, setPlaying] = useState('')
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({})
+
+  useEffect(() => () => {
+    Object.values(audioRefs.current).forEach((audio) => audio?.pause())
+  }, [])
+
+  const togglePlayback = (voiceId: string) => {
+    const audio = audioRefs.current[voiceId]
+    if (!audio) return
+    if (playing === voiceId) {
+      audio.pause()
+      setPlaying('')
+      return
+    }
+    if (playing) audioRefs.current[playing]?.pause()
+    setPlaying(voiceId)
+    void audio.play().catch(() => {
+      setPlaying((current) => current === voiceId ? '' : current)
+    })
+  }
+
+  const selectLanguage = (voiceId: string, code: string) => {
+    audioRefs.current[voiceId]?.pause()
+    setPlaying((current) => current === voiceId ? '' : current)
+    setLanguageByVoice((current) => ({ ...current, [voiceId]: code }))
+  }
 
   if (voices.length === 0) return null
   return (
@@ -36,7 +62,7 @@ export function CharacterVoiceRecords({ voices }: { voices: CharacterVoiceViewMo
                   <button
                     type="button"
                     aria-label={`${playing === voice.id ? '暂停' : '播放'}${voice.title}`}
-                    onClick={() => setPlaying((current) => current === voice.id ? '' : voice.id)}
+                    onClick={() => togglePlayback(voice.id)}
                   >
                     {playing === voice.id ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}
                   </button>
@@ -48,7 +74,7 @@ export function CharacterVoiceRecords({ voices }: { voices: CharacterVoiceViewMo
                     key={language.code}
                     type="button"
                     aria-pressed={language.code === selected?.code}
-                    onClick={() => setLanguageByVoice((current) => ({ ...current, [voice.id]: language.code }))}
+                    onClick={() => selectLanguage(voice.id, language.code)}
                   >
                     {language.label}
                   </button>
@@ -58,9 +84,13 @@ export function CharacterVoiceRecords({ voices }: { voices: CharacterVoiceViewMo
               {selected?.audio ? (
                 <audio
                   key={selected.audio.id}
+                  ref={(node) => { audioRefs.current[voice.id] = node }}
                   src={selected.audio.url}
                   preload="none"
                   controls={playing === voice.id}
+                  onPlay={() => setPlaying(voice.id)}
+                  onPause={() => setPlaying((current) => current === voice.id ? '' : current)}
+                  onEnded={() => setPlaying((current) => current === voice.id ? '' : current)}
                 />
               ) : null}
             </article>

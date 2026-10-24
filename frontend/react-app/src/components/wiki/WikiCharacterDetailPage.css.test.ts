@@ -49,6 +49,19 @@ describe('Stitch character dossier visual contract', () => {
     expect(detailCss).toMatch(/\.mobile-character-dossier__voices \.character-voice-records\s*\{[^}]*height:\s*(?:2[8-9][0-9]|3[0-2][0-9])px/s)
   })
 
+  it('keeps mobile controls touchable and compact labels readable', () => {
+    const contract = detailCss.slice(
+      detailCss.indexOf('/* Phone controls'),
+      detailCss.indexOf('@media (max-width: 359px)'),
+    )
+    expect(contract).toMatch(/\.character-portrait-stage__wardrobe button,[\s\S]*\.character-voice-record__languages button,[\s\S]*\.mobile-dossier-tabs button\s*\{[^}]*min-height:\s*44px/s)
+    expect(contract).toMatch(/\.character-voice-record__heading button\s*\{[^}]*width:\s*44px[^}]*height:\s*44px/s)
+    expect(contract).toMatch(/\.character-voice-record__languages button\s*\{[^}]*min-width:\s*44px/s)
+    expect(contract).toMatch(/\.character-voice-record audio\s*\{[^}]*height:\s*44px/s)
+    expect(contract).toMatch(/\.character-portrait-stage__wardrobe > p,[\s\S]*\.mobile-dossier-tabs button\s*\{[^}]*font-size:\s*0\.75rem/s)
+    expect(contract).toMatch(/\.character-voice-record__text\s*\{[^}]*font-size:\s*0\.875rem/s)
+  })
+
   it('self-hosts the approved fonts and uses code-native paper texture', () => {
     expect(indexHtml).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com|cdn\.jsdelivr\.net/)
     expect(main).toMatch(/import '\.\/styles\/fonts\.css'[\s\S]*import '\.\/styles\/themes\.css'/)
