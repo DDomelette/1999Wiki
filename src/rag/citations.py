@@ -4,7 +4,13 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, cast
 
-from .contracts import CitationValidation, SourceRef, freeze_value
+from .contracts import (
+    BranchResult,
+    CitationValidation,
+    GlobalSourceAllocation,
+    SourceRef,
+    freeze_value,
+)
 from .tracing import NullTrace, RequestTrace
 
 GroundingMode = Literal["grounded", "ungrounded"]
@@ -15,6 +21,93 @@ _S_LIKE_BRACKET_RE = re.compile(r"\[\s*S\d{2,}(?:\s*[,，]\s*S\d{2,})*\s*\]")
 _ANY_BRACKET_RE = re.compile(r"\[([^\[\]]+)\]")
 _FULLWIDTH_BRACKET_RE = re.compile(r"【([^【】]+)】")
 _COMBINED_IDS_RE = re.compile(r"^\s*S\d{2,}(?:\s*[,，]\s*S\d{2,})+\s*$")
+
+
+class SourceIdentityCollision(ValueError):
+    """A stable source identity mapped to conflicting evidence."""
+
+    def __init__(self, subtask_id: str) -> None:
+        self.subtask_id = str(subtask_id)
+        super().__init__("source_identity_collision")
+
+
+def build_global_source_map(
+    branch_sources: Sequence[tuple[str, Sequence[Mapping[str, Any]]]],
+) -> GlobalSourceAllocation:
+    global_sources: list[Mapping[str, Any]] = []
+    source_refs: list[SourceRef] = []
+    branch_ids: dict[str, tuple[str, ...]] = {}
+    identities: dict[tuple[str, str, str, str], tuple[str, str, str]] = {}
+    citation_by_identity: dict[tuple[str, str, str, str], str] = {}
+
+    for subtask_id, sources in branch_sources:
+        allocated: list[str] = []
+        for source in sources:
+            identity = (
+                _text(source.get("entity_type")),
+                _text(source.get("entity_id")),
+                _text(source.get("child_id")),
+                _text(source.get("parent_id")),
+            )
+            fingerprint = (
+                _text(source.get("content")),
+                _text(source.get("content_hash")),
+                _source_reference_fingerprint(source.get("source_refs")),
+            )
+            previous = identities.get(identity)
+            if previous is not None and previous != fingerprint:
+                raise SourceIdentityCollision(str(subtask_id))
+            citation_id = citation_by_identity.get(identity)
+            if citation_id is None:
+                citation_id = f"S{len(global_sources) + 1:02d}"
+                identities[identity] = fingerprint
+                citation_by_identity[identity] = citation_id
+                row = dict(source)
+                row["citation_id"] = citation_id
+                global_sources.append(cast(Mapping[str, Any], freeze_value(row)))
+                source_refs.append(_source_ref(citation_id, source))
+            allocated.append(citation_id)
+        branch_ids[str(subtask_id)] = tuple(dict.fromkeys(allocated))
+    return GlobalSourceAllocation(
+        sources=tuple(global_sources),
+        source_map=tuple(source_refs),
+        branch_source_ids=branch_ids,
+    )
+
+
+def validate_global_citations(
+    branches: Sequence[BranchResult],
+    allocation: GlobalSourceAllocation,
+) -> CitationValidation:
+    known_ids = {ref.citation_id for ref in allocation.source_map}
+    public_ids = [
+        _text(source.get("citation_id"))
+        for source in allocation.sources
+    ]
+    invalid: list[str] = []
+    used: list[str] = []
+    for branch in branches:
+        allowed = set(allocation.branch_source_ids.get(branch.subtask_id, ()))
+        branch_ids = tuple(_CANONICAL_TOKEN_RE.findall(branch.answer))
+        if branch.grounding_mode == "grounded" and branch.status == "succeeded":
+            if not branch.citation_validation.valid:
+                invalid.append("branch_validation_failed")
+            if not branch_ids:
+                invalid.append("missing_required")
+            invalid.extend(item for item in branch_ids if item not in allowed)
+        elif branch_ids:
+            invalid.extend(branch_ids)
+        invalid.extend(item for item in branch.source_ids if item not in known_ids)
+        used.extend(branch_ids)
+    if len(public_ids) != len(set(public_ids)) or set(public_ids) != known_ids:
+        invalid.append("global_source_map_invalid")
+    invalid_ids = tuple(dict.fromkeys(invalid))
+    return CitationValidation(
+        valid=not invalid_ids,
+        used_ids=tuple(dict.fromkeys(used)),
+        invalid_ids=invalid_ids,
+        missing_required="missing_required" in invalid_ids,
+    )
 
 
 def build_source_map(
@@ -42,6 +135,34 @@ def build_source_map(
         )
 
     return tuple(frozen_sources), tuple(source_refs)
+
+
+def _source_ref(citation_id: str, source: Mapping[str, Any]) -> SourceRef:
+    return SourceRef(
+        citation_id=citation_id,
+        entity_type=_text(source.get("entity_type")),
+        entity_id=_text(source.get("entity_id")),
+        child_id=_text(source.get("child_id")),
+        parent_id=_text(source.get("parent_id")),
+        display_name=_text(source.get("name")),
+        heading_path=_text(source.get("heading_path")),
+    )
+
+
+def _source_reference_fingerprint(value: Any) -> str:
+    if not isinstance(value, (list, tuple)):
+        return ""
+    rows: list[tuple[str, str, str, str]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            return "invalid_source_refs"
+        rows.append((
+            _text(item.get("site") or item.get("source_kind")),
+            _text(item.get("title") or item.get("source_title")),
+            _text(item.get("revid") or item.get("source_row_id")),
+            _text(item.get("content_sha256") or item.get("source_content_sha256")),
+        ))
+    return repr(tuple(rows))
 
 
 def format_citation_context(
@@ -264,9 +385,12 @@ def _text(value: Any) -> str:
 
 
 __all__ = [
+    "SourceIdentityCollision",
+    "build_global_source_map",
     "build_source_map",
     "format_citation_context",
     "normalize_citation_format",
     "validate_citations",
+    "validate_global_citations",
     "validate_or_repair_answer",
 ]

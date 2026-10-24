@@ -205,6 +205,23 @@
   border: 1px solid var(--border-card);
 }
 
+.message-bubble__stream-status {
+  margin-bottom: 6px;
+  color: var(--accent-gold);
+  font-size: 0.875rem;
+}
+
+.message-bubble__correction-notice,
+.message-bubble__partial-error {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.message-bubble__partial-error {
+  color: var(--accent-rust);
+}
+
 /* Mobile overrides */
 @media (max-width: 720px) {
   .chat-section__toolbar {

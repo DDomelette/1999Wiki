@@ -22,6 +22,7 @@ from src.huiji_rag.build.contracts import (
     normalize_media_v3_rows,
     validate_media_v3_row,
 )
+from src.huiji_rag.build.projection import MediaBindingIntent
 
 
 FIXTURE_ROOT = Path("tests/fixtures/contracts/huiji_media_v3")
@@ -142,3 +143,39 @@ def test_validation_rejects_reordered_or_local_path_rows() -> None:
 
     with pytest.raises(ValueError, match="local_relpath"):
         validate_media_v3_row({**copy.deepcopy(row), "local_relpath": "assets/shared.webp"})
+
+
+def test_wikitext_intent_fields_remain_internal_to_frozen_runtime_contract() -> None:
+    intent = MediaBindingIntent(
+        source_binding_token="wiki:1:lead:abc:1",
+        owner_entity_id="page:1",
+        owner_page_id="page:1",
+        parent_id="page:1/section:lead",
+        child_id="page:1/section:lead/chunk:0000",
+        section="lead",
+        media_role="page_image",
+        resource_stem="",
+        title="Caption",
+        resolver_mode="wikitext_exact",
+        exact_filename="Example.png",
+        original_filename="Example.PNG",
+        heading_path=("lead",),
+        title_source="explicit_caption",
+        caption="Caption",
+        layout_options=("thumb",),
+        adjacent_context_sha256="a" * 64,
+    )
+    internal_fields = {
+        "resolver_mode",
+        "exact_filename",
+        "original_filename",
+        "heading_path",
+        "title_source",
+        "caption",
+        "layout_options",
+        "adjacent_context_sha256",
+    }
+
+    assert internal_fields <= set(intent.to_json())
+    assert internal_fields.isdisjoint(MEDIA_V3_FIELD_ORDER)
+    assert internal_fields.isdisjoint(media_v3_schema_document()["properties"])

@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"thread-c"}
+{"type":"turn.started"}
+{"type":"turn.failed","error":{"message":"source snapshot missing"}}

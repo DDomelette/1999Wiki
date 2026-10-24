@@ -241,6 +241,6 @@ describe('WikiShell', () => {
 
     await waitFor(() => expect(screen.getByRole('searchbox', { name: '搜索页面' })).toHaveValue('爱兹拉'))
     await waitFor(() => expect(screen.getByTestId('wiki-page-index').scrollTop).toBe(180))
-    expect(screen.getByRole('button', { name: '爱兹拉' })).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(() => expect(screen.getByRole('button', { name: '爱兹拉' })).toHaveAttribute('aria-pressed', 'true'))
   })
 })

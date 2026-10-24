@@ -122,6 +122,19 @@ CHARACTER_POLICIES: dict[str, PacketPolicy] = {
     ),
 }
 
+TOPIC_STORY_POLICY = PacketPolicy(
+    name="topic_story",
+    sections=("story", "plot", "lore"),
+    output_mode="rag",
+    source_target=2,
+)
+CORPUS_TOPIC_POLICY = PacketPolicy(
+    name="corpus_topic",
+    sections=(),
+    output_mode="rag",
+    source_target=3,
+)
+
 
 _LEGACY_SECTION_ALIASES: dict[str, tuple[str, ...]] = {
     "intro": ("culture", "items", "item"),
@@ -154,6 +167,10 @@ def get_packet_policy(
                     source_target=policy.source_target,
                 )
         return policy
+    if intent == "general_game":
+        return CORPUS_TOPIC_POLICY
+    if intent == "story":
+        return TOPIC_STORY_POLICY
     return PacketPolicy(name="default", sections=(), output_mode="rag")
 
 

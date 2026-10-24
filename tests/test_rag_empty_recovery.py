@@ -276,3 +276,34 @@ def test_answer_model_error_is_not_committable(tmp_path):
 
     assert result["_turn_outcome"] == "not_committable"
     assert result["_conversation_plan"] is not None
+
+
+def test_expanded_and_free_still_retrieve_once_before_empty_fallback(tmp_path):
+    llm = RecordingLLM()
+    retriever = EmptyRetriever()
+    chain = make_chain(tmp_path, llm, retriever=retriever)
+
+    result = chain.ask(
+        "empty fixture",
+        route_options={"expanded": True, "free_supplement": True},
+    )
+
+    assert retriever.search_calls == 1
+    assert result["route"]["proposed_route"] == "expanded_rag"
+    assert result["route"]["effective_route"] == "llm_general"
+    assert result["route"]["retrieval_outcome"] == "empty"
+
+
+def test_expanded_and_free_never_turn_failed_retrieval_into_general(tmp_path):
+    llm = NoInvokeLLM()
+    chain = make_chain(tmp_path, llm, retriever=FailingRetriever())
+
+    result = chain.ask(
+        "dependency failure fixture",
+        route_options={"expanded": True, "free_supplement": True},
+    )
+
+    assert result["route"]["retrieval_outcome"] == "failed"
+    assert result["route"]["effective_route"] == "rag_grounded"
+    assert result["route"]["route_reason"] == "retrieval_failed"
+    assert not llm.invoked

@@ -16,7 +16,12 @@ describe('main page responsive CSS contract', () => {
     expect(globalCss).toContain('--main-page-bottom-safe: env(safe-area-inset-bottom, 0px)')
     expect(globalCss).toMatch(/\.snap-container\s*\{[^}]*height:\s*100vh[^}]*height:\s*100dvh/s)
     expect(globalCss).toMatch(/\.snap-section\s*\{[^}]*height:\s*100vh[^}]*height:\s*100dvh/s)
-    expect(globalCss).toMatch(/@media \(max-width: 720px\)[\s\S]*scroll-snap-type:\s*y proximity/)
+    expect(globalCss).toMatch(/\.snap-container\s*\{[^}]*scroll-snap-type:\s*y mandatory/s)
+    expect(globalCss).toMatch(/\.snap-section\s*\{[^}]*scroll-snap-stop:\s*always/s)
+    expect(globalCss).not.toMatch(/@media \(max-width: 720px\)[\s\S]*scroll-snap-type:\s*y proximity/)
+    expect(globalCss).not.toContain('scroll-behavior: smooth')
+    expect(dataCss).not.toMatch(/\.data-section__scroll\s*\{[^}]*overflow-y:\s*(?:scroll|auto)/s)
+    expect(dataCss).not.toMatch(/\.data-section__scroll\s*\{[^}]*scroll-snap-type:/s)
   })
 
   it('compacts only the main Card Nav on phones', () => {
@@ -48,6 +53,16 @@ describe('main page responsive CSS contract', () => {
     const mobileCopy = dataCss.match(/@media \(max-width: 980px\)[\s\S]*?\.category-panel__copy\s*\{([^}]*)\}/)?.[1] ?? ''
     expect(mobileCopy).not.toMatch(/background(?:-color)?:/)
     expect(mobileCopy).toContain('text-shadow:')
+  })
+
+  it('constrains the sticky data navigation to the data sequence', () => {
+    expect(dataCss).toMatch(
+      /\.data-section__nav-shell\s*\{[^}]*height:\s*100vh[^}]*height:\s*100dvh/s,
+    )
+    expect(dataCss).toMatch(
+      /\.data-section__panels\s*\{[^}]*margin-top:\s*-100vh[^}]*margin-top:\s*-100dvh/s,
+    )
+    expect(dataCss).not.toMatch(/\.data-section__nav-shell\s*\{[^}]*margin-bottom:\s*-100/s)
   })
 
   it('keeps the chat toolbar below navigation and the mobile input shrinkable', () => {

@@ -58,6 +58,8 @@ idna==3.18
     #   anyio
     #   httpx
     #   requests
+jieba==0.42.1
+    # via -r requirements/runtime.in
 jiter==0.16.0
     # via openai
 jsonpatch==1.33

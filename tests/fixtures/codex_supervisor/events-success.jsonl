@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"thread-a"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"cmd-1","type":"command_execution","command":"python -m pytest tests/test_x.py -q"}}
+{"type":"item.completed","item":{"id":"cmd-1","type":"command_execution","exit_code":0,"aggregated_output":"2 passed"}}
+{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":700,"output_tokens":200,"reasoning_output_tokens":80}}

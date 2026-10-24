@@ -57,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     candidate.add_argument("--run-dir", type=Path, required=True)
     candidate.add_argument("--raw-root", type=Path)
     candidate.add_argument("--processed-root", type=Path)
+    candidate.add_argument("--recovery-manifest", type=Path, required=True)
+    candidate.add_argument("--recovery-audit-receipt", type=Path, required=True)
+    candidate.add_argument("--recovery-apply-receipt", type=Path, required=True)
     candidate.add_argument(
         "--wiki-compatibility-receipt",
         type=Path,
@@ -139,6 +142,9 @@ def _run_candidate(args: argparse.Namespace) -> int:
         run_dir=args.run_dir,
         fidelity_baseline_path=args.fidelity_baseline,
         expected_fidelity_baseline_sha256=args.expected_fidelity_baseline_sha256,
+        recovery_manifest_path=args.recovery_manifest,
+        recovery_audit_receipt_path=args.recovery_audit_receipt,
+        recovery_apply_receipt_path=args.recovery_apply_receipt,
         wiki_compatibility_receipt_path=receipt,
         expected_wiki_compatibility_receipt_sha256=receipt_sha,
         configured_build_version=cfg.huiji.build_version,

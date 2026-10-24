@@ -1,29 +1,35 @@
 import { useEffect } from 'react'
 import { useUIStore } from '../store/uiStore'
 
-/** 监听所有 [data-snap-section] 元素可见性,写入 uiStore.currentSection / currentCategory。 */
+/** 以 .snap-container 为观察根监听吸附叶目标可见性,写入 uiStore.currentSection / currentCategory。 */
 export function useScrollSpy() {
   useEffect(() => {
+    const root = document.querySelector<HTMLElement>('.snap-container')
+    if (!root) return
+
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting && entry.intersectionRatio > 0.5) {
             const section = entry.target.getAttribute('data-snap-section') || ''
-            if (section.startsWith('data:')) {
+            if (section === 'data:loading') {
+              useUIStore.getState().setSection('data')
+              useUIStore.getState().setCategory(null)
+            } else if (section.startsWith('data:')) {
               useUIStore.getState().setSection('data')
               useUIStore.getState().setCategory(section.split(':')[1])
-            } else if (section === 'home' || section === 'data' || section === 'chat') {
+            } else if (section === 'home' || section === 'chat') {
               useUIStore.getState().setSection(section)
-              if (section !== 'data') useUIStore.getState().setCategory(null)
+              useUIStore.getState().setCategory(null)
             }
           }
         }
       },
-      { threshold: [0.5, 0.75] },
+      { root, threshold: [0.5, 0.75] },
     )
     const observed = new WeakSet<Element>()
     const observeSections = () => {
-      document.querySelectorAll('[data-snap-section]').forEach((section) => {
+      root.querySelectorAll('[data-snap-section]').forEach((section) => {
         if (!observed.has(section)) {
           observer.observe(section)
           observed.add(section)
@@ -33,7 +39,7 @@ export function useScrollSpy() {
 
     observeSections()
     const mutationObserver = new MutationObserver(observeSections)
-    mutationObserver.observe(document.body, { childList: true, subtree: true })
+    mutationObserver.observe(root, { childList: true, subtree: true })
 
     return () => {
       mutationObserver.disconnect()

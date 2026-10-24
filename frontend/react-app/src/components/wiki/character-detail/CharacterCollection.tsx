@@ -17,7 +17,7 @@ export function CharacterCollection({ groups }: { groups: CharacterCollectionGro
           <div className="character-collection-group__items">
             {group.items.map((item) => (
               <article className="character-collection-item" data-testid="character-collection-item" key={item.id}>
-                {item.image ? <img src={item.image.url} alt={item.name} /> : null}
+                {item.image ? <img src={item.image.url} alt={item.name} loading="lazy" decoding="async" /> : null}
                 <div>
                   <p className="character-detail__eyebrow">ITEM_{String(item.ordinal).padStart(2, '0')}</p>
                   <h4>{item.name}</h4>

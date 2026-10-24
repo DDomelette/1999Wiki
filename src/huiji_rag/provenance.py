@@ -11,6 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
+from src.huiji_rag.build.artifact_writer import _analyzer_probe_sha256
+from src.rag.chinese_analyzer import ChineseBM25Analyzer
+from src.rag.sparse import (
+    LegacyRegexAnalyzer,
+    LocalBM25SparseIndex,
+    canonical_child_corpus_sha256,
+)
+
 
 BASELINE_SCHEMA = "huiji.provenance_baseline/v1"
 AUDIT_SCHEMA = "huiji.provenance_audit/v1"
@@ -58,6 +66,19 @@ class Bm25Fingerprint:
     row_count: int
     ids_sha256: str
     semantic_sha256: str
+    payload_schema: str
+    analyzer_schema: str
+    analyzer_name: str
+    analyzer_version: str
+    analyzer_fingerprint_sha256: str
+    config_sha256: str
+    dictionary_sha256: str
+    segmenter_name: str
+    segmenter_version: str
+    segmenter_hmm: bool
+    analyzer_probe_sha256: str
+    k1: float
+    b: float
 
     def to_json(self) -> dict[str, object]:
         return asdict(self)
@@ -235,6 +256,53 @@ def fingerprint_jsonl(
     )
 
 
+def _legacy_bm25_schema(payload: Mapping[str, object]) -> str | None:
+    schema_version = payload.get("schema_version")
+    if schema_version is None:
+        return "records-only" if set(payload) == {"records"} else None
+    if schema_version in (
+        "huiji.bm25-index/v2",
+        "huiji.media-binding-bm25/v3",
+    ):
+        return str(schema_version)
+    return None
+
+
+def _legacy_bm25_identity(payload_schema: str) -> dict[str, object]:
+    config = {
+        "ascii_lowercase": True,
+        "pattern": r"[A-Za-z0-9_\-]+|[\u4e00-\u9fff]+",
+    }
+    config_sha256 = hashlib.sha256(canonical_json_bytes(config)).hexdigest()
+    dictionary_sha256 = hashlib.sha256(b"").hexdigest()
+    analyzer_descriptor = {
+        "schema_version": "legacy-regex/v1",
+        "name": "legacy-regex",
+        "version": "1",
+        "segmenter": {"name": "regex", "version": "1", "hmm": False},
+        "config_sha256": config_sha256,
+        "dictionary_sha256": dictionary_sha256,
+    }
+    analyzer = LegacyRegexAnalyzer()
+    return {
+        "payload_schema": payload_schema,
+        "analyzer_schema": "legacy-regex/v1",
+        "analyzer_name": "legacy-regex",
+        "analyzer_version": "1",
+        "analyzer_fingerprint_sha256": hashlib.sha256(
+            canonical_json_bytes(analyzer_descriptor)
+        ).hexdigest(),
+        "config_sha256": config_sha256,
+        "dictionary_sha256": dictionary_sha256,
+        "segmenter_name": "regex",
+        "segmenter_version": "1",
+        "segmenter_hmm": False,
+        "analyzer_probe_sha256": _analyzer_probe_sha256(analyzer),
+        "k1": 1.5,
+        "b": 0.75,
+    }
+
+
 def fingerprint_bm25(
     path: str | Path,
     *,
@@ -251,7 +319,14 @@ def fingerprint_bm25(
             target.name,
             "BM25 payload is invalid",
         ) from error
-    records = payload.get("records") if isinstance(payload, Mapping) else None
+    if not isinstance(payload, Mapping):
+        raise ProvenanceValidationError(
+            "baseline_invalid",
+            target.name,
+            "BM25 payload must be an object",
+        )
+    payload_mapping = dict(payload)
+    records = payload_mapping.get("records")
     if not isinstance(records, list) or not all(isinstance(row, Mapping) for row in records):
         raise ProvenanceValidationError(
             "baseline_invalid",
@@ -259,23 +334,132 @@ def fingerprint_bm25(
             "BM25 records must be a list of objects",
         )
 
-    normalized_records: list[dict[str, object]] = []
-    ids: list[str] = []
-    for row in records:
-        source_id = _required_id(row, source_id_field, target.name)
-        derived_id = str(row.get("id") or "")
-        if derived_id != source_id:
+    schema_version = payload_mapping.get("schema_version")
+    legacy_schema = _legacy_bm25_schema(payload_mapping)
+    frozen_source = [dict(row) for row in source_rows]
+    if legacy_schema is not None:
+        identity = _legacy_bm25_identity(legacy_schema)
+        normalized_records: list[dict[str, object]] = []
+        ids: list[str] = []
+        for row in records:
+            source_id = _required_id(row, source_id_field, target.name)
+            derived_id = str(row.get("id") or "")
+            if derived_id != source_id:
+                raise ProvenanceValidationError(
+                    "bm25_id_mismatch",
+                    target.name,
+                    "BM25 derived id differs from source id",
+                )
+            item = dict(row)
+            item.pop("id", None)
+            normalized_records.append(item)
+            ids.append(derived_id)
+    elif schema_version in (
+        "huiji.bm25-index/v3",
+        "huiji.media-binding-bm25/v4",
+    ):
+        expected_kind = (
+            "child"
+            if schema_version == "huiji.bm25-index/v3"
+            else "media_binding"
+        )
+        expected_id_field = (
+            "child_id"
+            if schema_version == "huiji.bm25-index/v3"
+            else "binding_id"
+        )
+        if (
+            payload_mapping.get("record_kind") != expected_kind
+            or payload_mapping.get("id_field") != expected_id_field
+        ):
+            raise ProvenanceValidationError(
+                "baseline_invalid",
+                target.name,
+                "BM25 payload schema metadata is invalid",
+            )
+        try:
+            loaded = LocalBM25SparseIndex.load(target)
+        except (OSError, TypeError, ValueError) as error:
+            raise ProvenanceValidationError(
+                "baseline_invalid",
+                target.name,
+                "BM25 analyzer or parameter metadata is invalid",
+            ) from error
+        if not isinstance(loaded.analyzer, ChineseBM25Analyzer):
+            raise ProvenanceValidationError(
+                "baseline_invalid",
+                target.name,
+                "BM25 analyzer metadata is unsupported",
+            )
+        analyzer = loaded.analyzer.identity
+        analyzer_payload = analyzer.to_dict()
+        probe_sha256 = _analyzer_probe_sha256(loaded.analyzer)
+        if (
+            payload_mapping.get("analyzer_fingerprint_sha256")
+            != analyzer.fingerprint_sha256
+            or payload_mapping.get("analyzer_probe_sha256") != probe_sha256
+            or payload_mapping.get("bm25") != {"k1": loaded.k1, "b": loaded.b}
+        ):
+            raise ProvenanceValidationError(
+                "baseline_invalid",
+                target.name,
+                "BM25 identity metadata is inconsistent",
+            )
+        normalized_records = [dict(row) for row in records]
+        ids = [
+            _required_id(row, expected_id_field, target.name)
+            for row in records
+        ]
+        if len(set(ids)) != len(ids):
             raise ProvenanceValidationError(
                 "bm25_id_mismatch",
                 target.name,
-                "BM25 derived id differs from source id",
+                "BM25 ids must be unique",
             )
-        item = dict(row)
-        item.pop("id", None)
-        normalized_records.append(item)
-        ids.append(derived_id)
+        semantic_corpus_sha256 = (
+            canonical_child_corpus_sha256(normalized_records)
+            if expected_kind == "child"
+            else _semantic_rows_sha256(normalized_records)
+        )
+        if (
+            payload_mapping.get("row_count") != len(records)
+            or payload_mapping.get("ordered_ids_sha256") != _sha256_lines(ids)
+            or payload_mapping.get("semantic_corpus_sha256")
+            != semantic_corpus_sha256
+        ):
+            raise ProvenanceValidationError(
+                "baseline_invalid",
+                target.name,
+                "BM25 corpus metadata is inconsistent",
+            )
+        identity = {
+            "payload_schema": str(schema_version),
+            "analyzer_schema": analyzer.schema_version,
+            "analyzer_name": analyzer.name,
+            "analyzer_version": analyzer.version,
+            "analyzer_fingerprint_sha256": analyzer.fingerprint_sha256,
+            "config_sha256": analyzer.config_sha256,
+            "dictionary_sha256": analyzer.dictionary_sha256,
+            "segmenter_name": analyzer.segmenter_name,
+            "segmenter_version": analyzer.segmenter_version,
+            "segmenter_hmm": analyzer.segmenter_hmm,
+            "analyzer_probe_sha256": probe_sha256,
+            "k1": loaded.k1,
+            "b": loaded.b,
+        }
+        if analyzer_payload != payload_mapping.get("analyzer"):
+            raise ProvenanceValidationError(
+                "baseline_invalid",
+                target.name,
+                "BM25 analyzer identity is inconsistent",
+            )
+    else:
+        raise ProvenanceValidationError(
+            "baseline_invalid",
+            target.name,
+            "BM25 payload schema is unsupported",
+        )
 
-    frozen_source = [dict(row) for row in source_rows]
     source_digest = _semantic_rows_sha256(frozen_source)
     record_digest = _semantic_rows_sha256(normalized_records)
     if source_digest != record_digest:
@@ -291,6 +475,7 @@ def fingerprint_bm25(
         row_count=len(records),
         ids_sha256=_sha256_lines(ids),
         semantic_sha256=record_digest,
+        **identity,
     )
 
 
@@ -1085,6 +1270,29 @@ def _compare_bm25_fingerprint(
     actual: Bm25Fingerprint,
 ) -> list[VerificationIssue]:
     issues: list[VerificationIssue] = []
+    identity_fields = (
+        "payload_schema",
+        "analyzer_schema",
+        "analyzer_name",
+        "analyzer_version",
+        "analyzer_fingerprint_sha256",
+        "config_sha256",
+        "dictionary_sha256",
+        "segmenter_name",
+        "segmenter_version",
+        "segmenter_hmm",
+        "analyzer_probe_sha256",
+        "k1",
+        "b",
+    )
+    expected_identity: Mapping[str, object] = expected
+    if (
+        actual.analyzer_schema == "legacy-regex/v1"
+        and not any(field in expected for field in identity_fields)
+    ):
+        expected_identity = {**expected, **{
+            field: getattr(actual, field) for field in identity_fields
+        }}
     if expected.get("sha256") != actual.sha256 or expected.get("size_bytes") != actual.size_bytes:
         issues.append(VerificationIssue("artifact_hash_mismatch", component))
     if expected.get("row_count") != actual.row_count:
@@ -1093,6 +1301,33 @@ def _compare_bm25_fingerprint(
         issues.append(VerificationIssue("artifact_id_mismatch", component))
     if expected.get("semantic_sha256") != actual.semantic_sha256:
         issues.append(VerificationIssue("artifact_hash_mismatch", component))
+    if expected_identity.get("payload_schema") != actual.payload_schema:
+        issues.append(VerificationIssue("bm25_schema_mismatch", component))
+    if any(
+        expected_identity.get(field) != getattr(actual, field)
+        for field in (
+            "analyzer_schema",
+            "analyzer_name",
+            "analyzer_version",
+            "analyzer_fingerprint_sha256",
+            "analyzer_probe_sha256",
+        )
+    ):
+        issues.append(VerificationIssue("bm25_analyzer_mismatch", component))
+    if expected_identity.get("config_sha256") != actual.config_sha256:
+        issues.append(VerificationIssue("bm25_config_mismatch", component))
+    if expected_identity.get("dictionary_sha256") != actual.dictionary_sha256:
+        issues.append(VerificationIssue("bm25_dictionary_mismatch", component))
+    if any(
+        expected_identity.get(field) != getattr(actual, field)
+        for field in ("segmenter_name", "segmenter_version", "segmenter_hmm")
+    ):
+        issues.append(VerificationIssue("bm25_segmenter_mismatch", component))
+    if (
+        expected_identity.get("k1") != actual.k1
+        or expected_identity.get("b") != actual.b
+    ):
+        issues.append(VerificationIssue("bm25_parameters_mismatch", component))
     return issues
 
 

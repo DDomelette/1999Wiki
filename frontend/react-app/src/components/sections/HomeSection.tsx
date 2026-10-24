@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { GLOBAL_BACKGROUND_IMAGE_SRC, HOME_VIDEO_SRC } from '../../media/assets'
 import './HomeSection.css'
 
@@ -19,14 +19,21 @@ type IdleScheduler = {
   cancelIdleCallback?: (handle: number) => void
 }
 
+type NavigatorWithConnection = Navigator & {
+  connection?: { saveData?: boolean }
+}
+
 export function HomeSection() {
   const [showToast, setShowToast] = useState(false)
   const [videoEnabled, setVideoEnabled] = useState(false)
   const [videoFailed, setVideoFailed] = useState(false)
   const [videoReady, setVideoReady] = useState(false)
+  const sectionRef = useRef<HTMLElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    const saveData = (navigator as NavigatorWithConnection).connection?.saveData
+    if (saveData || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
 
     const idleScheduler = window as unknown as IdleScheduler
     if (idleScheduler.requestIdleCallback) {
@@ -41,8 +48,25 @@ export function HomeSection() {
     return () => globalThis.clearTimeout(timeoutId)
   }, [])
 
+  useEffect(() => {
+    const section = sectionRef.current
+    const video = videoRef.current
+    if (!videoEnabled || !section || !video || typeof IntersectionObserver === 'undefined') return
+
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        void video.play().catch(() => {})
+      } else {
+        video.pause()
+      }
+    }, { threshold: 0.1 })
+    observer.observe(section)
+    return () => observer.disconnect()
+  }, [videoEnabled, videoFailed])
+
   return (
     <section
+      ref={sectionRef}
       data-snap-section="home"
       className="snap-section home-section"
     >
@@ -57,6 +81,7 @@ export function HomeSection() {
       />
       {videoEnabled && !videoFailed && (
         <video
+          ref={videoRef}
           className="home-section__video"
           autoPlay
           muted

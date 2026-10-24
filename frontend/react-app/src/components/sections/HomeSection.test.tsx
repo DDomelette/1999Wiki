@@ -7,6 +7,10 @@ describe('HomeSection media background', () => {
 
   beforeEach(() => {
     idleCallback = undefined
+    Object.defineProperty(navigator, 'connection', {
+      configurable: true,
+      value: { saveData: false },
+    })
     Object.defineProperty(window, 'requestIdleCallback', {
       configurable: true,
       value: (callback: IdleRequestCallback) => {
@@ -49,7 +53,7 @@ describe('HomeSection media background', () => {
     const video = container.querySelector('video')
     expect(video).toBeInTheDocument()
     expect(video).toHaveAttribute('preload', 'none')
-    expect(video).toHaveAttribute('poster', '/images/global-background.png')
+    expect(video).toHaveAttribute('poster', '/images/global-background.webp')
     expect(video).toHaveStyle({ opacity: '0', transition: 'opacity 900ms ease' })
 
     fireEvent.canPlay(video as HTMLVideoElement)
@@ -59,6 +63,19 @@ describe('HomeSection media background', () => {
     expect(source).toHaveAttribute('src', '/videos/pv.mp4')
     expect(source).toHaveAttribute('type', 'video/mp4')
 
+    expect(screen.getByRole('button', { name: '立即下载' })).toBeInTheDocument()
+  })
+
+  it('does not activate the video when the browser requests reduced data usage', () => {
+    Object.defineProperty(navigator, 'connection', {
+      configurable: true,
+      value: { saveData: true },
+    })
+
+    const { container } = render(<HomeSection />)
+
+    expect(idleCallback).toBeUndefined()
+    expect(container.querySelector('video')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '立即下载' })).toBeInTheDocument()
   })
 

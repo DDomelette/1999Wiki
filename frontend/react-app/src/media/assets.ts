@@ -5,7 +5,7 @@ import {
 } from './crawlerCovers'
 
 export const HOME_VIDEO_SRC = '/videos/pv.mp4'
-export const GLOBAL_BACKGROUND_IMAGE_SRC = '/images/global-background.png'
+export const GLOBAL_BACKGROUND_IMAGE_SRC = '/images/global-background.webp'
 
 const CHARACTER_CATEGORY_KEY = '\u4eba\u7269'
 const PSYCHUBE_CATEGORY_KEY = '\u5fc3\u76f8'

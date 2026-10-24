@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,12 @@ from langchain_core.documents import Document
 from src.huiji_rag.io import write_jsonl
 from src.rag.packet_policy import get_packet_policy
 from src.rag.query_plan import QueryPlan
-from src.rag.retriever import Retriever, _sparse_query_for_plan
+from src.rag.retriever import (
+    Retriever,
+    _doc_to_huiji_row,
+    _sparse_query_for_plan,
+    build_sparse_query_segments,
+)
 from src.rag.tracing import RequestTrace
 
 
@@ -139,7 +145,130 @@ def test_sparse_query_for_plan_prefers_explicit_sparse_query():
         sparse_query="十四行诗 Sonetto char:3023 profile skills items",
     )
 
-    assert _sparse_query_for_plan(plan.normalized_query, plan) == "十四行诗 Sonetto char:3023 profile skills items"
+    assert build_sparse_query_segments(plan) == (
+        "介绍一下十四行诗",
+        "十四行诗 Sonetto char:3023 profile skills items",
+        "十四行诗",
+        "Sonetto",
+        "角色资料",
+        "基础资料",
+        "profile",
+    )
+    assert _sparse_query_for_plan(plan.normalized_query, plan) == " ".join(
+        build_sparse_query_segments(plan)
+    )
+
+
+def test_sparse_query_segments_for_corpus_topic_are_ordered_and_deduplicated():
+    plan = QueryPlan(
+        original_query="暴雨是什么",
+        normalized_query="暴雨",
+        entity=None,
+        aliases=("暴雨", "暴雨事件"),
+        intent="general_game",
+        section_hints=("剧情", "故事"),
+        scatter_terms=("暴雨", "暴雨事件", ""),
+        confidence=0.8,
+        sparse_query="暴雨",
+        retrieval_scope="corpus_topic",
+    )
+
+    assert build_sparse_query_segments(plan) == (
+        "暴雨是什么",
+        "暴雨",
+        "暴雨事件",
+        "story",
+        "剧情",
+        "故事",
+    )
+
+
+def test_milvus_serialized_topic_metadata_survives_corpus_topic_gates():
+    source_ref = {
+        "source_kind": "crawler_page",
+        "source_title": "暴雨",
+        "source_row_id": "storm-definition",
+        "source_content_sha256": "a" * 64,
+    }
+    row = _doc_to_huiji_row(
+        Document(
+            page_content="暴雨是游戏世界观中的核心事件。",
+            metadata={
+                "child_id": "topic:storm/definition:milvus",
+                "parent_id": "page:storm/definition",
+                "entity_id": "topic:storm",
+                "entity_name": "暴雨",
+                "entity_type": "topic",
+                "category": "topic",
+                "section_kind": "topic",
+                "route_tags": json.dumps(
+                    ["general_game", "definition"],
+                    ensure_ascii=False,
+                ),
+                "source_ref": json.dumps([source_ref], ensure_ascii=False),
+            },
+        ),
+        score=0.9,
+        rank=1,
+    )
+
+    assert row["route_tags"] == ("general_game", "definition")
+    assert row["source_refs"] == (source_ref,)
+    assert Retriever._is_corpus_topic_candidate(row) is True
+    assert Retriever._has_valid_source_refs(row) is True
+
+
+def test_malformed_milvus_topic_metadata_fails_closed_without_character_tuples():
+    malformed_rows = [
+        _doc_to_huiji_row(
+            Document(
+                page_content="malformed route tags",
+                metadata={
+                    "entity_type": "character",
+                    "route_tags": '{"general_game": true}',
+                    "source_ref": "[]",
+                },
+            ),
+            score=0.9,
+            rank=1,
+        ),
+        _doc_to_huiji_row(
+            Document(
+                page_content="malformed source refs",
+                metadata={
+                    "entity_type": "character",
+                    "route_tags": '["general_game"]',
+                    "source_ref": '{"source_kind": "crawler_page"}',
+                },
+            ),
+            score=0.8,
+            rank=2,
+        ),
+        _doc_to_huiji_row(
+            Document(
+                page_content="invalid json",
+                metadata={
+                    "entity_type": "character",
+                    "route_tags": "[not-json",
+                    "source_ref": "[not-json",
+                },
+            ),
+            score=0.7,
+            rank=3,
+        ),
+    ]
+
+    assert malformed_rows[0]["route_tags"] == ()
+    assert malformed_rows[1]["source_refs"] == ()
+    assert malformed_rows[2]["route_tags"] == ()
+    assert malformed_rows[2]["source_refs"] == ()
+    assert all(
+        not (
+            Retriever._is_corpus_topic_candidate(row)
+            and Retriever._has_valid_source_refs(row)
+        )
+        for row in malformed_rows
+    )
 
 
 class _CrossOwnerDenseVectorstore:
@@ -743,4 +872,3 @@ def test_huiji_voice_page_size_zero_clamps_to_one_at_consumption(tmp_path):
     assert retriever.last_route_debug["required_source_count"] == 1
     assert retriever.last_route_debug["intent_targets"] == {"voice": 1}
     assert retriever.last_route_debug["intent_retained"] == {"voice": 1}
-

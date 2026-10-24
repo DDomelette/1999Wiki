@@ -52,21 +52,17 @@ export function CharacterPortraitStage({ viewModel, mode }: CharacterPortraitSta
       </span>
       <span className="character-portrait-stage__ribbon">SOPHISTICATED</span>
       <div className="character-portrait-stage__images">
-        {viewModel.portraitStates.map((state) => {
-          const selected = state.id === active?.id
-          const media = resolveModeMedia(state, effectiveMode)
-          return (
-            <img
-              key={state.id}
-              src={media?.url}
-              alt={selected ? `${viewModel.identity.name} - ${state.label}` : ''}
-              aria-hidden={selected ? 'false' : 'true'}
-              data-testid="character-portrait-image"
-              data-portrait-mode={effectiveMode}
-              className={selected ? 'is-active' : 'is-inactive'}
-            />
-          )
-        })}
+        {active && activeMedia ? (
+          <img
+            src={activeMedia.url}
+            alt={`${viewModel.identity.name} - ${active.label}`}
+            aria-hidden="false"
+            data-testid="character-portrait-image"
+            data-portrait-mode={effectiveMode}
+            className="is-active"
+            decoding="async"
+          />
+        ) : null}
         {(!activeMedia || viewModel.portraitStates.length === 0) ? (
           <div className="character-portrait-stage__fallback" aria-label="暂无可用立绘">
             <ImageIcon aria-hidden="true" />

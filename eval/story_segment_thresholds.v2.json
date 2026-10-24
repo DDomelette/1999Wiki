@@ -1,0 +1,443 @@
+{
+  "denominator_definitions": {
+    "all_attempted_kb_requests": "All frozen knowledge requests for which retrieval was attempted; not_applicable branches are excluded.",
+    "all_candidate_queries": "All frozen Story Segment evaluation queries evaluated against the same runtime snapshot.",
+    "all_capacity_preflights": "Every D-owned capacity preflight bound to the final typed shadow build input and target storage roots.",
+    "all_context_units": "All context units selected into final grounded generation context across the frozen queries.",
+    "all_detected_story_occurrences": "All source-query Story occurrences in the frozen direct-query authorization cases.",
+    "all_explicit_one_to_three_owner_cases": "Frozen direct-query cases containing exactly one, two, or three explicit Story owners.",
+    "all_final_context_required_atom_groups": "All required Atom groups for frozen cases after current context packing; each group contributes at most one covered item.",
+    "all_finalized_unaffected_subtasks": "Every local, meta, smalltalk, and unrelated KB subtask that does not overlap a provisional-to-final Story fallback repair.",
+    "all_frozen_requests": "All unique frozen requests, including non-retrieval boundary cases.",
+    "all_knowledge_subtasks": "All knowledge subtasks in the frozen final RequestPlan v2 cases.",
+    "all_local_story_pipeline_samples": "All timed local detector, assignment, authorization, mapping, aggregation, quota, and packing samples after warm-up.",
+    "all_non_story_kb_cases": "All frozen non-Story knowledge cases and non-Story spans in composite cases.",
+    "all_nonexhaustive_answers": "All frozen cases whose narrative coverage is non_exhaustive.",
+    "all_not_applicable_boundary_branches": "All non-Story, denied, needs-continuation, boundary, and local branches that must be filtered before KB retrieval-outcome aggregation.",
+    "all_oversized_story_atoms": "Every Story Atom exceeding the normal segment text budget in the accepted C artifact.",
+    "all_performance_responses": "All five post-warm-up end-to-end candidate responses per frozen performance case.",
+    "all_protected_queries": "All frozen numeric, short-text, and exact internal-ID queries paired to the accepted active baseline.",
+    "all_relevant_character_relations": "All manually reviewable character-to-Story relations in the frozen relation subset.",
+    "all_required_story_authorizations": "Every required Story owner in direct, verified-continuation, or validated-anchor cases.",
+    "all_retrieval_outcome_projections": "Every internal RouteDecision, REST response, SSE sources event, and SSE done event projection in the frozen cases.",
+    "all_runtime_protected_identities": "All active pointers, active artifacts, source snapshots, schemas, configs, MinIO/MySQL states, and production provenance protected by the shadow run.",
+    "all_story_answer_scope_cases": "All applicable frozen Story evidence packets, repeated twice for deterministic normalization.",
+    "all_story_atom_citations": "All Atom citations emitted from final Story context in the frozen cases.",
+    "all_story_dense_queries": "Frozen semantic Story subset evaluated against typed Story Segment Dense rows.",
+    "all_story_mentions": "All reviewed positive and negative Story mention candidates in the frozen request-level detector set.",
+    "all_story_segments_in_final_context": "All selected Story Segments after fusion, owner quota, expansion, and context packing.",
+    "all_target_scope_applicability_decisions": "Every target subtask's scope-presence decision in the frozen cases, including authorized Story, non-Story, local, denied, boundary, needs-continuation, and failed branches. Each target decision counts once; setup executions are excluded. Missing target execution or an incomplete target set is unmeasured, not removed to claim complete coverage.",
+    "all_topic_page_requirements": "All required Topic/Page source identities in the frozen Topic plus Story cases.",
+    "all_typed_dense_input_rows": "All rows in the clean-HEAD typed Dense build input.",
+    "all_unique_source_spans": "All frozen RequestPlan v2 SourceQuerySpan occurrences that must have exactly one final subtask owner.",
+    "all_valid_anchor_events": "All frozen anchor set, clear, expiry, snapshot-mismatch, and consume events.",
+    "all_valid_continuation_pages": "All canonical pages derived from frozen explicit 4 through 32 Story requests and revalidated in a new request.",
+    "all_valid_finalizations": "All frozen provisional to final RequestPlan v2 transactions.",
+    "all_wrong_or_ambiguous_detection_cases": "All frozen incomplete, ambiguous, cross-span, duplicate-span, Planner omission, Planner addition, and Planner reorder Story cases.",
+    "baseline_middle_late_subset": "Required Atom groups in the frozen middle/late subset whose active final-context Recall is below 0.90.",
+    "candidate_retrieval_latency_samples": "All five post-warm-up candidate retrieval timings per frozen performance case.",
+    "exact_lexical_atom_groups": "All required Atom groups in the 12-case exact lexical, numeric, short-dialogue, and internal-ID stratum.",
+    "fused_story_atom_groups_at_8": "All required Atom groups mechanically mapped to relevant Segments for fused top-8 scoring.",
+    "fused_story_ranked_cases": "All frozen cases with at least one mechanically derived relevant Segment in fused top-8 evaluation.",
+    "multi_detail_required_atom_groups": "Every independent required Atom group in the 10 single-Story multi-detail cases.",
+    "published_character_relations": "All character-to-Story relations emitted by the accepted published relation registry.",
+    "semantic_story_atom_groups": "All required Atom groups in the frozen semantic Story subset.",
+    "shortfall_cases_with_relevant_final_context": "Frozen partial cases with at least one relevant gold Atom visible in final context.",
+    "story_branch_expansions": "All adjacency expansions from selected Story Segments in the frozen branch-boundary cases.",
+    "story_context_character_pairs": "Every pair of Story context units compared for duplicate normalized body text.",
+    "story_owner_filtered_results": "All retrieval results returned from an authorized Story owner-scoped branch.",
+    "story_query_execution_plans": "Every frozen Story query execution plan inspected for query-time full-corpus scans.",
+    "zero_tolerance_event_set": "Count of the named forbidden event across the complete frozen run; denominator is one complete run."
+  },
+  "hard_gates": {
+    "active_or_provenance_drift_count": {
+      "denominator": "all_runtime_protected_identities",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "identities",
+      "zero_tolerance": true
+    },
+    "ambiguous_story_detection_retriever_calls": {
+      "denominator": "all_wrong_or_ambiguous_detection_cases",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "calls",
+      "zero_tolerance": true
+    },
+    "answer_scope_added_api_calls": {
+      "denominator": "all_story_answer_scope_cases",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "calls"
+    },
+    "atom_bm25_recall_at_80": {
+      "baseline_relation": "not_below",
+      "denominator": "exact_lexical_atom_groups",
+      "direction": "minimum",
+      "minimum": 0.95,
+      "unit": "ratio"
+    },
+    "atom_citation_closure_rate": {
+      "denominator": "all_story_atom_citations",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "baseline_equivalence_false_coverage_count": {
+      "denominator": "zero_tolerance_event_set",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "events",
+      "zero_tolerance": true
+    },
+    "candidate_remaining_capacity_bytes": {
+      "denominator": "all_capacity_preflights",
+      "direction": "minimum",
+      "minimum": 12884901888,
+      "unit": "bytes",
+      "zero_tolerance": true
+    },
+    "continuation_authorized_page_rate": {
+      "denominator": "all_valid_continuation_pages",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "continuation_composite_comparison_count": {
+      "denominator": "all_valid_continuation_pages",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "calls",
+      "zero_tolerance": true
+    },
+    "continuation_frontend_field_loss_rate": {
+      "denominator": "all_valid_continuation_pages",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "continuation_planner_calls": {
+      "denominator": "all_valid_continuation_pages",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "calls",
+      "zero_tolerance": true
+    },
+    "dense_embedding_calls_per_knowledge_subtask": {
+      "denominator": "all_knowledge_subtasks",
+      "direction": "maximum",
+      "maximum": 2,
+      "same_query_duplicate_calls_maximum": 0,
+      "unit": "calls"
+    },
+    "fallback_unaffected_subtask_retention_rate": {
+      "denominator": "all_finalized_unaffected_subtasks",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "final_evidence_recall": {
+      "baseline_relation": "not_below",
+      "denominator": "all_final_context_required_atom_groups",
+      "direction": "minimum",
+      "minimum": 0.9,
+      "unit": "ratio"
+    },
+    "full_chain_success_rate": {
+      "denominator": "all_frozen_requests",
+      "direction": "minimum",
+      "minimum": 0.98,
+      "unit": "ratio"
+    },
+    "fused_mrr_at_8": {
+      "baseline_tolerance": -0.02,
+      "denominator": "fused_story_ranked_cases",
+      "direction": "not_below_baseline",
+      "unit": "score"
+    },
+    "fused_ndcg_at_8": {
+      "baseline_tolerance": -0.02,
+      "denominator": "fused_story_ranked_cases",
+      "direction": "not_below_baseline",
+      "unit": "score"
+    },
+    "fused_segment_recall_at_8": {
+      "denominator": "fused_story_atom_groups_at_8",
+      "direction": "minimum",
+      "minimum": 0.9,
+      "unit": "ratio"
+    },
+    "middle_late_final_evidence_recall_delta": {
+      "baseline_below": 0.9,
+      "denominator": "baseline_middle_late_subset",
+      "direction": "conditional_delta",
+      "otherwise_relation": "not_below",
+      "required_delta": 0.1,
+      "unit": "ratio"
+    },
+    "multi_detail_coverage_rate": {
+      "denominator": "multi_detail_required_atom_groups",
+      "direction": "minimum",
+      "minimum": 0.85,
+      "unit": "ratio"
+    },
+    "non_story_false_rejection_count": {
+      "denominator": "all_non_story_kb_cases",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "events",
+      "zero_tolerance": true
+    },
+    "nonexhaustive_overclaim_count": {
+      "denominator": "all_nonexhaustive_answers",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "events",
+      "zero_tolerance": true
+    },
+    "not_applicable_empty_fallback_isolation_rate": {
+      "denominator": "all_not_applicable_boundary_branches",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "oversized_atom_mapping_body_citation_closure_rate": {
+      "denominator": "all_oversized_story_atoms",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "owner_gate_unauthorized_rate": {
+      "denominator": "story_owner_filtered_results",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "planner_mutation_wrong_authorization_count": {
+      "denominator": "all_wrong_or_ambiguous_detection_cases",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "events",
+      "zero_tolerance": true
+    },
+    "policy_story_mention_precision": {
+      "denominator": "all_story_mentions",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "policy_story_mention_recall": {
+      "denominator": "all_story_mentions",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "protected_query_non_regression_rate": {
+      "denominator": "all_protected_queries",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "provisional_final_transaction_closure": {
+      "denominator": "all_valid_finalizations",
+      "direction": "minimum",
+      "fallback_detector_recall_maximum": 0,
+      "fallback_per_request_maximum": 1,
+      "fallback_planner_recall_maximum": 0,
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "published_character_relation_precision": {
+      "denominator": "published_character_relations",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "request_detector_calls": {
+      "denominator": "all_frozen_requests",
+      "direction": "minimum",
+      "maximum": 1,
+      "minimum": 1,
+      "unit": "calls_per_natural_language_request",
+      "zero_tolerance": true
+    },
+    "request_plan_occurrence_unique_assignment_rate": {
+      "denominator": "all_unique_source_spans",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "request_retrieval_outcome_projection_rate": {
+      "denominator": "all_retrieval_outcome_projections",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "required_story_authorization_precision": {
+      "denominator": "all_required_story_authorizations",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "reranker_api_calls": {
+      "denominator": "all_candidate_queries",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "calls",
+      "zero_tolerance": true
+    },
+    "response_total_p95_ms": {
+      "absolute_limit": 45000,
+      "denominator": "all_performance_responses",
+      "direction": "latency_bound",
+      "unit": "milliseconds"
+    },
+    "retrieval_p95_ms": {
+      "absolute_limit": 5000,
+      "baseline_additive_limit_ms": 200,
+      "baseline_multiplier_limit": 1.2,
+      "denominator": "candidate_retrieval_latency_samples",
+      "direction": "latency_bound",
+      "unit": "milliseconds"
+    },
+    "reviewable_character_relation_recall": {
+      "denominator": "all_relevant_character_relations",
+      "direction": "minimum",
+      "minimum": 0.9,
+      "unit": "ratio"
+    },
+    "segment_dense_recall_at_30": {
+      "denominator": "semantic_story_atom_groups",
+      "direction": "minimum",
+      "minimum": 0.85,
+      "unit": "ratio"
+    },
+    "shortfall_false_refusal_count": {
+      "denominator": "shortfall_cases_with_relevant_final_context",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "events",
+      "zero_tolerance": true
+    },
+    "story_answer_scope_applicability_rate": {
+      "denominator": "all_target_scope_applicability_decisions",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "story_answer_scope_deterministic_bytes_rate": {
+      "denominator": "all_story_answer_scope_cases",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "story_answer_scope_normalization_rate": {
+      "denominator": "all_story_answer_scope_cases",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "story_cross_branch_expansion_rate": {
+      "denominator": "story_branch_expansions",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "story_duplicate_body_rate": {
+      "denominator": "story_context_character_pairs",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "story_explicit_one_to_three_owner_coverage": {
+      "denominator": "all_explicit_one_to_three_owner_cases",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "story_local_pipeline_p95_ms": {
+      "absolute_limit": 100,
+      "denominator": "all_local_story_pipeline_samples",
+      "direction": "latency_bound",
+      "unit": "milliseconds"
+    },
+    "story_query_time_full_scan_count": {
+      "denominator": "story_query_execution_plans",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "queries",
+      "zero_tolerance": true
+    },
+    "topic_page_required_source_retention": {
+      "denominator": "all_topic_page_requirements",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "ttft_p95_ms": {
+      "absolute_limit": 15000,
+      "denominator": "all_performance_responses",
+      "direction": "latency_bound",
+      "unit": "milliseconds"
+    },
+    "typed_dense_story_segment_row_limit": {
+      "denominator": "all_typed_dense_input_rows",
+      "direction": "maximum",
+      "maximum": 25000,
+      "unit": "story_segment_rows",
+      "zero_tolerance": true
+    },
+    "validated_anchor_authorization_precision": {
+      "denominator": "all_valid_anchor_events",
+      "direction": "minimum",
+      "minimum": 1,
+      "unit": "ratio",
+      "zero_tolerance": true
+    },
+    "validated_anchor_conflict_revival_count": {
+      "denominator": "all_valid_anchor_events",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "events",
+      "zero_tolerance": true
+    },
+    "validated_anchor_invalid_set_count": {
+      "denominator": "all_valid_anchor_events",
+      "direction": "zero",
+      "maximum": 0,
+      "unit": "events",
+      "zero_tolerance": true
+    },
+    "validated_continuation_correctness": {
+      "denominator": "all_valid_continuation_pages",
+      "direction": "minimum",
+      "minimum": 1,
+      "planner_calls_maximum": 0,
+      "unit": "ratio",
+      "zero_tolerance": true
+    }
+  },
+  "schema_version": "rag.story-segment-thresholds/v1"
+}

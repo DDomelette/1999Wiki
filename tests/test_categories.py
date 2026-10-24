@@ -147,6 +147,27 @@ class _MilvusVectorstore:
         self.client = client
 
 
+def test_milvus_categories_match_crawler_schema(monkeypatch):
+    from backend import main as main_mod
+
+    class CrawlerClient:
+        def query_iterator(self, **kwargs):
+            assert kwargs["filter"] == '(category == "人物" or category == "character")'
+            return _MilvusIterator([[{"id": "char:3041/profile/0"}], []])
+
+        def query(self, **kwargs):
+            assert kwargs["filter"] == '(category == "人物" or category == "character")'
+            return [{"entity_name": "玛蒂尔达", "text": "角色介绍", "source_ref": "wiki/3041"}]
+
+    vs = _MilvusVectorstore(CrawlerClient())
+    assert main_mod._count_by_category(vs, "人物") == 1
+    monkeypatch.setattr(main_mod, "_ensure_loaded", lambda: None)
+    monkeypatch.setattr(main_mod, "_state", {"vs": vs, "loaded": True})
+    response = TestClient(main_mod.app).get("/category/人物/docs?limit=1")
+    assert response.status_code == 200
+    assert response.json()["docs"] == [{"name": "玛蒂尔达", "source": "wiki/3041", "snippet": "角色介绍"}]
+
+
 def test_milvus_category_count_iterates_all_batches_and_escapes_filter():
     from backend import main as main_mod
 

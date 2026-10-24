@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -103,7 +104,8 @@ class RequestTrace:
         self._clock_ns = clock_ns
         self._origin_ns = clock_ns()
         self._spans: list[StageSpan] = []
-        self._parents: list[str] = []
+        self._local = threading.local()
+        self._lock = threading.RLock()
         self._marks: dict[str, float] = {}
 
     @contextmanager
@@ -111,11 +113,12 @@ class RequestTrace:
         if not _TRACE_NAME.fullmatch(name):
             raise ValueError("trace span name is invalid")
         safe = safe_trace_attributes(attributes)
-        parent_name = self._parents[-1] if self._parents else None
+        parents = self._parent_stack()
+        parent_name = parents[-1] if parents else None
         started = self._clock_ns()
         status: TraceStatus = "ok"
         error_class = ""
-        self._parents.append(name)
+        parents.append(name)
         try:
             yield
         except Exception as error:
@@ -123,19 +126,20 @@ class RequestTrace:
             error_class = type(error).__name__
             raise
         finally:
-            self._parents.pop()
+            parents.pop()
             finished = self._clock_ns()
-            self._spans.append(
-                StageSpan(
-                    name=name,
-                    parent_name=parent_name,
-                    start_offset_ms=self._milliseconds(started - self._origin_ns),
-                    duration_ms=self._milliseconds(max(0, finished - started)),
-                    status=status,
-                    attributes=safe,
-                    error_class=error_class,
+            with self._lock:
+                self._spans.append(
+                    StageSpan(
+                        name=name,
+                        parent_name=parent_name,
+                        start_offset_ms=self._milliseconds(started - self._origin_ns),
+                        duration_ms=self._milliseconds(max(0, finished - started)),
+                        status=status,
+                        attributes=safe,
+                        error_class=error_class,
+                    )
                 )
-            )
 
     def mark_model_first_token(self) -> None:
         self._mark_once("model_first_token_ms")
@@ -150,11 +154,22 @@ class RequestTrace:
         self._mark_once("completed_ms")
 
     def snapshot(self) -> TraceSnapshot:
-        return TraceSnapshot(spans=tuple(self._spans), **self._marks)
+        with self._lock:
+            return TraceSnapshot(spans=tuple(self._spans), **dict(self._marks))
 
     def _mark_once(self, name: str) -> None:
-        if name not in self._marks:
-            self._marks[name] = self._milliseconds(self._clock_ns() - self._origin_ns)
+        with self._lock:
+            if name not in self._marks:
+                self._marks[name] = self._milliseconds(
+                    self._clock_ns() - self._origin_ns
+                )
+
+    def _parent_stack(self) -> list[str]:
+        parents = getattr(self._local, "parents", None)
+        if parents is None:
+            parents = []
+            self._local.parents = parents
+        return parents
 
     @staticmethod
     def _milliseconds(nanoseconds: int) -> float:

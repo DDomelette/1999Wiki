@@ -13,7 +13,13 @@ from src.huijiwiki.models import (
     ensure_read_only_action,
     stable_resource_relpath,
 )
-from src.huiji_rag.models import BindingRecord, BindingStatus, ResourceRow, VoiceSourceRow
+from src.huiji_rag.models import (
+    BindingRecord,
+    BindingStatus,
+    ChildBlock,
+    ResourceRow,
+    VoiceSourceRow,
+)
 
 
 def test_build_source_url_encodes_spaces_and_keeps_namespace_colon():
@@ -93,6 +99,61 @@ def test_fetch_decision_is_explicit():
         "should_fetch": True,
         "reason": "changed",
     }
+
+
+def test_child_json_has_exact_frozen_common_fields_and_no_owner_type() -> None:
+    child = ChildBlock.from_json(
+        {
+            "child_id": "char:7/profile/root",
+            "parent_id": "char:7/profile",
+            "entity_id": "7",
+            "entity_name": "样本角色",
+            "category": "character",
+            "section_kind": "profile",
+            "title": "基础资料",
+            "text": "原有正文",
+            "search_text": "样本角色 基础资料 原有正文",
+            "chunk_index": 0,
+            "media_ids": [],
+            "media_policy": "auto",
+            "source_refs": [],
+            "content_hash": "a" * 64,
+        }
+    )
+    row = child.to_json()
+
+    assert row["content"] == "原有正文"
+    assert row["heading_path"] == ("profile",)
+    assert row["entity_aliases"] == ()
+    assert "owner_type" not in row
+
+
+def test_content_equals_text_for_legacy_and_new_children() -> None:
+    legacy = ChildBlock.from_json(
+        {
+            "child_id": "legacy",
+            "parent_id": "parent",
+            "section_kind": "voice",
+            "text": "legacy text",
+        }
+    )
+    explicit = ChildBlock.from_json(
+        {
+            "child_id": "new",
+            "parent_id": "parent",
+            "section_kind": "story",
+            "text": "new text",
+            "content": "new text",
+            "heading_path": ["scene:1"],
+            "entity_aliases": ["alias"],
+        }
+    )
+
+    assert legacy.content == legacy.text == "legacy text"
+    assert legacy.heading_path == ("voice",)
+    assert explicit.content == explicit.text == "new text"
+    assert explicit.heading_path == ("scene:1",)
+    assert explicit.entity_aliases == ("alias",)
 
 
 @pytest.mark.parametrize(

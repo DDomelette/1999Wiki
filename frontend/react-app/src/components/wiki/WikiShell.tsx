@@ -121,28 +121,41 @@ export function WikiShell() {
   useEffect(() => {
     if (location.kind !== 'character-selection') return
     const generation = ++listGenerationRef.current
+    const controller = new AbortController()
     setPages([])
     setListCursor(null)
     setListError('')
     setListLoading(true)
     setListLoadingMore(false)
-    fetchWikiPages({ category: activeCategory, q: query, limit: 30 })
-      .then((data) => {
-        if (generation !== listGenerationRef.current) return
-        setPages(data.items)
-        setListCursor(data.nextCursor ?? null)
-        setSelectedPageId((current) => (
-          current && data.items.some((page) => page.pageId === current)
-            ? current
-            : data.items[0]?.pageId ?? ''
-        ))
-      })
-      .catch((error: unknown) => {
-        if (generation === listGenerationRef.current) setListError(messageFor(error))
-      })
-      .finally(() => {
-        if (generation === listGenerationRef.current) setListLoading(false)
-      })
+
+    const load = () => {
+      fetchWikiPages({ category: activeCategory, q: query, limit: 30 }, controller.signal)
+        .then((data) => {
+          if (generation !== listGenerationRef.current) return
+          setPages(data.items)
+          setListCursor(data.nextCursor ?? null)
+          setSelectedPageId((current) => (
+            current && data.items.some((page) => page.pageId === current)
+              ? current
+              : data.items[0]?.pageId ?? ''
+          ))
+        })
+        .catch((error: unknown) => {
+          if (generation === listGenerationRef.current && !controller.signal.aborted) {
+            setListError(messageFor(error))
+          }
+        })
+        .finally(() => {
+          if (generation === listGenerationRef.current) setListLoading(false)
+        })
+    }
+
+    const timer = query ? window.setTimeout(load, 250) : undefined
+    if (!timer) load()
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      controller.abort()
+    }
   }, [activeCategory, listRetryEpoch, location.kind, query])
 
   const loadMore = useCallback(() => {

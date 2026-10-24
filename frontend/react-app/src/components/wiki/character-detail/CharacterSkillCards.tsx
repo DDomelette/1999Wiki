@@ -17,7 +17,7 @@ export function CharacterSkillCards({
           data-testid="character-skill-card"
           key={skill.id}
         >
-          {skill.image ? <img src={skill.image.url} alt="" /> : null}
+          {skill.image ? <img src={skill.image.url} alt="" loading="lazy" decoding="async" /> : null}
           <div className="character-skill-card__body">
             <p className="character-detail__eyebrow">{skill.kind === 'ultimate' ? 'ULTIMATE' : 'TACTICAL_SKILL'}</p>
             <h3>{skill.name}</h3>

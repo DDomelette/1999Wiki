@@ -1,0 +1,142 @@
+from pathlib import Path
+
+import pytest
+
+
+SCRIPT_ROOT = Path("scripts/codex-supervisor")
+CONTROL_SCRIPTS = (
+    "Start-Worker.ps1",
+    "Stop-Worker.ps1",
+    "Resume-Worker.ps1",
+)
+
+
+@pytest.mark.parametrize("filename", CONTROL_SCRIPTS)
+def test_control_scripts_are_scoped_and_safe(filename: str) -> None:
+    content = (SCRIPT_ROOT / filename).read_text(encoding="utf-8")
+    lowered = content.lower()
+    assert '$ErrorActionPreference = "Stop"' in content
+    assert "$PSScriptRoot" in content
+    assert "ValidateSet" not in content
+    assert "worker-validate" in content
+    assert "taskkill" not in lowered
+    assert "danger-full-access" not in lowered
+    assert "bypass-approvals" not in lowered
+    assert "api_key" not in lowered
+    assert "cookie" not in lowered
+
+
+def test_stop_requires_one_explicit_worker() -> None:
+    content = (SCRIPT_ROOT / "Stop-Worker.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "Mandatory = $true" in content
+    assert '"all"' not in content
+
+
+@pytest.mark.parametrize(
+    "filename", ("Start-Worker.ps1", "Resume-Worker.ps1")
+)
+def test_start_and_resume_delegate_to_nonblocking_python_cli(
+    filename: str,
+) -> None:
+    content = (SCRIPT_ROOT / filename).read_text(encoding="utf-8")
+    assert "Start-Process" not in content
+    assert "Wait-Process" not in content
+    assert "approved-" in content
+
+
+@pytest.mark.parametrize(
+    "filename",
+    (
+        "Watch-Worker.ps1",
+        "Show-Dashboard.ps1",
+        "Open-SupervisorWindows.ps1",
+    ),
+)
+def test_observer_scripts_are_reopenable_and_safe(filename: str) -> None:
+    content = (SCRIPT_ROOT / filename).read_text(encoding="utf-8")
+    lowered = content.lower()
+    assert '$ErrorActionPreference = "Stop"' in content
+    assert "$PSScriptRoot" in content
+    assert "stop-worker" not in lowered
+    assert "taskkill" not in lowered
+    if filename == "Watch-Worker.ps1":
+        assert "worker-validate" in content
+    else:
+        assert "worker-list" in content
+
+
+def test_open_windows_script_uses_visible_powershell_processes() -> None:
+    content = (SCRIPT_ROOT / "Open-SupervisorWindows.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "Start-Process" in content
+    assert "-WindowStyle Normal" in content
+    assert "worker-list" in content
+    assert '@("A", "B", "C")' not in content
+
+
+def test_watch_window_explains_close_is_observer_only() -> None:
+    content = (SCRIPT_ROOT / "Watch-Worker.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "closing this window does not stop the worker" in content
+    assert "Observer Only" in content
+
+
+def test_runbook_documents_control_reopen_and_two_layer_rules() -> None:
+    content = Path("docs/codex/cli-supervisor-runbook.md").read_text(
+        encoding="utf-8"
+    )
+    for marker in (
+        "Start-Worker.ps1",
+        "Stop-Worker.ps1",
+        "Resume-Worker.ps1",
+        "Watch-Worker.ps1",
+        "Show-Dashboard.ps1",
+        "Open-SupervisorWindows.ps1",
+        "关闭观察窗口不会停止 worker",
+        "gpt-5.6-sol",
+        "--disable fast_mode",
+        "--disable multi_agent",
+        "workspace-write",
+        "Conda `1999wiki`",
+        "禁止第三层代理",
+    ):
+        assert marker in content
+
+
+@pytest.mark.parametrize(
+    "filename",
+    (
+        "Start-Worker.ps1",
+        "Stop-Worker.ps1",
+        "Resume-Worker.ps1",
+        "Watch-Worker.ps1",
+        "Show-Dashboard.ps1",
+    ),
+)
+def test_python_entrypoints_require_conda_1999wiki(filename: str) -> None:
+    content = (SCRIPT_ROOT / filename).read_text(encoding="utf-8")
+    assert "Resolve-SupervisorPython.ps1" in content
+    assert "Resolve-SupervisorPython" in content
+
+
+def test_python_resolver_targets_named_conda_environment() -> None:
+    content = (SCRIPT_ROOT / "Resolve-SupervisorPython.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert '"1999wiki"' in content
+    assert "conda.exe" in content
+    assert "CODEX_SUPERVISOR_PYTHON" in content
+
+
+def test_task_receipt_writer_delegates_to_canonical_python_module() -> None:
+    content = (SCRIPT_ROOT / "Write-TaskReceipt.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "src.codex_supervisor.task_receipts" in content
+    assert "--base-commit" in content
+    assert "--allowed-file" in content
+    assert "Resolve-SupervisorPython" in content

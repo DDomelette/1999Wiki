@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 from pathlib import Path
@@ -110,3 +111,31 @@ def test_contract_and_inventory_modules_have_no_runtime_writer_imports() -> None
         for line in import_lines
         for token in ("pymilvus", "minio", "huiji_wiki", "pymysql")
     )
+
+
+def test_builder_orchestrator_has_no_service_downloader_or_activation_imports() -> None:
+    source = Path("src/huiji_rag/build/orchestrator.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        str(node.module or "")
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    }
+    forbidden = {
+        "requests",
+        "httpx",
+        "pymysql",
+        "mysql",
+        "pymilvus",
+        "minio",
+        "src.huijiwiki.resource_downloader",
+        "src.huiji_rag.active_pointer",
+    }
+    assert imported.isdisjoint(forbidden)
+    assert "ResourceDownloader" not in source
+    assert "activate" not in source.casefold()
