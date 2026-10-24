@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CharacterVoiceViewModel } from '../characterDetailViewModel'
 import { CharacterVoiceRecords } from './CharacterVoiceRecords'
@@ -47,9 +47,10 @@ const voices: CharacterVoiceViewModel[] = [{
 describe('CharacterVoiceRecords playback', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
-  it('starts playback immediately and reveals the native progress controls', () => {
+  it('keeps progress controls available while paused and restarts from the heading button', () => {
     const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
     const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
     const { container } = render(<CharacterVoiceRecords voices={voices} />)
@@ -64,7 +65,18 @@ describe('CharacterVoiceRecords playback', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '暂停初遇' }))
     expect(pause).toHaveBeenCalledTimes(1)
-    expect(audio).not.toHaveAttribute('controls')
+    expect(audio).toHaveAttribute('controls')
+
+    audio.currentTime = 7.5
+    fireEvent.pause(audio)
+    fireEvent.timeUpdate(audio)
+    expect(audio).toHaveAttribute('controls')
+    expect(screen.getByRole('button', { name: '播放初遇' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '播放初遇' }))
+    expect(audio.currentTime).toBe(0)
+    expect(play).toHaveBeenCalledTimes(2)
+    expect(audio).toHaveAttribute('controls')
   })
 
   it('stops the current audio when changing its language', () => {
@@ -78,6 +90,47 @@ describe('CharacterVoiceRecords playback', () => {
     expect(pause).toHaveBeenCalledTimes(1)
     expect(container.querySelector('audio')).toHaveAttribute('src', 'https://cdn.test/voice-en.mp3')
     expect(container.querySelector('audio')).not.toHaveAttribute('controls')
+    expect(screen.getByRole('button', { name: '播放初遇' })).toBeInTheDocument()
+  })
+
+  it('collapses the previous progress bar when another voice starts', () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
+    const secondVoice = { ...voices[0], id: 'voice-2', title: '箱中气候' }
+    const { container } = render(<CharacterVoiceRecords voices={[...voices, secondVoice]} />)
+    const audios = container.querySelectorAll('audio')
+
+    fireEvent.click(screen.getByRole('button', { name: '播放初遇' }))
+    fireEvent.click(screen.getByRole('button', { name: '播放箱中气候' }))
+
+    expect(audios[0]).not.toHaveAttribute('controls')
+    expect(audios[1]).toHaveAttribute('controls')
+    expect(audios[1].currentTime).toBe(0)
+  })
+
+  it('collapses the progress bar when its voice record leaves the viewport', () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
+    let observerCallback: IntersectionObserverCallback = () => undefined
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: IntersectionObserverCallback) {
+        observerCallback = callback
+      }
+
+      observe() {}
+      disconnect() {}
+    })
+    const { container } = render(<CharacterVoiceRecords voices={voices} />)
+    const audio = container.querySelector('audio')!
+
+    fireEvent.click(screen.getByRole('button', { name: '播放初遇' }))
+    expect(audio).toHaveAttribute('controls')
+    act(() => {
+      observerCallback([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver)
+    })
+
+    expect(pause).toHaveBeenCalledTimes(1)
+    expect(audio).not.toHaveAttribute('controls')
     expect(screen.getByRole('button', { name: '播放初遇' })).toBeInTheDocument()
   })
 
