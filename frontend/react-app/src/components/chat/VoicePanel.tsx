@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
+import { Pause, Play } from 'lucide-react'
 import { fetchVoicePage, VoicePageError } from '../../api/media'
 import type { MediaItem, VoiceLineGroup, VoicePanelPage } from '../../types'
 import { mediaBindingIdentity } from '../../media/identity'
@@ -304,32 +305,13 @@ export function VoicePanel({
           <div
             data-testid="voice-line"
             data-animation-slot="voice-line"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
-              alignItems: 'center',
-              gap: 8,
-              minHeight: 48,
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 6,
-              background: 'rgba(255, 255, 255, 0.06)',
-              color: 'var(--text-primary)',
-              padding: '6px 8px',
-            }}
+            className="voice-line"
           >
-            <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{line.title || line.voice_line_id}</span>
+            <span className="voice-line__title">{line.title || line.voice_line_id}</span>
             <div
               role="group"
               aria-label={`Languages for ${line.title || line.voice_line_id}`}
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                minWidth: 0,
-                maxWidth: '100%',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 4,
-                overflow: 'hidden',
-              }}
+              className="voice-line__languages"
             >
               {[...variantsByLanguage.keys()].map((language) => {
                 const selected = language === selectedLanguage
@@ -337,19 +319,10 @@ export function VoicePanel({
                   <button
                     key={language}
                     type="button"
+                    className="voice-line__language"
                     aria-label={`Select ${language} for ${line.title || line.voice_line_id}`}
                     aria-pressed={selected}
                     onClick={() => selectLanguage(line.voice_line_id, language)}
-                    style={{
-                      minWidth: 30,
-                      height: 26,
-                      border: 0,
-                      borderRight: '1px solid var(--border-subtle)',
-                      background: selected ? 'var(--accent-gold)' : 'transparent',
-                      color: selected ? 'var(--bg-primary)' : 'var(--text-secondary)',
-                      padding: '0 5px',
-                      cursor: 'pointer',
-                    }}
                   >
                     {language}
                   </button>
@@ -358,22 +331,13 @@ export function VoicePanel({
             </div>
             <button
               type="button"
+              className="voice-line__play"
               aria-label={`${isPlaying ? 'Pause' : 'Play'} ${line.title || line.voice_line_id}`}
               onClick={() => togglePlayback(line, selectedVariant)}
-              style={{
-                width: 30,
-                height: 30,
-                display: 'grid',
-                placeItems: 'center',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: '50%',
-                background: 'transparent',
-                color: 'var(--text-primary)',
-                padding: 0,
-                cursor: 'pointer',
-              }}
             >
-              <span aria-hidden="true">{isPlaying ? '\u23f8' : '\u25b6'}</span>
+              {isPlaying
+                ? <Pause aria-hidden="true" fill="currentColor" />
+                : <Play aria-hidden="true" fill="currentColor" />}
             </button>
             {isPlaying && (
               <input
