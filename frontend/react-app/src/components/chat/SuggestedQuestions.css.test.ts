@@ -11,6 +11,7 @@ describe('SuggestedQuestions.css', () => {
     expect(css).toMatch(/\.suggested-questions\s*\{[^}]*display:\s*flex/s)
     expect(css).toMatch(/\.suggested-questions__list\s*\{[^}]*overflow-x:\s*auto/s)
     expect(css).toMatch(/\.suggested-questions__item\s*\{[^}]*white-space:\s*nowrap/s)
+    expect(css).toMatch(/\.suggested-questions__item\s*\{[^}]*border-radius:\s*8px/s)
     expect(css).toContain('@media (max-width: 640px)')
   })
 

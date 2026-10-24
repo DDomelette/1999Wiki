@@ -25,6 +25,8 @@ describe('main page responsive CSS contract', () => {
   })
 
   it('compacts only the main Card Nav on phones', () => {
+    expect(navCss).toMatch(/\.card-nav__bar\s*\{[^}]*border-radius:\s*14px/s)
+    expect(navCss).toMatch(/\.card-nav__toggle, \.theme-toggle\s*\{[^}]*border-radius:\s*9px/s)
     expect(navCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.card-nav--main \.card-nav__bar/)
     expect(navCss).toMatch(/\.card-nav--main\s*\{[^}]*top:\s*calc\(env\(safe-area-inset-top, 0px\) \+ 6px\)/s)
     expect(navCss).toMatch(/\.card-nav--main \.card-nav__bar\s*\{[^}]*min-height:\s*52px/s)
@@ -39,15 +41,18 @@ describe('main page responsive CSS contract', () => {
     expect(navCss).not.toMatch(/\.card-nav--wiki \.card-nav__bar\s*\{[^}]*min-height:\s*40px/s)
   })
 
-  it('defines phone home sizing and safe scroll cue placement', () => {
+  it('defines phone home sizing, media contrast, and safe scroll cue placement', () => {
     expect(homeCss).toContain('@media (max-width: 720px)')
     expect(homeCss).toMatch(/\.home-section__video\s*\{[^}]*object-fit:\s*cover/s)
+    expect(homeCss).toMatch(/\.home-section__title\s*\{[^}]*color:\s*var\(--on-media-primary\)/s)
+    expect(homeCss).toMatch(/\.home-section__cta\s*\{[^}]*border:[^}]*var\(--on-media-accent\)/s)
     expect(homeCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.home-section__cta\s*\{[^}]*min-height:\s*44px/s)
     expect(homeCss).toContain('env(safe-area-inset-bottom')
   })
 
   it('switches data panels to the approved transparent poster at 980px', () => {
     expect(dataCss).toContain('@media (max-width: 980px)')
+    expect(dataCss).toMatch(/\.category-panel__meta\s*\{[^}]*color:\s*var\(--on-media-secondary\)/s)
     expect(dataCss).toMatch(/\.category-panel__layout\s*\{[^}]*grid-template-columns:\s*minmax\(320px, \.72fr\) minmax\(560px, 1\.45fr\)/s)
     expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.category-panel__copy\s*\{[^}]*position:\s*absolute[^}]*bottom:/s)
     expect(dataCss).toMatch(/@media \(max-width: 980px\)[\s\S]*\.data-section__nav\s*\{[^}]*overflow-x:\s*auto/s)
@@ -72,6 +77,11 @@ describe('main page responsive CSS contract', () => {
   it('keeps the chat toolbar below navigation and the mobile input shrinkable', () => {
     expect(chatCss).toContain('@media (max-width: 720px)')
     expect(chatCss).toMatch(/\.chat-section\s*\{[^}]*background:\s*linear-gradient[^}]*backdrop-filter:\s*blur\(2px\)/s)
+    expect(chatCss).toMatch(/\.chat-section__empty\s*\{[^}]*flex:\s*0 0 auto/s)
+    expect(chatCss).toMatch(/\.chat-section__empty\s*\{[^}]*border-radius:\s*16px/s)
+    expect(chatCss).toMatch(/\.chat-section__empty-register\s*\{[^}]*color:\s*var\(--text-muted\)[^}]*opacity:\s*0\.72/s)
+    expect(chatCss).toMatch(/\.chat-section__empty-register span\s*\{[^}]*padding:\s*0/s)
+    expect(chatCss).toContain('background-image: var(--archive-texture)')
     expect(chatCss).toMatch(/\.chat-section__clear\s*\{[^}]*width:\s*36px[^}]*height:\s*36px/s)
     const baseToolbar = chatCss.match(/\.chat-section__toolbar\s*\{([^}]*)\}/)?.[1] ?? ''
     expect(baseToolbar).toContain('padding-top: 88px')

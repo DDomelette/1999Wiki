@@ -46,6 +46,7 @@ export function ChatSection() {
       className="snap-section chat-section"
     >
       <div className="chat-section__toolbar">
+        <span className="chat-section__archive-id" aria-hidden="true">INQUIRY_DESK / 04</span>
         <span className="chat-section__toolbar-label">检索范围:</span>
         <CategorySelect />
         <button
@@ -76,8 +77,14 @@ export function ChatSection() {
         >
           {messages.length === 0 && (
             <div className="chat-section__empty">
-              <p className="chat-section__empty-title">神秘学问答</p>
-              <p>问问关于人物、心相、剧情、世界、阵营或日历的任何问题</p>
+              <span className="chat-section__empty-index" aria-hidden="true">04</span>
+              <p className="chat-section__empty-eyebrow">ARCANUM_INQUIRY / RAG ARCHIVE</p>
+              <h2 className="chat-section__empty-title">神秘学问答</h2>
+              <p className="chat-section__empty-description">检索人物、心相、剧情与世界档案。每一次提问，都会留下可追溯的资料来源。</p>
+              <div className="chat-section__empty-register" role="group" aria-label="可检索档案类别">
+                <span>人物</span><span>心相</span><span>剧情</span><span>世界</span><span>阵营</span><span>日历</span>
+              </div>
+              <p className="chat-section__empty-hint">从下方选择一条档案索引，或输入你的问题。</p>
             </div>
           )}
           {messages.map((message) => (

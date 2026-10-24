@@ -73,6 +73,10 @@ export function ChatInput() {
         onSubmit={onSubmit}
         className="chat-input__form"
       >
+        <div className="chat-input__form-heading" aria-hidden="true">
+          <span>QUERY_ENTRY</span>
+          <span>ARCHIVE_SEARCH / 1999</span>
+        </div>
         <SuggestedQuestions
           disabled={sending}
           onSelect={selectSuggestedQuestion}

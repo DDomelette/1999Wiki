@@ -168,10 +168,33 @@ describe('MessageBubble', () => {
     }
     useChatStore.setState({ messages: [message] })
 
-    render(<MessageBubble message={message} />)
+    const { container } = render(<MessageBubble message={message} />)
 
     expect(screen.getByText('[S07] Source seven')).toBeInTheDocument()
     expect(screen.queryByText('[S01] Source seven')).not.toBeInTheDocument()
+    expect(container.querySelector('.message-sources')).toHaveAttribute('open')
+  })
+
+  it('collapses long source lists into a compact count and preserves every citation', () => {
+    const sources = Array.from({ length: 20 }, (_, index) => ({
+      citation_id: `S${String(index + 1).padStart(2, '0')}`,
+      name: '十四行诗',
+      category: '人物',
+      source: `source-${index + 1}`,
+      score: 1,
+    }))
+
+    const { container } = render(<MessageBubble message={{
+      id: 'many-citations',
+      role: 'assistant',
+      content: 'Answer [S01]',
+      sources,
+    }} />)
+
+    expect(screen.getByText('20 条')).toBeInTheDocument()
+    expect(container.querySelector('.message-sources')).not.toHaveAttribute('open')
+    expect(container.querySelectorAll('.message-sources__list li')).toHaveLength(20)
+    expect(screen.getByText('[S20] 十四行诗')).toBeInTheDocument()
   })
 
   beforeEach(() => {
@@ -767,7 +790,7 @@ describe('MessageBubble', () => {
     expect(screen.getByRole('button', { name: 'Pause Line B' })).toBeInTheDocument()
   })
 
-  it('keeps row columns shrinkable and wraps language controls within the panel width', () => {
+  it('exposes responsive hooks for the title, language row, and playback control', () => {
     render(
       <VoicePanel
         page={voicePage([{
@@ -775,22 +798,22 @@ describe('MessageBubble', () => {
           title: 'A line with a long title',
           variants: [
             voiceVariant('zh-1', 'zh'),
+            voiceVariant('zh-hant-1', 'zh-hant'),
             voiceVariant('en-1', 'en'),
             voiceVariant('jp-1', 'jp'),
             voiceVariant('kr-1', 'kr'),
+            voiceVariant('fr-1', 'fr'),
           ],
         }])}
       />,
     )
 
-    expect(screen.getByTestId('voice-line')).toHaveStyle({
-      gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
-    })
-    expect(screen.getByRole('group', { name: 'Languages for A line with a long title' })).toHaveStyle({
-      flexWrap: 'wrap',
-      minWidth: '0',
-      maxWidth: '100%',
-    })
+    expect(screen.getByTestId('voice-line')).toHaveClass('voice-line')
+    expect(screen.getByText('A line with a long title')).toHaveClass('voice-line__title')
+    expect(screen.getByRole('group', { name: 'Languages for A line with a long title' })).toHaveClass('voice-line__languages')
+    expect(screen.getAllByRole('button', { name: /Select .* for A line with a long title/ })).toHaveLength(6)
+    expect(screen.getByRole('button', { name: 'Play A line with a long title' })).toHaveClass('voice-line__play')
+    expect(screen.getByRole('button', { name: 'Play A line with a long title' }).querySelector('svg')).toBeInTheDocument()
   })
 
   it('resets rows, overrides, cursor, loading, and audio for a different first-page identity', async () => {

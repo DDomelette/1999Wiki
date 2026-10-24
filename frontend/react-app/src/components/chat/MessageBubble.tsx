@@ -107,6 +107,28 @@ export const MessageBubble = memo(function MessageBubble({ message, precedingQue
               回答未完成，未经过引用校验
             </div>
           )}
+          {!isUser && message.sources && message.sources.length > 0 && !message.streaming && (
+            <motion.details
+              data-animation-slot="message-sources"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.3 }}
+              className="message-sources"
+              open={message.sources.length <= 3}
+            >
+              <summary>
+                <span>资料来源</span>
+                <span className="message-sources__count">{message.sources.length} 条</span>
+              </summary>
+              <ol className="message-sources__list">
+                {message.sources.map((source, index) => (
+                  <li key={`${source.citation_id ?? 'source'}-${index}`}>
+                    {source.citation_id ? `[${source.citation_id}] ` : ''}{source.name}
+                  </li>
+                ))}
+              </ol>
+            </motion.details>
+          )}
           {!message.streaming && hasMessageMedia && (
             <div data-message-media="true" data-animation-slot="message-media">
               <MessageAssets
@@ -117,28 +139,6 @@ export const MessageBubble = memo(function MessageBubble({ message, precedingQue
             </div>
           )}
         </>
-      )}
-      {!isUser && message.sources && message.sources.length > 0 && !message.streaming && (
-        <motion.div
-          data-animation-slot="message-sources"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          style={{
-            marginTop: 8, paddingTop: 8,
-            borderTop: '1px solid var(--border-subtle)',
-            fontSize: '0.875rem',
-            color: 'var(--text-secondary)',
-          }}
-        >
-          <span style={{ color: 'var(--accent-gold)' }}>来源:</span>{' '}
-          {message.sources.map((s, i) => (
-            <span key={i}>
-              {s.citation_id ? `[${s.citation_id}] ` : ''}{s.name}
-              {i < message.sources!.length - 1 ? ' · ' : ''}
-            </span>
-          ))}
-        </motion.div>
       )}
       {!isUser && !message.streaming && message.omittedActions?.length ? (
         <MessageActions actions={message.omittedActions} variant="omitted" onAction={runAction} />

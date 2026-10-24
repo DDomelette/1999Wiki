@@ -6,7 +6,7 @@ import type {
   TransitionEvent as ReactTransitionEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Maximize2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Maximize2, X } from 'lucide-react'
 import './CircularGallery.css'
 import { getMotionPolicy } from '../../../motion/motionPolicy'
 import { recordMotionDiagnostic } from '../../../motion/motionDiagnostics'
@@ -311,7 +311,7 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
           onClick={() => moveTo(safeIndex - 1)}
           aria-label="上一张图片"
         >
-          ‹
+          <ChevronLeft aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -320,7 +320,7 @@ export function CircularGallery({ items, bend, borderRadius }: CircularGalleryPr
           onClick={() => moveTo(safeIndex + 1)}
           aria-label="下一张图片"
         >
-          ›
+          <ChevronRight aria-hidden="true" />
         </button>
       </div>
       <div className="circular-gallery__caption" aria-label="图片画廊控制">
