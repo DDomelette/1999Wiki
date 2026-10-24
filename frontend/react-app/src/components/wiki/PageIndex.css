@@ -134,7 +134,7 @@
 .wiki-index-item[aria-pressed='true'] {
   border-color: var(--accent-rust);
   background: color-mix(in srgb, var(--accent-rust) 12%, var(--bg-overlay));
-  box-shadow: inset 3px 0 0 var(--accent-rust);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-rust) 36%, transparent);
 }
 
 .wiki-index-item__media {
@@ -216,6 +216,50 @@
 .wiki-page-index__footer button:disabled {
   cursor: wait;
   opacity: 0.55;
+}
+
+/* Soft archival panels shared with the inquiry desk. */
+.wiki-page-index {
+  border: 0;
+  background: transparent;
+}
+
+.wiki-page-index__search input {
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg-base) 48%, transparent);
+}
+
+.wiki-page-index__status {
+  border-radius: 8px;
+}
+
+.wiki-page-index__status--error button,
+.wiki-page-index__footer button {
+  border-radius: 8px;
+}
+
+.wiki-index-item {
+  border-color: color-mix(in srgb, var(--border-subtle) 72%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-elevated) 62%, transparent);
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.wiki-index-item:hover {
+  border-color: var(--archive-line);
+  box-shadow: 0 10px 24px -18px var(--archive-shadow);
+  transform: translateY(-1px);
+}
+
+.wiki-index-item:focus-visible,
+.wiki-index-item[aria-pressed='true'] {
+  border-color: var(--accent-rust);
+  background: color-mix(in srgb, var(--accent-rust) 10%, var(--bg-elevated));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-rust) 36%, transparent);
+}
+
+.wiki-index-item__media {
+  border-radius: 8px;
 }
 
 @media (max-width: 900px) {
