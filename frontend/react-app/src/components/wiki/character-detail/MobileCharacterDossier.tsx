@@ -56,7 +56,7 @@ export function MobileCharacterDossier({
       ) : null}
       {viewModel.voices.length > 0 ? (
         <section className="mobile-character-dossier__voices" data-mobile-module="voices">
-          <CharacterVoiceRecords voices={viewModel.voices} />
+          <CharacterVoiceRecords voices={viewModel.voices} initialVisibleCount={3} />
         </section>
       ) : null}
       {viewModel.cultureEntries.length > 0 ? (

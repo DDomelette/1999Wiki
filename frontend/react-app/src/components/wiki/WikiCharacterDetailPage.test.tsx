@@ -240,6 +240,10 @@ describe('WikiCharacterDetailPage', () => {
     expect(screen.getByTestId('character-udimo-media')).toHaveAttribute('src', 'https://cdn.test/udimo.png')
     expect(screen.getByTestId('character-udimo-archive')).toHaveTextContent('20th Century Early')
     expect(screen.getByTestId('character-udimo-archive')).toHaveTextContent('Oct 23 (Autumn)')
+    const visual = mobile.querySelector('.character-portrait-stage__visual')
+    const wardrobe = mobile.querySelector('.character-portrait-stage__wardrobe')
+    expect(visual).toContainElement(screen.getAllByTestId('character-portrait-image')[0])
+    expect(visual).not.toContainElement(wardrobe as HTMLElement)
 
     const navigation = screen.getByRole('navigation', { name: '移动档案导航' })
     expect(within(navigation).getByRole('button', { name: 'DOSSIER' })).toHaveAttribute('aria-current', 'page')
@@ -247,6 +251,29 @@ describe('WikiCharacterDetailPage', () => {
     expect(onBack).toHaveBeenCalledTimes(1)
     fireEvent.click(within(navigation).getByRole('button', { name: 'COMBAT' }))
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('collapses long mobile voice archives into the normal document flow with an expansion control', () => {
+    setMobile(true)
+    const view = detailView()
+    view.voices = Array.from({ length: 5 }, (_, index) => ({
+      ...view.voices[0],
+      id: `voice-${index + 1}`,
+      title: `语音 ${index + 1}`,
+    }))
+    render(<WikiCharacterDetailPage viewModel={view} onBack={() => undefined} />)
+
+    expect(document.querySelectorAll('.character-voice-record')).toHaveLength(3)
+    const toggle = screen.getByRole('button', { name: '展开全部语音（5）' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveAttribute('aria-controls', 'character-voice-list')
+
+    fireEvent.click(toggle)
+    expect(document.querySelectorAll('.character-voice-record')).toHaveLength(5)
+    expect(screen.getByRole('button', { name: '收起语音' })).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: '收起语音' }))
+    expect(document.querySelectorAll('.character-voice-record')).toHaveLength(3)
   })
 
   it('toggles stage mode independently of skin selection and keeps the chosen mode across skins', () => {

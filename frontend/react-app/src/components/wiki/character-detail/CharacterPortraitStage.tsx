@@ -47,36 +47,38 @@ export function CharacterPortraitStage({ viewModel, mode }: CharacterPortraitSta
       data-testid="character-portrait-stage"
       style={backdropStyle}
     >
-      <span className="character-portrait-stage__watermark" aria-hidden="true">
-        {viewModel.identity.exonym || viewModel.identity.name}
-      </span>
-      <span className="character-portrait-stage__ribbon">SOPHISTICATED</span>
-      <div className="character-portrait-stage__images">
-        {viewModel.portraitStates.map((state) => {
-          const selected = state.id === active?.id
-          const media = resolveModeMedia(state, effectiveMode)
-          return (
-            <img
-              key={state.id}
-              src={media?.url}
-              alt={selected ? `${viewModel.identity.name} - ${state.label}` : ''}
-              aria-hidden={selected ? 'false' : 'true'}
-              data-testid="character-portrait-image"
-              data-portrait-mode={effectiveMode}
-              className={selected ? 'is-active' : 'is-inactive'}
-            />
-          )
-        })}
-        {(!activeMedia || viewModel.portraitStates.length === 0) ? (
-          <div className="character-portrait-stage__fallback" aria-label="暂无可用立绘">
-            <ImageIcon aria-hidden="true" />
-          </div>
-        ) : null}
-      </div>
-      <div className="character-portrait-stage__identity">
-        <p>SUBJECT_EXONYM</p>
-        <strong>{viewModel.identity.exonym || viewModel.identity.name}</strong>
-        {viewModel.identity.exonym ? <span>{viewModel.identity.name}</span> : null}
+      <div className="character-portrait-stage__visual">
+        <span className="character-portrait-stage__watermark" aria-hidden="true">
+          {viewModel.identity.exonym || viewModel.identity.name}
+        </span>
+        <span className="character-portrait-stage__ribbon">SOPHISTICATED</span>
+        <div className="character-portrait-stage__images">
+          {viewModel.portraitStates.map((state) => {
+            const selected = state.id === active?.id
+            const media = resolveModeMedia(state, effectiveMode)
+            return (
+              <img
+                key={state.id}
+                src={media?.url}
+                alt={selected ? `${viewModel.identity.name} - ${state.label}` : ''}
+                aria-hidden={selected ? 'false' : 'true'}
+                data-testid="character-portrait-image"
+                data-portrait-mode={effectiveMode}
+                className={selected ? 'is-active' : 'is-inactive'}
+              />
+            )
+          })}
+          {(!activeMedia || viewModel.portraitStates.length === 0) ? (
+            <div className="character-portrait-stage__fallback" aria-label="暂无可用立绘">
+              <ImageIcon aria-hidden="true" />
+            </div>
+          ) : null}
+        </div>
+        <div className="character-portrait-stage__identity">
+          <p>SUBJECT_EXONYM</p>
+          <strong>{viewModel.identity.exonym || viewModel.identity.name}</strong>
+          {viewModel.identity.exonym ? <span>{viewModel.identity.name}</span> : null}
+        </div>
       </div>
       <div className="character-portrait-stage__wardrobe" aria-label="立绘切换">
         <p>MODE_SELECT</p>
