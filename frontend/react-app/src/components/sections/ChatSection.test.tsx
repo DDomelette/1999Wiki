@@ -150,7 +150,20 @@ describe('ChatSection', () => {
     const clear = screen.getByRole('button', { name: '清空对话' })
     expect(clear).toHaveAttribute('title', '清空对话')
     expect(clear).toHaveClass('chat-section__clear')
-    expect(clear).toBeDisabled()
+    expect(clear).toBeEnabled()
+  })
+
+  it('allows clearing retained server memory when the local transcript is empty', () => {
+    const clear = vi.fn(async () => undefined)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    useChatStore.setState({ messages: [], clear })
+    render(<ChatSection />)
+
+    fireEvent.click(screen.getByRole('button', { name: '清空对话' }))
+
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(clear).toHaveBeenCalledTimes(1)
+    confirm.mockRestore()
   })
 
   it('requires confirmation before clearing a nonempty conversation', () => {

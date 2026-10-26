@@ -42,7 +42,6 @@ export function ChatSection() {
   }
 
   const handleClear = () => {
-    if (messages.length === 0) return
     if (window.confirm('确定清空当前对话吗？此操作无法撤销。')) void clear()
   }
 
@@ -65,7 +64,6 @@ export function ChatSection() {
           title="清空对话"
           aria-label="清空对话"
           className="chat-section__clear"
-          disabled={messages.length === 0}
           onClick={handleClear}
         >
           <Trash2 aria-hidden="true" size={18} />
