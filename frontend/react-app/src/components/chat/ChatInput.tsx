@@ -7,6 +7,7 @@ export function ChatInput() {
   const inputRef = useRef<HTMLInputElement>(null)
   const send = useChatStore((s) => s.send)
   const sending = useChatStore((s) => s.sending)
+  const abort = useChatStore((s) => s.abort)
   const routeOptions = useChatStore((s) => s.routeOptions)
   const setRouteOption = useChatStore((s) => s.setRouteOption)
   const [lastError, setLastError] = useState<string | null>(null)
@@ -17,6 +18,16 @@ export function ChatInput() {
     inputRef.current?.focus()
   }
 
+  const detectLastFailure = () => {
+    const last = useChatStore.getState().messages.slice(-1)[0]
+    if (!last || last.role !== 'assistant') return
+    if (last.phase === 'failed' || last.content.startsWith('请求失败:') || last.content.startsWith('错误:')) {
+      setLastError(last.partialError
+        ? '回答生成中断，请重试以获取完整回答。'
+        : last.content || '请求失败，请重试。')
+    }
+  }
+
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     const v = value.trim()
@@ -24,19 +35,14 @@ export function ChatInput() {
     setLastQuestion(v)
     setLastError(null)
     setValue('')
-    send(v).then(() => {
-      const last = useChatStore.getState().messages.slice(-1)[0]
-      if (last && (last.content.startsWith('请求失败:') || last.content.startsWith('错误:'))) {
-        setLastError(last.content)
-      }
-    })
+    void send(v).then(detectLastFailure)
   }
 
   const onRetry = () => {
     if (!lastQuestion || sending) return
     setLastError(null)
     useChatStore.setState((s) => ({ messages: s.messages.slice(0, -2) }))
-    send(lastQuestion)
+    void send(lastQuestion).then(detectLastFailure)
   }
 
   const modeButton = (key: 'expanded' | 'freeSupplement', label: string) => {
@@ -48,6 +54,7 @@ export function ChatInput() {
         aria-pressed={active}
         data-active={active || undefined}
         data-action-kind="route-mode"
+        disabled={sending}
         onClick={() => setRouteOption(key, !active)}
       >
         {label}
@@ -58,9 +65,10 @@ export function ChatInput() {
   return (
     <div className="chat-input">
       {lastError && (
-        <div className="chat-input__error">
+        <div className="chat-input__error" role="alert">
           <span className="chat-input__error-text">{lastError}</span>
           <button
+            type="button"
             className="chat-input__retry"
             onClick={onRetry}
             disabled={sending}
@@ -88,17 +96,20 @@ export function ChatInput() {
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder="输入问题..."
+            aria-label="输入问题"
+            enterKeyHint="send"
             className="chat-input__field"
           />
           <button
-            type="submit"
-            className="chat-input__send"
-            disabled={sending || !value.trim()}
+            type={sending ? 'button' : 'submit'}
+            className={`chat-input__send${sending ? ' chat-input__send--stop' : ''}`}
+            disabled={!sending && !value.trim()}
+            onClick={sending ? () => abort() : undefined}
           >
-            发送
+            {sending ? '停止' : '发送'}
           </button>
         </div>
-        <div className="chat-input__modes">
+        <div className="chat-input__modes" role="group" aria-label="检索模式">
           {modeButton('expanded', '扩大检索')}
           {modeButton('freeSupplement', '自由补充')}
         </div>

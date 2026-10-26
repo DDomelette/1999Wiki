@@ -153,6 +153,53 @@ describe('streamAsk SSE 解析', () => {
     expect(cancelled).toBe(true)
   })
 
+  it('reports an interrupted EOF after partial content as a failed partial answer', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse([
+      'event: token\ndata: {"token":"部分回答"}\n\n',
+    ]))
+    const tokens: string[] = []
+    const onDone = vi.fn()
+    const onError = vi.fn()
+
+    await streamAsk('q', null, {
+      onSources: () => {},
+      onToken: token => tokens.push(token),
+      onDone,
+      onError,
+    })
+
+    expect(tokens).toEqual(['部分回答'])
+    expect(onDone).not.toHaveBeenCalled()
+    expect(onError).toHaveBeenCalledWith('连接在完成前中断，请重试', {
+      phase: 'failed',
+      partial: true,
+    })
+  })
+
+  it('dispatches a terminal done event without a trailing blank line', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse([
+      'event: done\ndata: {"answer":"完整回答","sources":[]}',
+    ]))
+    const onDone = vi.fn()
+    const onError = vi.fn()
+
+    await streamAsk('q', null, {
+      onSources: () => {},
+      onToken: () => {},
+      onDone,
+      onError,
+    })
+
+    expect(onDone).toHaveBeenCalledWith(
+      '完整回答',
+      [],
+      undefined,
+      undefined,
+      expect.any(Object),
+    )
+    expect(onError).not.toHaveBeenCalled()
+  })
+
   it('HTTP 错误抛异常', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503 } as Response)
     await expect(streamAsk('q', null, {

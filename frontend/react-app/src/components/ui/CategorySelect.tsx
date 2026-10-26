@@ -1,3 +1,5 @@
+import { Check, ChevronDown } from 'lucide-react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useChatStore } from '../../store/chatStore'
 
 const OPTIONS: { value: string | null; label: string }[] = [
@@ -13,24 +15,122 @@ const OPTIONS: { value: string | null; label: string }[] = [
 export function CategorySelect() {
   const category = useChatStore((s) => s.category)
   const setCategory = useChatStore((s) => s.setCategory)
+  const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+  const triggerId = useId()
+  const listboxId = useId()
+  const selectedIndex = Math.max(0, OPTIONS.findIndex((option) => option.value === category))
+  const selectedOption = OPTIONS[selectedIndex]
+
+  const openMenu = () => {
+    setActiveIndex(selectedIndex)
+    setOpen(true)
+  }
+
+  const selectOption = (index: number) => {
+    setCategory(OPTIONS[index].value)
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
+  useEffect(() => {
+    if (open) listRef.current?.focus()
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
+  }, [open])
+
+  const onTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    openMenu()
+  }
+
+  const onListKeyDown = (event: React.KeyboardEvent<HTMLUListElement>) => {
+    if (event.key === 'Tab') {
+      setOpen(false)
+      return
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      setOpen(false)
+      triggerRef.current?.focus()
+      return
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      selectOption(activeIndex)
+      return
+    }
+
+    let nextIndex: number | undefined
+    if (event.key === 'ArrowDown') nextIndex = (activeIndex + 1) % OPTIONS.length
+    else if (event.key === 'ArrowUp') nextIndex = (activeIndex - 1 + OPTIONS.length) % OPTIONS.length
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = OPTIONS.length - 1
+    if (nextIndex === undefined) return
+    event.preventDefault()
+    setActiveIndex(nextIndex)
+  }
+
   return (
-    <select
-      value={category ?? ''}
-      onChange={(e) => setCategory(e.target.value || null)}
-      style={{
-        padding: '6px 12px',
-        background: 'var(--bg-elevated)',
-        color: 'var(--text-primary)',
-        border: '1px solid var(--border-card)',
-        borderRadius: 4,
-        fontFamily: 'var(--font-body)',
-        fontSize: '0.95rem',
-        cursor: 'pointer',
-      }}
-    >
-      {OPTIONS.map((o) => (
-        <option key={o.label} value={o.value ?? ''}>{o.label}</option>
-      ))}
-    </select>
+    <div ref={rootRef} className="category-select">
+      <button
+        ref={triggerRef}
+        id={triggerId}
+        type="button"
+        role="combobox"
+        aria-label="检索范围"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        aria-haspopup="listbox"
+        className="category-select__trigger"
+        onClick={() => open ? setOpen(false) : openMenu()}
+        onKeyDown={onTriggerKeyDown}
+      >
+        <span className="category-select__value">{selectedOption.label}</span>
+        <ChevronDown aria-hidden="true" className="category-select__chevron" />
+      </button>
+      {open && (
+        <ul
+          ref={listRef}
+          id={listboxId}
+          role="listbox"
+          aria-labelledby={triggerId}
+          aria-activedescendant={`${listboxId}-option-${activeIndex}`}
+          tabIndex={0}
+          className="category-select__menu"
+          onKeyDown={onListKeyDown}
+        >
+          {OPTIONS.map((option, index) => {
+            const selected = option.value === category
+            return (
+              <li
+                key={option.label}
+                id={`${listboxId}-option-${index}`}
+                role="option"
+                aria-selected={selected}
+                data-active={activeIndex === index || undefined}
+                className="category-select__option"
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => selectOption(index)}
+              >
+                <span>{option.label}</span>
+                {selected && <Check aria-hidden="true" className="category-select__option-check" />}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
   )
 }

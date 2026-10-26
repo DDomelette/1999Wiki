@@ -50,7 +50,8 @@ describe('ChatSection', () => {
     expect(screen.getByText('神秘学问答')).toBeInTheDocument()
     expect(screen.getByRole('group', { name: '可检索档案类别' })).toBeInTheDocument()
     expect(screen.getByText('QUERY_ENTRY')).toBeInTheDocument()
-    expect(screen.getByRole('combobox')).toHaveValue('')
+    expect(screen.getByRole('combobox')).toHaveTextContent('全部')
+    expect(screen.getByRole('combobox')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByTestId('chat-message-scroll')).toHaveAttribute('data-page-wheel-lock', 'true')
     expect(screen.getByPlaceholderText('输入问题...')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '发送' })).toBeDisabled()
@@ -68,7 +69,13 @@ describe('ChatSection', () => {
     expect(screen.getByRole('group', { name: '推荐问题' })).toBeInTheDocument()
   })
 
-  it('preserves the reading position when new messages arrive away from the bottom', () => {
+  it('preserves the reading position when an assistant message grows away from the bottom', () => {
+    useChatStore.setState({
+      messages: [
+        { id: 'user-1', role: 'user', content: '测试问题' },
+        { id: 'assistant-1', role: 'assistant', content: '部分回答', streaming: true },
+      ],
+    })
     render(<ChatSection />)
     const scroller = screen.getByTestId('chat-message-scroll')
     Object.defineProperties(scroller, {
@@ -79,9 +86,11 @@ describe('ChatSection', () => {
 
     fireEvent.scroll(scroller)
     act(() => {
-      useChatStore.setState({
-        messages: [{ id: 'user-1', role: 'user', content: '测试问题' }],
-      })
+      useChatStore.setState((state) => ({
+        messages: state.messages.map((message) => message.id === 'assistant-1'
+          ? { ...message, content: `${message.content}，继续生成` }
+          : message),
+      }))
     })
 
     expect(scroller.scrollTop).toBe(100)
@@ -106,12 +115,64 @@ describe('ChatSection', () => {
     expect(scroller.scrollTop).toBe(1000)
   })
 
+  it('returns to the bottom for a new question after the reader scrolled up', () => {
+    useChatStore.setState({
+      messages: [
+        { id: 'user-1', role: 'user', content: '旧问题' },
+        { id: 'assistant-1', role: 'assistant', content: '旧回答' },
+      ],
+    })
+    render(<ChatSection />)
+    const scroller = screen.getByTestId('chat-message-scroll')
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 300 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    })
+
+    fireEvent.scroll(scroller)
+    act(() => {
+      useChatStore.setState((state) => ({
+        messages: [
+          ...state.messages,
+          { id: 'user-2', role: 'user', content: '新问题' },
+          { id: 'assistant-2', role: 'assistant', content: '', streaming: true },
+        ],
+      }))
+    })
+
+    expect(scroller.scrollTop).toBe(1000)
+  })
+
   it('renders an accessible stable clear icon button', () => {
     render(<ChatSection />)
 
     const clear = screen.getByRole('button', { name: '清空对话' })
     expect(clear).toHaveAttribute('title', '清空对话')
     expect(clear).toHaveClass('chat-section__clear')
+    expect(clear).toBeDisabled()
+  })
+
+  it('requires confirmation before clearing a nonempty conversation', () => {
+    const clear = vi.fn(async () => undefined)
+    const confirm = vi.spyOn(window, 'confirm')
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true)
+    useChatStore.setState({
+      messages: [{ id: 'user-1', role: 'user', content: '测试问题' }],
+      clear,
+    })
+    render(<ChatSection />)
+    const clearButton = screen.getByRole('button', { name: '清空对话' })
+
+    expect(clearButton).toBeEnabled()
+    fireEvent.click(clearButton)
+    expect(clear).not.toHaveBeenCalled()
+    fireEvent.click(clearButton)
+
+    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(clear).toHaveBeenCalledTimes(1)
+    confirm.mockRestore()
   })
 
   it('exposes a responsive toolbar and scroll layout', () => {

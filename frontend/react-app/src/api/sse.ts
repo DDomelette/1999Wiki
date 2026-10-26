@@ -107,6 +107,58 @@ export async function streamAsk(
   const decoder = new TextDecoder()
   let buffer = ''
   let terminal = false
+  let receivedContent = false
+
+  const dispatchBlock = (block: string) => {
+    if (terminal || !block.trim() || block.trimStart().startsWith(':')) return
+    const eventMatch = block.match(/^event: (.+)$/m)
+    const dataMatch = block.match(/^data: (.+)$/m)
+    const event = eventMatch ? eventMatch[1] : 'message'
+    const data = dataMatch ? JSON.parse(dataMatch[1]) : {}
+    if (event === 'status') {
+      const phase = data.phase as StreamPhase
+      if (STREAM_PHASES.has(phase)) callbacks.onStatus?.(phase)
+    }
+    else if (event === 'sources') {
+      callbacks.onSources(
+        data.sources as SourceItem[],
+        data.assets as AssetItem[] | undefined,
+        data.media as MediaItem[] | undefined,
+        metaFromPayload(data),
+      )
+    }
+    else if (event === 'token') {
+      const token = data.token as string
+      if (token) receivedContent = true
+      callbacks.onToken(token)
+    }
+    else if (event === 'answer_replace') {
+      const reason = data.reason as AnswerReplaceReason
+      if (ANSWER_REPLACE_REASONS.has(reason)) {
+        const answer = data.answer as string
+        if (answer) receivedContent = true
+        callbacks.onAnswerReplace?.(answer, reason)
+      }
+    }
+    else if (event === 'done') {
+      callbacks.onDone(
+        data.answer as string,
+        data.sources as SourceItem[],
+        data.assets as AssetItem[] | undefined,
+        data.media as MediaItem[] | undefined,
+        metaFromPayload(data),
+      )
+      terminal = true
+    }
+    else if (event === 'error') {
+      const phase = data.phase as StreamPhase | undefined
+      callbacks.onError(data.message as string, {
+        phase: phase && STREAM_PHASES.has(phase) ? phase : undefined,
+        partial: data.partial === true,
+      })
+      terminal = true
+    }
+  }
 
   while (true) {
     const { done, value } = await reader.read()
@@ -119,54 +171,23 @@ export async function streamAsk(
     buffer = buffer.replace(/\r\n/g, '\n')
     const blocks = buffer.split('\n\n')
     buffer = blocks.pop() ?? ''
-    for (const block of blocks) {
-      if (terminal || !block.trim() || block.trimStart().startsWith(':')) continue
-      const eventMatch = block.match(/^event: (.+)$/m)
-      const dataMatch = block.match(/^data: (.+)$/m)
-      const event = eventMatch ? eventMatch[1] : 'message'
-      const data = dataMatch ? JSON.parse(dataMatch[1]) : {}
-      if (event === 'status') {
-        const phase = data.phase as StreamPhase
-        if (STREAM_PHASES.has(phase)) callbacks.onStatus?.(phase)
-      }
-      else if (event === 'sources') {
-        callbacks.onSources(
-          data.sources as SourceItem[],
-          data.assets as AssetItem[] | undefined,
-          data.media as MediaItem[] | undefined,
-          metaFromPayload(data),
-        )
-      }
-      else if (event === 'token') callbacks.onToken(data.token as string)
-      else if (event === 'answer_replace') {
-        const reason = data.reason as AnswerReplaceReason
-        if (ANSWER_REPLACE_REASONS.has(reason)) {
-          callbacks.onAnswerReplace?.(data.answer as string, reason)
-        }
-      }
-      else if (event === 'done') {
-        callbacks.onDone(
-          data.answer as string,
-          data.sources as SourceItem[],
-          data.assets as AssetItem[] | undefined,
-          data.media as MediaItem[] | undefined,
-          metaFromPayload(data),
-        )
-        terminal = true
-      }
-      else if (event === 'error') {
-        const phase = data.phase as StreamPhase | undefined
-        callbacks.onError(data.message as string, {
-          phase: phase && STREAM_PHASES.has(phase) ? phase : undefined,
-          partial: data.partial === true,
-        })
-        terminal = true
-      }
+    for (const block of blocks) dispatchBlock(block)
+
+    if (done && !terminal && buffer.trim()) {
+      const finalBlock = buffer
+      buffer = ''
+      dispatchBlock(finalBlock)
     }
     if (terminal) {
       if (!done) await reader.cancel().catch(() => {})
       break
     }
-    if (done) break
+    if (done) {
+      callbacks.onError('连接在完成前中断，请重试', {
+        phase: 'failed',
+        partial: receivedContent,
+      })
+      break
+    }
   }
 }

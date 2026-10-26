@@ -32,7 +32,7 @@ export function MessageActions({
           onClick={() => void onAction(action)}
           style={{
             border: '1px solid var(--border-subtle)',
-            borderRadius: variant === 'rescue' ? 14 : 6,
+            borderRadius: variant === 'rescue' ? 14 : 8,
             background: variant === 'rescue' ? 'rgba(201, 166, 107, 0.16)' : 'rgba(255, 255, 255, 0.06)',
             color: 'var(--text-primary)',
             padding: variant === 'rescue' ? '5px 12px' : '6px 10px',
