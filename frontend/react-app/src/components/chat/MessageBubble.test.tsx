@@ -525,6 +525,38 @@ describe('MessageBubble', () => {
     expect(screen.getByRole('button', { name: 'Play First meeting' })).toBeInTheDocument()
   })
 
+  it('synchronizes the selected language across every voice line', () => {
+    render(
+      <VoicePanel
+        page={voicePage([
+          {
+            voice_line_id: 'line-1',
+            title: 'Line one',
+            variants: [voiceVariant('zh-1', 'zh'), voiceVariant('en-1', 'en'), voiceVariant('jp-1', 'jp')],
+          },
+          {
+            voice_line_id: 'line-2',
+            title: 'Line two',
+            variants: [voiceVariant('zh-2', 'zh'), voiceVariant('en-2', 'en'), voiceVariant('jp-2', 'jp')],
+          },
+          {
+            voice_line_id: 'line-3',
+            title: 'Line three',
+            variants: [voiceVariant('zh-3', 'zh'), voiceVariant('en-3', 'en'), voiceVariant('jp-3', 'jp')],
+          },
+        ])}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select en for Line two' }))
+
+    for (const title of ['Line one', 'Line two', 'Line three']) {
+      expect(screen.getByRole('button', { name: `Select en for ${title}` })).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByRole('button', { name: `Select zh for ${title}` })).toHaveAttribute('aria-pressed', 'false')
+      expect(screen.getByRole('button', { name: `Select jp for ${title}` })).toHaveAttribute('aria-pressed', 'false')
+    }
+  })
+
   it('falls back through en, jp, kr, then the first stable other language', () => {
     render(
       <VoicePanel
@@ -644,6 +676,7 @@ describe('MessageBubble', () => {
     )
 
     const loadMore = screen.getByRole('button', { name: 'Load more voice lines' })
+    expect(loadMore).toHaveClass('voice-panel__load-more')
     fireEvent.click(loadMore)
     fireEvent.click(loadMore)
 
