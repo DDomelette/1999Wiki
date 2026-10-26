@@ -195,7 +195,6 @@ export function VoicePanel({
   const previousPageIdentityRef = useRef(pageIdentity)
   const initialLines = useRef(mergeLines([], page.lines)).current
   const [lines, setLines] = useState(initialLines)
-  const [languageOverrides, setLanguageOverrides] = useState<Record<string, string>>({})
   const [sessionLanguage, setSessionLanguage] = useState(() => sessionLanguagePreferences.get(page.entity_id) || '')
   const [hasMore, setHasMore] = useState(page.has_more)
   const [nextCursor, setNextCursor] = useState(page.next_cursor)
@@ -216,7 +215,6 @@ export function VoicePanel({
     loadingRef.current = false
     const nextLines = mergeLines([], page.lines)
     setLines(nextLines)
-    setLanguageOverrides({})
     setSessionLanguage(sessionLanguagePreferences.get(page.entity_id) || '')
     setHasMore(page.has_more)
     setNextCursor(page.next_cursor)
@@ -232,11 +230,10 @@ export function VoicePanel({
     }
   }, [pageIdentity, playback.stopIfOwned])
 
-  const selectLanguage = (lineId: string, language: string) => {
+  const selectLanguage = (language: string) => {
     stopAudio()
     sessionLanguagePreferences.set(page.entity_id, language)
     setSessionLanguage(language)
-    setLanguageOverrides((current) => ({ ...current, [lineId]: language }))
   }
 
   const togglePlayback = (line: VoiceLineGroup, variant: MediaItem) => {
@@ -283,22 +280,22 @@ export function VoicePanel({
 
   if (lines.length === 0) return null
   return (
-    <div
-      data-testid="voice-panel"
-      data-animation-slot="voice-panel"
-      data-page-wheel-lock="true"
-      className="voice-panel-scroll"
-    >
-      <AnimatedVoiceList lines={lines} renderLine={(line) => {
+    <div className="voice-panel">
+      <div
+        data-testid="voice-panel"
+        data-animation-slot="voice-panel"
+        data-page-wheel-lock="true"
+        className="voice-panel-scroll"
+      >
+        <AnimatedVoiceList lines={lines} renderLine={(line) => {
         const variantsByLanguage = new Map<string, MediaItem>()
         for (const variant of line.variants) {
           const language = languageKey(variant)
           if (!variantsByLanguage.has(language)) variantsByLanguage.set(language, variant)
         }
-        const override = languageOverrides[line.voice_line_id]
-        const selectedLanguage = override && variantsByLanguage.has(override)
-          ? override
-          : sessionLanguage && variantsByLanguage.has(sessionLanguage) ? sessionLanguage : preferredLanguage(line)
+        const selectedLanguage = sessionLanguage && variantsByLanguage.has(sessionLanguage)
+          ? sessionLanguage
+          : preferredLanguage(line)
         const selectedVariant = variantsByLanguage.get(selectedLanguage) ?? line.variants[0]
         const isPlaying = playback.activePlaybackId === `${pageIdentity}|${line.voice_line_id}`
         return (
@@ -322,7 +319,7 @@ export function VoicePanel({
                     className="voice-line__language"
                     aria-label={`Select ${language} for ${line.title || line.voice_line_id}`}
                     aria-pressed={selected}
-                    onClick={() => selectLanguage(line.voice_line_id, language)}
+                    onClick={() => selectLanguage(language)}
                   >
                     {language}
                   </button>
@@ -384,13 +381,15 @@ export function VoicePanel({
         <button
           type="button"
           aria-label="Load more voice lines"
+          className="voice-panel__load-more"
           disabled={loading || !nextCursor}
           onClick={() => void loadNextPage()}
-          style={{ minHeight: 32, cursor: loading ? 'wait' : 'pointer' }}
+          style={{ cursor: loading ? 'wait' : 'pointer' }}
         >
           {loading ? 'Loading...' : 'Load more'}
         </button>
       )}
+      </div>
     </div>
   )
 }

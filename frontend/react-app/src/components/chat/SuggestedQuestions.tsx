@@ -49,19 +49,21 @@ export function SuggestedQuestions({
 
   return (
     <div className="suggested-questions" role="group" aria-label="推荐问题">
-      <span className="suggested-questions__label">试着问问</span>
-      <div className="suggested-questions__list">
-        {suggestions.map((question) => (
-          <button
-            className="suggested-questions__item"
-            key={question}
-            type="button"
-            disabled={disabled}
-            onClick={() => onSelect(question)}
-          >
-            {question}
-          </button>
-        ))}
+      <span className="suggested-questions__label">猜你想问</span>
+      <div className="suggested-questions__viewport">
+        <div className="suggested-questions__list">
+          {suggestions.map((question) => (
+            <button
+              className="suggested-questions__item"
+              key={question}
+              type="button"
+              disabled={disabled}
+              onClick={() => onSelect(question)}
+            >
+              {question}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   )

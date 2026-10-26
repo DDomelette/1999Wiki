@@ -9,7 +9,6 @@ export function AnimatedVoiceList({ lines, renderLine }: { lines: readonly Voice
       itemKey={(line) => line.voice_line_id}
       renderItem={renderLine}
       displayScrollbar
-      replayOnEnter
       ariaLabel="Voice lines"
       className="voice-animated-list"
     />

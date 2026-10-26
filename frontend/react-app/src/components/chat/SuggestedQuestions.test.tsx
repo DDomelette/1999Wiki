@@ -77,6 +77,7 @@ describe('SuggestedQuestions', () => {
     )
 
     const group = screen.getByRole('group', { name: '推荐问题' })
+    expect(within(group).getByText('猜你想问')).toHaveClass('suggested-questions__label')
     expect(within(group).getAllByRole('button')).toHaveLength(4)
 
     fireEvent.click(within(group).getByRole('button', { name: '问题二' }))
