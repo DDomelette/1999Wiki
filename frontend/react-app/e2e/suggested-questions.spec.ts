@@ -32,7 +32,7 @@ test('suggested questions stay usable across desktop, mobile, and themes', async
   await page.getByRole('option', { name: '人物', exact: true }).click()
   await expect(categorySelect).toHaveText('人物')
   expect(await group.getByRole('button').allTextContents()).toEqual(initialQuestions)
-  await expect(page.getByRole('button', { name: '清空对话' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '清空对话' })).toBeEnabled()
   expect(await group.getByRole('button').allTextContents()).toEqual(initialQuestions)
 
   const groupBox = await group.boundingBox()
