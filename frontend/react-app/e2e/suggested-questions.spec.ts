@@ -27,9 +27,12 @@ test('suggested questions stay usable across desktop, mobile, and themes', async
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'manuscript-gold')
 
   const initialQuestions = await group.getByRole('button').allTextContents()
-  await page.getByRole('combobox').selectOption('人物')
+  const categorySelect = page.getByRole('combobox', { name: '检索范围' })
+  await categorySelect.click()
+  await page.getByRole('option', { name: '人物', exact: true }).click()
+  await expect(categorySelect).toHaveText('人物')
   expect(await group.getByRole('button').allTextContents()).toEqual(initialQuestions)
-  await page.getByRole('button', { name: '清空对话' }).click()
+  await expect(page.getByRole('button', { name: '清空对话' })).toBeEnabled()
   expect(await group.getByRole('button').allTextContents()).toEqual(initialQuestions)
 
   const groupBox = await group.boundingBox()

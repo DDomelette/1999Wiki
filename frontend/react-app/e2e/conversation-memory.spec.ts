@@ -123,6 +123,7 @@ test('same tab refresh retains memory and clear rotates it', async ({ page }, te
     (response) => response.request().method() === 'DELETE'
       && response.url().includes('/api/conversations/'),
   )
+  page.once('dialog', (dialog) => void dialog.accept())
   await page.getByRole('button', { name: '清空对话' }).click()
   expect((await deleteResponse).status()).toBe(204)
   await expect.poll(

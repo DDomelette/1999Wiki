@@ -14,9 +14,15 @@ export function ChatSection() {
   const clear = useChatStore((s) => s.clear)
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
+  const previousMessageCountRef = useRef(messages.length)
   useChatPageBoundaryNavigation(scrollRef)
 
   useEffect(() => {
+    const previousCount = previousMessageCountRef.current
+    const hasNewUserMessage = messages.length > previousCount
+      && messages.slice(previousCount).some((message) => message.role === 'user')
+    previousMessageCountRef.current = messages.length
+    if (hasNewUserMessage) stickToBottomRef.current = true
     if (scrollRef.current && stickToBottomRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
@@ -33,6 +39,10 @@ export function ChatSection() {
     const element = scrollRef.current
     if (!element) return
     stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
+  }
+
+  const handleClear = () => {
+    if (window.confirm('确定清空当前对话吗？此操作无法撤销。')) void clear()
   }
 
   const jumpHome = () => {
@@ -54,7 +64,7 @@ export function ChatSection() {
           title="清空对话"
           aria-label="清空对话"
           className="chat-section__clear"
-          onClick={() => void clear()}
+          onClick={handleClear}
         >
           <Trash2 aria-hidden="true" size={18} />
         </button>

@@ -66,4 +66,51 @@ describe('ChatInput suggested questions', () => {
     expect(container.querySelector('button[type="submit"]')).toHaveClass('chat-input__send')
     expect(container.querySelector('.chat-input__modes')).toBeInTheDocument()
   })
+
+  it('stops the active request and locks route modes while sending', () => {
+    const abort = vi.fn()
+    useChatStore.setState({ sending: true, abort })
+    render(<ChatInput />)
+
+    const stop = screen.getByRole('button', { name: '停止' })
+    expect(stop).toHaveAttribute('type', 'button')
+    expect(screen.getByRole('button', { name: '扩大检索' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '自由补充' })).toBeDisabled()
+    fireEvent.click(stop)
+
+    expect(abort).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers retry for a partial answer marked as failed', async () => {
+    const partialSend = vi.fn(async (_question: string) => undefined)
+    partialSend.mockImplementationOnce(async (question: string) => {
+      useChatStore.setState({
+        sending: false,
+        messages: [
+          { id: 'user-partial', role: 'user', content: question },
+          {
+            id: 'assistant-partial',
+            role: 'assistant',
+            content: '已经生成的部分回答',
+            phase: 'failed',
+            partialError: true,
+          },
+        ],
+      })
+    })
+    useChatStore.setState({ send: partialSend })
+    render(<ChatInput />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: '输入问题' }), {
+      target: { value: '介绍一下十四行诗' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('回答生成中断')
+    fireEvent.click(screen.getByRole('button', { name: '重试' }))
+
+    expect(partialSend).toHaveBeenNthCalledWith(1, '介绍一下十四行诗')
+    expect(partialSend).toHaveBeenNthCalledWith(2, '介绍一下十四行诗')
+    expect(useChatStore.getState().messages).toEqual([])
+  })
 })

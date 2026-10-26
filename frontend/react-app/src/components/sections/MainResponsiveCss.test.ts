@@ -86,7 +86,7 @@ describe('main page responsive CSS contract', () => {
     const baseToolbar = chatCss.match(/\.chat-section__toolbar\s*\{([^}]*)\}/)?.[1] ?? ''
     expect(baseToolbar).toContain('padding-top: 88px')
     expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.chat-section__toolbar\s*\{[^}]*padding:\s*calc\([^}]*--main-nav-mobile-offset/s)
-    expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.chat-section__toolbar select\s*\{[^}]*min-width:\s*0[^}]*width:\s*100%/s)
+    expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.category-select\s*\{[^}]*width:\s*100%[^}]*min-width:\s*0/s)
     expect(chatCss).toMatch(/@media \(max-width: 720px\)[\s\S]*\.chat-input__form\s*\{[^}]*padding-right:\s*calc\(18px \+ env\(safe-area-inset-right, 0px\)\)/s)
     expect(chatCss).toMatch(/\.chat-input__row\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto/s)
     expect(chatCss).toMatch(/\.chat-input__field\s*\{[^}]*min-width:\s*0/s)

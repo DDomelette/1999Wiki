@@ -30,6 +30,11 @@ export function HomeSection() {
   const [videoReady, setVideoReady] = useState(false)
   const sectionRef = useRef<HTMLElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (toastTimerRef.current !== null) globalThis.clearTimeout(toastTimerRef.current)
+  }, [])
 
   useEffect(() => {
     const saveData = (navigator as NavigatorWithConnection).connection?.saveData
@@ -63,6 +68,15 @@ export function HomeSection() {
     observer.observe(section)
     return () => observer.disconnect()
   }, [videoEnabled, videoFailed])
+
+  const showDownloadToast = () => {
+    if (toastTimerRef.current !== null) globalThis.clearTimeout(toastTimerRef.current)
+    setShowToast(true)
+    toastTimerRef.current = globalThis.setTimeout(() => {
+      setShowToast(false)
+      toastTimerRef.current = null
+    }, 2500)
+  }
 
   return (
     <section
@@ -140,19 +154,9 @@ export function HomeSection() {
           className="home-section__download"
         >
           <button
-            onClick={() => {
-              setShowToast(true)
-              setTimeout(() => setShowToast(false), 2500)
-            }}
+            type="button"
+            onClick={showDownloadToast}
             className="home-section__cta"
-            onMouseEnter={(e) => {
-              e.currentTarget.style.boxShadow = '0 0 20px var(--border-glow)'
-              e.currentTarget.style.background = 'rgba(212, 175, 55, 0.1)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.boxShadow = 'none'
-              e.currentTarget.style.background = 'transparent'
-            }}
           >
             立即下载
           </button>
@@ -161,6 +165,8 @@ export function HomeSection() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               className="home-section__toast"
+              role="status"
+              aria-live="polite"
             >
               下载链接待补
             </motion.div>

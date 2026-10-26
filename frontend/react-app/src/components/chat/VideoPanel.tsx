@@ -27,7 +27,7 @@ export function VideoPanel({ items }: { items: MediaItem[] }) {
           aria-label={`更多视频 ${rest.length}`}
           style={{
             border: '1px solid var(--border-subtle)',
-            borderRadius: 6,
+            borderRadius: 8,
             background: 'rgba(255, 255, 255, 0.06)',
             color: 'var(--text-primary)',
             padding: '6px 10px',
