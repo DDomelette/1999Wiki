@@ -31,6 +31,7 @@ describe('CategorySelect', () => {
     const listbox = screen.getByRole('listbox')
     const lastOption = screen.getByRole('option', { name: '日历' })
     expect(listbox).toHaveFocus()
+    expect(listbox).toHaveAttribute('data-page-wheel-lock', 'true')
     fireEvent.keyDown(listbox, { key: 'End' })
 
     expect(listbox).toHaveAttribute('aria-activedescendant', lastOption.id)
@@ -39,6 +40,27 @@ describe('CategorySelect', () => {
     expect(useChatStore.getState().category).toBe('日历')
     expect(trigger).toHaveTextContent('日历')
     expect(trigger).toHaveFocus()
+  })
+
+  it('scrolls the active option into view during keyboard navigation', () => {
+    render(<CategorySelect />)
+    fireEvent.click(screen.getByRole('combobox', { name: '检索范围' }))
+    const listbox = screen.getByRole('listbox')
+    Object.defineProperties(listbox, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    })
+    screen.getAllByRole('option').forEach((option, index) => {
+      Object.defineProperties(option, {
+        offsetTop: { configurable: true, value: index * 40 },
+        offsetHeight: { configurable: true, value: 36 },
+      })
+    })
+
+    fireEvent.keyDown(listbox, { key: 'End' })
+    expect(listbox.scrollTop).toBe(176)
+    fireEvent.keyDown(listbox, { key: 'Home' })
+    expect(listbox.scrollTop).toBe(0)
   })
 
   it('closes with Escape without changing the selected category', () => {
