@@ -122,6 +122,9 @@ def test_process_and_runner_contracts_accept_e_without_aliasing_c(
 
 def test_detached_runner_uses_no_stdin_and_windows_detach_flags() -> None:
     flags = windows_detach_flags()
+    if sys.platform != "win32":
+        assert flags == 0
+        return
     assert flags & subprocess.CREATE_NEW_PROCESS_GROUP
     assert flags & subprocess.DETACHED_PROCESS
     assert flags & subprocess.CREATE_NO_WINDOW

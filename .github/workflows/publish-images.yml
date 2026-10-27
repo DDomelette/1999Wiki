@@ -18,6 +18,8 @@ jobs:
         with:
           lfs: true
           ref: ${{ github.sha }}
+          # Corpus fidelity tests verify immutable blobs from earlier commits.
+          fetch-depth: 0
       - name: Pull LFS objects
         run: git lfs pull
       - uses: actions/setup-python@v5
