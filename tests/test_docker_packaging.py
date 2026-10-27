@@ -313,6 +313,7 @@ def test_backend_final_stage_copy_sources_are_the_runtime_allow_list() -> None:
         "src/huijiwiki/project_paths.py",
         "src/huiji_rag/__init__.py",
         "src/huiji_rag/active_pointer.py",
+        "src/huiji_rag/analyzer_probe.py",
         "src/huiji_rag/io.py",
         "src/huiji_rag/media.py",
         "src/huiji_rag/models.py",

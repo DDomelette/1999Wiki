@@ -27,6 +27,7 @@ COPY src/huiji_wiki/__init__.py src/huiji_wiki/models.py \
 COPY src/huijiwiki/__init__.py src/huijiwiki/errors.py src/huijiwiki/models.py \
      src/huijiwiki/project_paths.py ./src/huijiwiki/
 COPY src/huiji_rag/__init__.py src/huiji_rag/active_pointer.py \
+     src/huiji_rag/analyzer_probe.py \
      src/huiji_rag/io.py src/huiji_rag/media.py src/huiji_rag/models.py \
      src/huiji_rag/normalizer.py src/huiji_rag/provenance.py \
      src/huiji_rag/runtime_artifacts.py src/huiji_rag/source.py \
