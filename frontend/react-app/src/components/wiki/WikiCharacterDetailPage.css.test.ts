@@ -35,6 +35,11 @@ describe('Stitch character dossier visual contract', () => {
     expect(detailCss).not.toMatch(/transform:\s*scale\(/)
   })
 
+  it('raises the desktop caption above the Udimo card with only slight overlap', () => {
+    expect(detailCss).toMatch(/\.character-portrait-stage__caption\s*\{[^}]*bottom:\s*142px/s)
+    expect(detailCss).toMatch(/\.character-portrait-stage__udimo\s*\{[^}]*bottom:\s*80px/s)
+  })
+
   it('defines responsive dossier flow without nested mobile voice scrolling', () => {
     expect(detailCss).toContain('@media (max-width: 760px)')
     expect(detailCss).toMatch(/\.mobile-character-dossier\s*\{[^}]*overflow-x:\s*clip/s)
