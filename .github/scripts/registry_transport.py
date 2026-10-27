@@ -199,10 +199,11 @@ def _fatal_code(stderr: str) -> str:
 
 @contextmanager
 def secure_authfile(path: Path) -> Iterator[Path]:
-    """Create a private, empty authfile and remove it regardless of outcome."""
+    """Create a private, valid authfile and remove it regardless of outcome."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.close(descriptor)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(b'{"auths":{}}\n')
     path.chmod(0o600)
     try:
         yield path

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import stat
 import sys
@@ -325,6 +326,7 @@ def test_secure_authfile_uses_private_mode_and_always_removes_the_file(tmp_path:
     with secure_authfile(authfile) as created:
         assert created == authfile
         assert created.is_file()
+        assert json.loads(created.read_bytes()) == {"auths": {}}
         if os.name != "nt":
             assert stat.S_IMODE(created.stat().st_mode) == 0o600
 
