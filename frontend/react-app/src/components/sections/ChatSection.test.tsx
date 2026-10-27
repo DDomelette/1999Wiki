@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatSection } from './ChatSection'
 import { useChatStore } from '../../store/chatStore'
 
@@ -13,6 +13,10 @@ describe('ChatSection', () => {
       abortController: null,
       routeOptions: { expanded: false, freeSupplement: false },
     })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('provides a return-home button that uses semantic main navigation', () => {
@@ -48,7 +52,7 @@ describe('ChatSection', () => {
     render(<ChatSection />)
 
     expect(screen.getByText('神秘学问答')).toBeInTheDocument()
-    expect(screen.getByRole('combobox')).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: '检索范围' })).toHaveValue('')
     expect(screen.getByTestId('chat-message-scroll')).toHaveAttribute('data-page-wheel-lock', 'true')
     expect(screen.getByPlaceholderText('输入问题...')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '发送' })).toBeDisabled()
@@ -72,6 +76,53 @@ describe('ChatSection', () => {
     const clear = screen.getByRole('button', { name: '清空对话' })
     expect(clear).toHaveAttribute('title', '清空对话')
     expect(clear).toHaveClass('chat-section__clear')
+    expect(clear).toBeDisabled()
+  })
+
+  it('requires confirmation before clearing an existing conversation', () => {
+    const clear = vi.fn(async () => undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    useChatStore.setState({
+      messages: [{ id: 'user-1', role: 'user', content: '保留这个问题' }],
+      clear,
+    })
+    render(<ChatSection />)
+
+    fireEvent.click(screen.getByRole('button', { name: '清空对话' }))
+
+    expect(window.confirm).toHaveBeenCalledWith('确定清空当前对话吗？此操作无法撤销。')
+    expect(clear).not.toHaveBeenCalled()
+    expect(useChatStore.getState().messages).toHaveLength(1)
+  })
+
+  it('keeps the reading position when a streamed answer grows above the viewport', () => {
+    const messages = [
+      { id: 'user-1', role: 'user' as const, content: 'question' },
+      { id: 'assistant-1', role: 'assistant' as const, content: 'partial', streaming: true, phase: 'generating' as const },
+    ]
+    useChatStore.setState({ messages })
+    const { container } = render(<ChatSection />)
+    const scroller = screen.getByTestId('chat-message-scroll')
+    let scrollTop = 0
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = value },
+    })
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 })
+
+    fireEvent.scroll(scroller)
+    act(() => {
+      useChatStore.setState({
+        messages: messages.map((message) => message.id === 'assistant-1'
+          ? { ...message, content: 'partial with more text' }
+          : message),
+      })
+    })
+
+    expect(scrollTop).toBe(0)
+    expect(container.querySelector('.chat-section__messages')).toBe(scroller)
   })
 
   it('exposes a responsive toolbar and scroll layout', () => {

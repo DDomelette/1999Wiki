@@ -15,18 +15,10 @@ export function CategorySelect() {
   const setCategory = useChatStore((s) => s.setCategory)
   return (
     <select
+      className="category-select"
+      aria-label="检索范围"
       value={category ?? ''}
       onChange={(e) => setCategory(e.target.value || null)}
-      style={{
-        padding: '6px 12px',
-        background: 'var(--bg-elevated)',
-        color: 'var(--text-primary)',
-        border: '1px solid var(--border-card)',
-        borderRadius: 4,
-        fontFamily: 'var(--font-body)',
-        fontSize: '0.95rem',
-        cursor: 'pointer',
-      }}
     >
       {OPTIONS.map((o) => (
         <option key={o.label} value={o.value ?? ''}>{o.label}</option>

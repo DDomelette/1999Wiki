@@ -67,7 +67,12 @@
   font-size: 1.1rem;
   letter-spacing: 0.1em;
   cursor: pointer;
-  transition: all 0.3s;
+  transition: box-shadow 0.3s ease, background-color 0.3s ease;
+}
+
+.home-section__cta:hover {
+  background: color-mix(in srgb, var(--accent-gold) 10%, transparent);
+  box-shadow: 0 0 20px var(--border-glow);
 }
 
 .home-section__toast {

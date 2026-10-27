@@ -115,20 +115,18 @@ export function MessageBubble({ message }: { message: Message }) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3 }}
-          style={{
-            marginTop: 8, paddingTop: 8,
-            borderTop: '1px solid var(--border-subtle)',
-            fontSize: '0.875rem',
-            color: 'var(--text-secondary)',
-          }}
+          className="message-bubble__sources"
         >
-          <span style={{ color: 'var(--accent-gold)' }}>来源:</span>{' '}
-          {message.sources.map((s, i) => (
-            <span key={i}>
-              {s.citation_id ? `[${s.citation_id}] ` : ''}{s.name}
-              {i < message.sources!.length - 1 ? ' · ' : ''}
-            </span>
-          ))}
+          <details>
+            <summary>参考来源（{message.sources.length}）</summary>
+            <ol className="message-bubble__source-list">
+              {message.sources.map((source, index) => (
+                <li key={source.citation_id || `${source.source}:${source.child_id || index}`}>
+                  <span>{`${source.citation_id ? `[${source.citation_id}] ` : ''}${source.name}`}</span>
+                </li>
+              ))}
+            </ol>
+          </details>
         </motion.div>
       )}
       {!isUser && !message.streaming && message.omittedActions?.length ? (

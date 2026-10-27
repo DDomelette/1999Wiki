@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { GLOBAL_BACKGROUND_IMAGE_SRC, HOME_VIDEO_SRC } from '../../media/assets'
 import './HomeSection.css'
 
@@ -24,6 +24,7 @@ export function HomeSection() {
   const [videoEnabled, setVideoEnabled] = useState(false)
   const [videoFailed, setVideoFailed] = useState(false)
   const [videoReady, setVideoReady] = useState(false)
+  const toastTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
@@ -40,6 +41,19 @@ export function HomeSection() {
     const timeoutId = globalThis.setTimeout(() => setVideoEnabled(true), 1500)
     return () => globalThis.clearTimeout(timeoutId)
   }, [])
+
+  useEffect(() => () => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
+  }, [])
+
+  const showDownloadToast = () => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current)
+    setShowToast(true)
+    toastTimerRef.current = window.setTimeout(() => {
+      setShowToast(false)
+      toastTimerRef.current = null
+    }, 2500)
+  }
 
   return (
     <section
@@ -115,19 +129,9 @@ export function HomeSection() {
           className="home-section__download"
         >
           <button
-            onClick={() => {
-              setShowToast(true)
-              setTimeout(() => setShowToast(false), 2500)
-            }}
+            type="button"
+            onClick={showDownloadToast}
             className="home-section__cta"
-            onMouseEnter={(e) => {
-              e.currentTarget.style.boxShadow = '0 0 20px var(--border-glow)'
-              e.currentTarget.style.background = 'rgba(212, 175, 55, 0.1)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.boxShadow = 'none'
-              e.currentTarget.style.background = 'transparent'
-            }}
           >
             立即下载
           </button>
@@ -136,6 +140,8 @@ export function HomeSection() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               className="home-section__toast"
+              role="status"
+              aria-live="polite"
             >
               下载链接待补
             </motion.div>

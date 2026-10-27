@@ -29,7 +29,7 @@ test('suggested questions stay usable across desktop, mobile, and themes', async
   const initialQuestions = await group.getByRole('button').allTextContents()
   await page.getByRole('combobox').selectOption('人物')
   expect(await group.getByRole('button').allTextContents()).toEqual(initialQuestions)
-  await page.getByRole('button', { name: '清空对话' }).click()
+  await expect(page.getByRole('button', { name: '清空对话' })).toBeDisabled()
   expect(await group.getByRole('button').allTextContents()).toEqual(initialQuestions)
 
   const groupBox = await group.boundingBox()

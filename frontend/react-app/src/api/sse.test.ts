@@ -127,6 +127,47 @@ describe('streamAsk SSE 解析', () => {
     expect(done).toBe(false)
   })
 
+  it('reports an interrupted stream and preserves partial answer state', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse([
+      'event: token\ndata: {"token":"partial"}\n\n',
+    ]))
+    let errorMessage = ''
+    let errorInfo: unknown
+    let done = false
+
+    await streamAsk('q', null, {
+      onSources: () => {},
+      onToken: () => {},
+      onDone: () => { done = true },
+      onError: (message, info) => {
+        errorMessage = message
+        errorInfo = info
+      },
+    })
+
+    expect(errorMessage).toBe('连接在完成前中断，请重试')
+    expect(errorInfo).toEqual({ phase: 'failed', partial: true })
+    expect(done).toBe(false)
+  })
+
+  it('dispatches a complete terminal event without a trailing blank line', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(mockFetchResponse([
+      'event: done\ndata: {"answer":"complete","sources":[]}',
+    ]))
+    let doneAnswer = ''
+    let failed = false
+
+    await streamAsk('q', null, {
+      onSources: () => {},
+      onToken: () => {},
+      onDone: (answer) => { doneAnswer = answer },
+      onError: () => { failed = true },
+    })
+
+    expect(doneAnswer).toBe('complete')
+    expect(failed).toBe(false)
+  })
+
   it('HTTP 错误抛异常', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503 } as Response)
     await expect(streamAsk('q', null, {

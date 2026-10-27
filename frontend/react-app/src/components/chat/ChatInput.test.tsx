@@ -62,8 +62,38 @@ describe('ChatInput suggested questions', () => {
 
     expect(container.querySelector('.chat-input')).toBeInTheDocument()
     expect(container.querySelector('.chat-input__row')).toBeInTheDocument()
-    expect(screen.getByRole('textbox')).toHaveClass('chat-input__field')
+    expect(screen.getByRole('textbox', { name: '输入问题' })).toHaveClass('chat-input__field')
     expect(container.querySelector('button[type="submit"]')).toHaveClass('chat-input__send')
     expect(container.querySelector('.chat-input__modes')).toBeInTheDocument()
+  })
+
+  it('offers a stop action while generation is in progress', () => {
+    const abort = vi.fn()
+    useChatStore.setState({ sending: true, abort })
+    render(<ChatInput />)
+
+    const stop = screen.getByRole('button', { name: '停止' })
+    expect(stop).toHaveAttribute('type', 'button')
+    fireEvent.click(stop)
+
+    expect(abort).toHaveBeenCalledOnce()
+  })
+
+  it('offers retry feedback when a partial answer fails validation', async () => {
+    send.mockImplementationOnce(async () => {
+      useChatStore.setState({
+        messages: [
+          { id: 'user-partial', role: 'user', content: 'question' },
+          { id: 'assistant-partial', role: 'assistant', content: 'partial', phase: 'failed', partialError: true },
+        ],
+      })
+    })
+    render(<ChatInput />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: '输入问题' }), { target: { value: 'question' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('回答未完成，未经过引用校验。')
+    expect(screen.getByRole('button', { name: '重试' })).toBeEnabled()
   })
 })

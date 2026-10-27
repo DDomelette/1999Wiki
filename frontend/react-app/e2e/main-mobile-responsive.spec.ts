@@ -22,7 +22,7 @@ async function installRoutes(page: Page) {
     contentType: 'application/json',
     body: JSON.stringify({ categories: [] }),
   }))
-  await page.route('**/api/wiki/pages', (route) => route.fulfill({
+  await page.route('**/api/wiki/pages*', (route) => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({ items: [], nextCursor: null }),
   }))
@@ -294,7 +294,7 @@ test('desktop geometry remains intact', async ({ page }, testInfo) => {
   await jump(page, 'chat')
   const desktopNav = page.locator('.card-nav--main .card-nav__bar')
   const desktopSelect = page.getByRole('combobox')
-  await expect(page.locator('.chat-section__toolbar')).toHaveCSS('display', 'flex')
+  await expect(page.locator('.chat-section__toolbar-inner')).toHaveCSS('display', 'flex')
   await expectHitTarget(desktopSelect)
   await expectHitTarget(page.locator('.chat-section__clear'))
   await expectHitTarget(page.locator('.chat-section__home'))

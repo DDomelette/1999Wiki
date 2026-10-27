@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useUIStore } from './store/uiStore'
 import { useScrollSpy } from './hooks/useScrollSpy'
 import { useWheelSnapNavigation } from './hooks/useWheelSnapNavigation'
@@ -11,9 +11,13 @@ import { HomeSection } from './components/sections/HomeSection'
 import { DataSection } from './components/sections/DataSection'
 import { ChatSection } from './components/sections/ChatSection'
 import { AutoHideScrollbar } from './components/ui/AutoHideScrollbar'
-import { WikiShell } from './components/wiki/WikiShell'
 import { FALLBACK_CATEGORIES, filterVisibleCategories } from './data/fallbackCategories'
 import { MotionPreview } from './components/dev/MotionPreview'
+
+const WikiShell = lazy(async () => {
+  const module = await import('./components/wiki/WikiShell')
+  return { default: module.WikiShell }
+})
 
 export default function App() {
   const [pathname, setPathname] = useState(() => window.location.pathname)
@@ -28,7 +32,11 @@ export default function App() {
     return <MotionPreview />
   }
   if (pathname === '/wiki' || pathname.startsWith('/wiki/')) {
-    return <WikiShell />
+    return (
+      <Suspense fallback={<div className="route-loading" role="status">正在翻开档案…</div>}>
+        <WikiShell />
+      </Suspense>
+    )
   }
 
   return <MainApp />
