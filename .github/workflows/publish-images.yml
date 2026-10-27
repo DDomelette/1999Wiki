@@ -1,165 +1,43 @@
-name: Publish immutable application images
-
+name: Inspect registry access without publication
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: publish-images-${{ github.sha }}
-  cancel-in-progress: false
-
+  packages: write
 jobs:
-  python-tests:
+  registry-access:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          lfs: true
           ref: ${{ github.sha }}
-          # Corpus fidelity tests verify immutable blobs from earlier commits.
-          fetch-depth: 0
-      - name: Pull LFS objects
-        run: git lfs pull
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - uses: docker/setup-buildx-action@v3
-      - name: Install Python test dependencies
-        run: python -m pip install -r requirements/dev.lock.txt
-      - name: Run Python tests
-        run: python -m pytest -q
-
-  frontend-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-          ref: ${{ github.sha }}
-      - name: Pull LFS objects
-        run: git lfs pull
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Install frontend dependencies
-        working-directory: frontend/react-app
-        run: npm ci
-      - name: Run frontend tests
-        working-directory: frontend/react-app
-        run: npm test
-      - name: Build frontend
-        working-directory: frontend/react-app
-        run: npm run build
-
-  publish:
-    needs: [python-tests, frontend-tests]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-          ref: ${{ github.sha }}
-      - name: Pull LFS objects
-        run: git lfs pull
-      - uses: docker/setup-buildx-action@v3
-      - name: Install Skopeo
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes skopeo
-          skopeo --version
-      - id: backend
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile.backend
-          platforms: linux/amd64
-          push: false
-          provenance: false
-          outputs: type=oci,dest=${{ runner.temp }}/backend.oci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - id: frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile.frontend
-          platforms: linux/amd64
-          push: false
-          provenance: false
-          outputs: type=oci,dest=${{ runner.temp }}/frontend.oci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - id: tag
-        name: Derive immutable release tag
-        shell: bash
-        run: |
-          short_sha="${GITHUB_SHA::7}"
-          echo "tag=sha-${short_sha}" >> "$GITHUB_OUTPUT"
-      - id: publisher
-        name: Publish and verify registry images
-        shell: bash
+      - run: sudo apt-get update && sudo apt-get install --yes skopeo
+      - name: Inspect registry login and tag access
         env:
           TCR_USERNAME: ${{ secrets.TCR_USERNAME }}
           TCR_PASSWORD: ${{ secrets.TCR_PASSWORD }}
-          TCR_REGISTRY: ${{ vars.TCR_REGISTRY }}
-          TCR_NAMESPACE: ${{ vars.TCR_NAMESPACE }}
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 .github/scripts/publish_registries.py \
-            --commit "$GITHUB_SHA" \
-            --backend-archive "${RUNNER_TEMP}/backend.oci" \
-            --frontend-archive "${RUNNER_TEMP}/frontend.oci" \
-            --authfile "${RUNNER_TEMP}/1999wiki-auth.json" \
-            --manifest-output release-manifest.json \
-            --failure-output publication-failure.json \
-            --workflow-run-id "$GITHUB_RUN_ID"
-      - name: Upload release manifest
-        if: ${{ success() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-${{ steps.tag.outputs.tag }}
-          path: release-manifest.json
-          if-no-files-found: error
-          retention-days: 90
-      - name: Upload publication failure
-        if: ${{ failure() && hashFiles('publication-failure.json') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: publication-failure-${{ steps.tag.outputs.tag }}-${{ github.run_id }}
-          path: publication-failure.json
-          if-no-files-found: error
-          retention-days: 30
-      - id: summary
-        name: Write canonical release summary
-        if: ${{ success() }}
-        shell: bash
-        run: |
-          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-
-          with open("release-manifest.json", encoding="utf-8") as stream:
-              manifest = json.load(stream)
-
-          state = manifest["release_state"]
-          if state not in {"ready", "ready_with_deferred_ghcr"}:
-              raise SystemExit("release manifest is not ready")
-
-          print("## Published images")
-          print(f"- Commit: {manifest['commit']}")
-          print(f"- Release tag: {manifest['release_tag']}")
-          print(f"- Release state: {state}")
-          for component in ("backend", "frontend"):
-              registries = manifest["images"][component]["registries"]
-              tcr = registries["tcr"]
-              ghcr = registries["ghcr"]
-              print(f"- {component.title()} TCR: {tcr['status']} — {tcr['ref']}")
-              ghcr_detail = ghcr["ref"] if ghcr["ref"] else ghcr["status"]
-              print(f"- {component.title()} GHCR: {ghcr_detail}")
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, sys
+          sys.path.insert(0, str(pathlib.Path('.github/scripts').resolve()))
+          from registry_transport import _fatal_code, _is_explicit_absence, classify_failure
+          auth = pathlib.Path(os.environ['RUNNER_TEMP']) / 'diagnostic-auth.json'
+          auth.write_text('{"auths":{}}\n')
+          auth.chmod(0o600)
+          def record(registry, operation, result):
+              print(json.dumps({'registry': registry, 'operation': operation, 'returncode': result.returncode, 'classification': classify_failure(result.stderr).value if result.returncode else 'success', 'code': _fatal_code(result.stderr) if result.returncode else None, 'explicit_absence': _is_explicit_absence(result.stderr) if result.returncode else False}), flush=True)
+          try:
+              for label, host, prefix, existing in [('tcr', 'ccr.ccs.tencentyun.com', 'ccr.ccs.tencentyun.com/1999wiki_code', 'sha-345fa54'), ('ghcr', 'ghcr.io', 'ghcr.io/ddomelette', 'sha-1ec7752')]:
+                  result = subprocess.run(['skopeo', 'login', '--authfile', str(auth), '--username', os.environ[label.upper() + '_USERNAME'], '--password-stdin', host], input=os.environ[label.upper() + '_PASSWORD'], text=True, capture_output=True, timeout=60)
+                  record(label, 'login', result)
+                  if result.returncode:
+                      continue
+                  for component in ('backend', 'frontend'):
+                      for tag in (existing, 'sha-d214556'):
+                          result = subprocess.run(['skopeo', 'inspect', '--raw', '--authfile', str(auth), f'docker://{prefix}/1999wiki-{component}:{tag}'], text=True, capture_output=True, timeout=60)
+                          record(label, f'probe:{component}:{tag}', result)
+          finally:
+              auth.unlink(missing_ok=True)
           PY
